@@ -1,8 +1,9 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate</title>
+<title>Luke Animate v60</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -265,6 +266,25 @@
     padding:7px 9px; margin:2px 0 10px;
     border:1px dashed var(--line); border-radius:7px; background:#fff;
     white-space:pre-wrap; overflow-wrap:anywhere;
+  }
+
+  .text-toggle{
+    display:flex; align-items:center; gap:7px; flex:1; color:var(--text);
+  }
+  .text-toggle input[type=checkbox]{ width:16px; height:16px; accent-color:var(--accent); }
+  #stage-text-editor{
+    position:absolute; z-index:25; display:none;
+    min-width:24px; min-height:1.25em; max-width:calc(100% - 8px);
+    padding:0 2px; margin:0;
+    outline:1px dashed var(--accent); outline-offset:3px;
+    background:transparent; border:0;
+    white-space:pre-wrap; overflow-wrap:anywhere;
+    cursor:text; user-select:text;
+    transform-origin:top left;
+  }
+  #stage-text-editor.active{ display:block; }
+  #stage-text-editor:empty::before{
+    content:'Type here'; color:rgba(27,31,36,.38); -webkit-text-stroke:0 transparent;
   }
 
   /* ---------- devtools (Behaviours / Type / Import / Tools / Sandbox) ---------- */
@@ -715,10 +735,7 @@
       <button class="btn small" id="btn-text-settings-close" style="flex:0 0 auto;padding:3px 8px;" title="Close text settings">×</button>
     </div>
     <div id="text-settings-body">
-      <div class="text-settings-row" style="display:block;">
-        <label for="text-panel-content" style="display:block;margin-bottom:5px;">Text</label>
-        <textarea id="text-panel-content" placeholder="Type the text to place on the stage"></textarea>
-      </div>
+      <div class="hint" style="margin:0 0 10px;">Choose the text appearance, then click anywhere on the stage and begin typing at that position.</div>
       <div class="text-settings-row">
         <label for="draw-font">Font</label>
         <select id="draw-font">
@@ -748,26 +765,32 @@
         </div>
       </div>
       <div class="text-settings-row">
-        <label for="text-fillcolor">Fill</label>
+        <label>Fill</label>
+        <label class="text-toggle"><input type="checkbox" id="text-fill-enabled" checked>Visible</label>
         <input type="color" id="text-fillcolor" value="#4fe0c4" title="Text fill colour">
-        <span id="text-fillcolor-value" class="val" style="flex:1;text-align:left;">#4FE0C4</span>
       </div>
       <div class="text-settings-row">
-        <label for="text-strokecolor">Border</label>
+        <label>Border</label>
+        <label class="text-toggle"><input type="checkbox" id="text-stroke-enabled">Visible</label>
         <input type="color" id="text-strokecolor" value="#1b1f24" title="Text border colour">
-        <span id="text-strokecolor-value" class="val" style="flex:1;text-align:left;">#1B1F24</span>
       </div>
-      <div class="text-settings-row">
-        <label for="text-strokewidth">Border</label>
+      <div class="text-settings-row" id="text-border-width-row">
+        <label for="text-strokewidth">Width</label>
         <input type="range" id="text-strokewidth" min="0" max="30" step="1" value="2">
         <span class="val" id="val-text-strokewidth">2</span>
       </div>
+      <div class="text-settings-row">
+        <label for="text-opacity">Opacity</label>
+        <input type="range" id="text-opacity" min="0" max="100" step="1" value="100">
+        <span class="val" id="val-text-opacity">100%</span>
+      </div>
       <div id="text-panel-preview">Text preview</div>
       <div class="btn-row">
-        <button class="btn primary" id="btn-text-place">Place Text</button>
-        <button class="btn" id="btn-text-apply">Apply to Selected</button>
+        <button class="btn primary" id="btn-text-edit-selected">Edit Selected Text</button>
+        <button class="btn" id="btn-text-apply">Apply Style</button>
+        <button class="btn danger" id="btn-text-delete">Delete Selected</button>
       </div>
-      <div class="hint">Type the wording, then click the stage to place it. New lines are supported. “Apply to Selected” updates one selected text object.</div>
+      <div class="hint">Enter creates a new line. Ctrl/Cmd+Enter or clicking elsewhere finishes the text. Escape cancels. Select text and press Delete or Backspace to remove it.</div>
     </div>
   </div>
   <div id="clip-breadcrumb" style="display:none;">
@@ -778,6 +801,7 @@
     <img id="ref-image" alt="">
     <canvas id="fx-canvas" width="960" height="540"></canvas>
     <div id="edit-overlay"></div>
+    <div id="stage-text-editor" contenteditable="true" spellcheck="true" aria-label="Type text on stage"></div>
   </div>
 </div>
 <div id="zoom-controls">
@@ -1330,6 +1354,7 @@ ctx.fill();</textarea>
   let drawObjects = [];   // static SVG-like shapes/text stamped onto the canvas
   let pendingDraw = null; // in-progress shape being dragged out, for live preview
   let freehandPoints = null;
+  let stageTextEdit = null; // active in-place text entry {x,y,existingIndex}
   const loadedGoogleFonts = new Set();
 
   // ---------------- Animate: Clips (nestable mini-scenes) ----------------
@@ -1451,6 +1476,10 @@ ctx.fill();</textarea>
       if(m) drawObjectCounter = Math.max(drawObjectCounter, parseInt(m[1],10) || 0);
     }
     if(obj.enabled === undefined) obj.enabled = true;
+    if(obj.type === 'text'){
+      if(obj.fillEnabled === undefined) obj.fillEnabled = true;
+      if(obj.strokeEnabled === undefined) obj.strokeEnabled = Math.max(0, Number(obj.strokeWidth) || 0) > 0;
+    }
     if(!obj.panelId) obj.panelId = panelForDrawObject(obj);
     if(!obj.name){
       if(obj.type === 'text' && obj.text){
@@ -1610,7 +1639,12 @@ ctx.fill();</textarea>
   document.getElementById('btn-redo').addEventListener('click', doRedo);
   window.addEventListener('keydown', (e)=>{
     const tag = (e.target.tagName || '').toLowerCase();
-    if(tag === 'input' || tag === 'select' || tag === 'textarea') return; // don't hijack typing/sliders
+    if(tag === 'input' || tag === 'select' || tag === 'textarea' || e.target.isContentEditable) return; // don't hijack typing/sliders
+    if((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawIndices.size > 0){
+      e.preventDefault();
+      deleteSelectedDrawObjects();
+      return;
+    }
     if(!(e.ctrlKey || e.metaKey)) return;
     if(e.key.toLowerCase() === 'z' && !e.shiftKey){ e.preventDefault(); doUndo(); }
     else if((e.key.toLowerCase() === 'z' && e.shiftKey) || e.key.toLowerCase() === 'y'){ e.preventDefault(); doRedo(); }
@@ -2005,13 +2039,15 @@ ctx.fill();</textarea>
       ctx.font = `${style}${weight} ${fontSize}px "${obj.fontFamily}", sans-serif`;
       ctx.textBaseline = 'top';
       ctx.lineJoin = 'round';
+      const fillEnabled = eff.fillEnabled !== undefined ? eff.fillEnabled : obj.fillEnabled !== false;
+      const strokeEnabled = eff.strokeEnabled !== undefined ? eff.strokeEnabled : (obj.strokeEnabled !== undefined ? obj.strokeEnabled : Math.max(0, Number(obj.strokeWidth) || 0) > 0);
       ctx.strokeStyle = strokeColor;
       ctx.lineWidth = Math.max(0, Number(eff.strokeWidth !== undefined ? eff.strokeWidth : (obj.strokeWidth || 0)));
       ctx.fillStyle = fillColor;
       lines.forEach((line, lineIndex)=>{
         const yy = obj.y + lineIndex * lineHeight;
-        if(ctx.lineWidth > 0) ctx.strokeText(line, obj.x, yy);
-        ctx.fillText(line, obj.x, yy);
+        if(strokeEnabled && ctx.lineWidth > 0) ctx.strokeText(line, obj.x, yy);
+        if(fillEnabled) ctx.fillText(line, obj.x, yy);
       });
     }
     ctx.restore();
@@ -2214,7 +2250,7 @@ ctx.fill();</textarea>
     const style = drawStyle();
 
     if(stageTool === 'text'){
-      placeTextFromPanel(c);
+      beginStageTextEntry(c, null);
       return;
     }
     if(stageTool === 'freehand'){
@@ -2253,9 +2289,12 @@ ctx.fill();</textarea>
 
   function textPanelStyle(){
     return {
+      fillEnabled: document.getElementById('text-fill-enabled').checked,
+      strokeEnabled: document.getElementById('text-stroke-enabled').checked,
       fillColor: document.getElementById('text-fillcolor').value,
       strokeColor: document.getElementById('text-strokecolor').value,
       strokeWidth: Math.max(0, parseFloat(document.getElementById('text-strokewidth').value) || 0),
+      opacity: Math.max(0, Math.min(1, (parseFloat(document.getElementById('text-opacity').value) || 0) / 100)),
       fontFamily: document.getElementById('draw-font').value,
       fontSize: Math.max(8, parseFloat(document.getElementById('draw-fontsize').value) || 32),
       bold: document.getElementById('draw-bold').classList.contains('active'),
@@ -2264,6 +2303,7 @@ ctx.fill();</textarea>
   }
 
   function activateDrawTool(toolName){
+    if(stageTool === 'text' && toolName !== 'text') finishStageTextEntry(true);
     stageTool = toolName;
     document.querySelectorAll('.draw-tool[data-tool]').forEach(b=> b.classList.toggle('active', b.dataset.tool === toolName));
     if(stageTool === 'none' && animatePanelOpen) setAnimateSelectionActive(true);
@@ -2275,87 +2315,203 @@ ctx.fill();</textarea>
     else if(stageTool !== 'none') overlay.style.cursor = 'crosshair';
   }
 
+  function selectedTextObject(){
+    const sel = getSelectedSingleObject();
+    return sel && sel.obj && sel.obj.type === 'text' ? sel : null;
+  }
+
+  function updateTextPanelControls(){
+    const fillEnabled = document.getElementById('text-fill-enabled').checked;
+    const strokeEnabled = document.getElementById('text-stroke-enabled').checked;
+    document.getElementById('text-fillcolor').disabled = !fillEnabled;
+    document.getElementById('text-strokecolor').disabled = !strokeEnabled;
+    document.getElementById('text-strokewidth').disabled = !strokeEnabled;
+    document.getElementById('text-border-width-row').style.opacity = strokeEnabled ? '1' : '.45';
+  }
+
   function updateTextPanelPreview(){
     const preview = document.getElementById('text-panel-preview');
-    const content = document.getElementById('text-panel-content').value || 'Text preview';
+    const sel = selectedTextObject();
+    const content = sel ? (sel.obj.text || 'Text preview') : 'Text preview';
     const style = textPanelStyle();
     preview.textContent = content;
     preview.style.fontFamily = `"${style.fontFamily}", sans-serif`;
     preview.style.fontSize = Math.min(48, style.fontSize) + 'px';
     preview.style.fontWeight = style.bold ? '700' : '400';
     preview.style.fontStyle = style.italic ? 'italic' : 'normal';
-    preview.style.color = style.fillColor;
-    preview.style.webkitTextStroke = style.strokeWidth > 0 ? `${Math.min(4, style.strokeWidth)}px ${style.strokeColor}` : '0 transparent';
+    preview.style.color = style.fillEnabled ? style.fillColor : 'transparent';
+    preview.style.webkitTextStroke = style.strokeEnabled && style.strokeWidth > 0
+      ? `${Math.min(4, style.strokeWidth)}px ${style.strokeColor}`
+      : '0 transparent';
+    preview.style.opacity = String(style.opacity);
+    updateTextPanelControls();
   }
 
   function syncTextPanelFromSelected(){
-    const sel = getSelectedSingleObject();
-    if(!sel || !sel.obj || sel.obj.type !== 'text') return false;
-    const obj = sel.obj;
-    document.getElementById('text-panel-content').value = obj.text || '';
+    const sel = selectedTextObject();
+    if(!sel) return false;
+    const obj = ensureDrawObjectMetadata(sel.obj);
     document.getElementById('draw-font').value = obj.fontFamily || 'Roboto';
     document.getElementById('draw-fontsize').value = Math.round(Number(obj.fontSize) || 32);
     document.getElementById('draw-bold').classList.toggle('active', !!obj.bold);
     document.getElementById('draw-italic').classList.toggle('active', !!obj.italic);
+    document.getElementById('text-fill-enabled').checked = obj.fillEnabled !== false;
+    document.getElementById('text-stroke-enabled').checked = obj.strokeEnabled !== false && Math.max(0, Number(obj.strokeWidth) || 0) > 0;
     document.getElementById('text-fillcolor').value = toHexColor(obj.fillColor || '#4fe0c4');
     document.getElementById('text-strokecolor').value = toHexColor(obj.strokeColor || '#1b1f24');
     document.getElementById('text-strokewidth').value = Math.max(0, Number(obj.strokeWidth) || 0);
+    document.getElementById('text-opacity').value = Math.round((obj.opacity === undefined ? 1 : Number(obj.opacity)) * 100);
     document.getElementById('val-text-strokewidth').textContent = document.getElementById('text-strokewidth').value;
-    document.getElementById('text-fillcolor-value').textContent = document.getElementById('text-fillcolor').value.toUpperCase();
-    document.getElementById('text-strokecolor-value').textContent = document.getElementById('text-strokecolor').value.toUpperCase();
+    document.getElementById('val-text-opacity').textContent = document.getElementById('text-opacity').value + '%';
     ensureGoogleFont(document.getElementById('draw-font').value);
     updateTextPanelPreview();
     return true;
   }
 
-  function openTextSettingsPanel(focusInput){
+  function openTextSettingsPanel(){
     const panel = document.getElementById('text-settings-panel');
     panel.classList.add('open');
     syncTextPanelFromSelected();
     updateTextPanelPreview();
-    if(focusInput !== false){
-      requestAnimationFrame(()=> document.getElementById('text-panel-content').focus());
-    }
   }
 
   function closeTextSettingsPanel(){
+    finishStageTextEntry(true);
     document.getElementById('text-settings-panel').classList.remove('open');
   }
 
-  function placeTextFromPanel(canvasPos){
-    const contentInput = document.getElementById('text-panel-content');
-    const textValue = contentInput.value.replace(/\r\n/g, '\n').trim();
-    if(!textValue){
-      openTextSettingsPanel(true);
-      return;
+  function stageTextEditorElement(){
+    return document.getElementById('stage-text-editor');
+  }
+
+  function setCaretAtEnd(element){
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function applyStyleToStageTextEditor(style){
+    const editor = stageTextEditorElement();
+    const canvasRect = canvas.getBoundingClientRect();
+    const scale = canvasRect.width / W;
+    editor.style.fontFamily = `"${style.fontFamily}", sans-serif`;
+    editor.style.fontSize = Math.max(1, style.fontSize * scale) + 'px';
+    editor.style.lineHeight = '1.2';
+    editor.style.fontWeight = style.bold ? '700' : '400';
+    editor.style.fontStyle = style.italic ? 'italic' : 'normal';
+    editor.style.color = style.fillEnabled ? style.fillColor : 'transparent';
+    editor.style.webkitTextStroke = style.strokeEnabled && style.strokeWidth > 0
+      ? `${Math.max(.5, style.strokeWidth * scale)}px ${style.strokeColor}`
+      : '0 transparent';
+    editor.style.opacity = String(style.opacity);
+  }
+
+  function positionStageTextEditor(){
+    if(!stageTextEdit) return;
+    const editor = stageTextEditorElement();
+    const canvasRect = canvas.getBoundingClientRect();
+    const shellRect = document.getElementById('canvas-shell').getBoundingClientRect();
+    const scaleX = canvasRect.width / W;
+    const scaleY = canvasRect.height / H;
+    editor.style.left = (canvasRect.left - shellRect.left + stageTextEdit.x * scaleX) + 'px';
+    editor.style.top = (canvasRect.top - shellRect.top + stageTextEdit.y * scaleY) + 'px';
+    editor.style.maxWidth = Math.max(40, canvasRect.right - (canvasRect.left + stageTextEdit.x * scaleX) - 4) + 'px';
+    applyStyleToStageTextEditor(textPanelStyle());
+  }
+
+  function beginStageTextEntry(canvasPos, existingIndex){
+    finishStageTextEntry(true);
+    const editor = stageTextEditorElement();
+    const existing = Number.isInteger(existingIndex) ? drawObjects[existingIndex] : null;
+    if(existing && existing.type === 'text'){
+      selectedDrawIndices.clear();
+      selectedDrawIndices.add(existingIndex);
+      syncTextPanelFromSelected();
     }
-    const style = textPanelStyle();
-    ensureGoogleFont(style.fontFamily);
-    commitDrawObject({
-      type:'text', x:canvasPos.x, y:canvasPos.y, text:textValue,
-      fillColor:style.fillColor, strokeColor:style.strokeColor, strokeWidth:style.strokeWidth,
-      fontFamily:style.fontFamily, fontSize:style.fontSize, lineHeight:style.fontSize * 1.2,
-      bold:style.bold, italic:style.italic
+    stageTextEdit = {
+      x: existing ? existing.x : canvasPos.x,
+      y: existing ? existing.y : canvasPos.y,
+      existingIndex: existing && existing.type === 'text' ? existingIndex : null
+    };
+    editor.textContent = existing && existing.type === 'text' ? String(existing.text || '') : '';
+    editor.classList.add('active');
+    positionStageTextEditor();
+    requestAnimationFrame(()=>{
+      editor.focus();
+      setCaretAtEnd(editor);
     });
   }
 
+  function finishStageTextEntry(commit){
+    if(!stageTextEdit) return false;
+    const editing = stageTextEdit;
+    const editor = stageTextEditorElement();
+    const rawText = String(editor.innerText || editor.textContent || '').replace(/\r\n/g, '\n').replace(/\u00a0/g, ' ');
+    const textValue = rawText.replace(/\n+$/g, '');
+    stageTextEdit = null;
+    editor.classList.remove('active');
+    editor.textContent = '';
+    if(!commit || !textValue.trim()) return false;
+    const style = textPanelStyle();
+    ensureGoogleFont(style.fontFamily);
+    if(Number.isInteger(editing.existingIndex) && drawObjects[editing.existingIndex] && drawObjects[editing.existingIndex].type === 'text'){
+      const obj = drawObjects[editing.existingIndex];
+      pushUndo();
+      obj.text = textValue;
+      obj.fillEnabled = style.fillEnabled;
+      obj.strokeEnabled = style.strokeEnabled;
+      obj.fillColor = style.fillColor;
+      obj.strokeColor = style.strokeColor;
+      obj.strokeWidth = style.strokeWidth;
+      obj.opacity = style.opacity;
+      obj.fontFamily = style.fontFamily;
+      obj.fontSize = style.fontSize;
+      obj.lineHeight = style.fontSize * 1.2;
+      obj.bold = style.bold;
+      obj.italic = style.italic;
+      obj.name = 'Text: ' + textValue.replace(/\s+/g,' ').trim().slice(0,24);
+      finishObjectEdit(obj);
+      selectDrawObject(editing.existingIndex, false, false);
+    } else {
+      commitDrawObject({
+        type:'text', x:editing.x, y:editing.y, text:textValue,
+        fillEnabled:style.fillEnabled, strokeEnabled:style.strokeEnabled,
+        fillColor:style.fillColor, strokeColor:style.strokeColor, strokeWidth:style.strokeWidth,
+        opacity:style.opacity,
+        fontFamily:style.fontFamily, fontSize:style.fontSize, lineHeight:style.fontSize * 1.2,
+        bold:style.bold, italic:style.italic
+      });
+      selectDrawObject(drawObjects.length - 1, false, false);
+    }
+    updateInspector();
+    renderLayerList();
+    renderPoints();
+    return true;
+  }
+
+  function editSelectedTextInPlace(){
+    const sel = selectedTextObject();
+    if(!sel) return;
+    activateDrawTool('text');
+    openTextSettingsPanel();
+    beginStageTextEntry({x:sel.obj.x, y:sel.obj.y}, sel.idx);
+  }
+
   function applyTextPanelToSelected(){
-    const sel = getSelectedSingleObject();
-    if(!sel || !sel.obj || sel.obj.type !== 'text'){
-      openTextSettingsPanel(true);
-      return;
-    }
-    const textValue = document.getElementById('text-panel-content').value.replace(/\r\n/g, '\n').trim();
-    if(!textValue){
-      document.getElementById('text-panel-content').focus();
-      return;
-    }
+    finishStageTextEntry(true);
+    const sel = selectedTextObject();
+    if(!sel) return;
     const style = textPanelStyle();
     pushUndo();
-    sel.obj.text = textValue;
+    sel.obj.fillEnabled = style.fillEnabled;
+    sel.obj.strokeEnabled = style.strokeEnabled;
     sel.obj.fillColor = style.fillColor;
     sel.obj.strokeColor = style.strokeColor;
     sel.obj.strokeWidth = style.strokeWidth;
+    sel.obj.opacity = style.opacity;
     sel.obj.fontFamily = style.fontFamily;
     sel.obj.fontSize = style.fontSize;
     sel.obj.lineHeight = style.fontSize * 1.2;
@@ -2370,27 +2526,40 @@ ctx.fill();</textarea>
   document.querySelectorAll('.draw-tool[data-tool]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       activateDrawTool(btn.dataset.tool);
-      if(stageTool === 'text') openTextSettingsPanel(true);
+      if(stageTool === 'text') openTextSettingsPanel();
       else closeTextSettingsPanel();
     });
   });
   document.getElementById('draw-font').addEventListener('change', (e)=>{
     ensureGoogleFont(e.target.value);
     updateTextPanelPreview();
+    if(stageTextEdit) positionStageTextEditor();
   });
-  document.getElementById('draw-fontsize').addEventListener('input', updateTextPanelPreview);
-  document.getElementById('text-panel-content').addEventListener('input', updateTextPanelPreview);
-  document.getElementById('text-fillcolor').addEventListener('input', (e)=>{
-    document.getElementById('text-fillcolor-value').textContent = e.target.value.toUpperCase();
+  document.getElementById('draw-fontsize').addEventListener('input', ()=>{
     updateTextPanelPreview();
+    if(stageTextEdit) positionStageTextEditor();
   });
-  document.getElementById('text-strokecolor').addEventListener('input', (e)=>{
-    document.getElementById('text-strokecolor-value').textContent = e.target.value.toUpperCase();
+  ['text-fill-enabled','text-stroke-enabled'].forEach(id=> document.getElementById(id).addEventListener('change', ()=>{
     updateTextPanelPreview();
+    if(stageTextEdit) positionStageTextEditor();
+  }));
+  document.getElementById('text-fillcolor').addEventListener('input', ()=>{
+    updateTextPanelPreview();
+    if(stageTextEdit) positionStageTextEditor();
+  });
+  document.getElementById('text-strokecolor').addEventListener('input', ()=>{
+    updateTextPanelPreview();
+    if(stageTextEdit) positionStageTextEditor();
   });
   document.getElementById('text-strokewidth').addEventListener('input', (e)=>{
     document.getElementById('val-text-strokewidth').textContent = e.target.value;
     updateTextPanelPreview();
+    if(stageTextEdit) positionStageTextEditor();
+  });
+  document.getElementById('text-opacity').addEventListener('input', (e)=>{
+    document.getElementById('val-text-opacity').textContent = e.target.value + '%';
+    updateTextPanelPreview();
+    if(stageTextEdit) positionStageTextEditor();
   });
   document.getElementById('draw-strokewidth').addEventListener('input', (e)=>{
     document.getElementById('val-draw-strokewidth').textContent = e.target.value;
@@ -2401,28 +2570,39 @@ ctx.fill();</textarea>
   document.getElementById('draw-bold').addEventListener('click', (e)=>{
     e.currentTarget.classList.toggle('active');
     updateTextPanelPreview();
+    if(stageTextEdit) positionStageTextEditor();
   });
   document.getElementById('draw-italic').addEventListener('click', (e)=>{
     e.currentTarget.classList.toggle('active');
     updateTextPanelPreview();
+    if(stageTextEdit) positionStageTextEditor();
   });
-  document.getElementById('btn-text-place').addEventListener('click', ()=>{
-    activateDrawTool('text');
-    openTextSettingsPanel(false);
-    if(!document.getElementById('text-panel-content').value.trim()) document.getElementById('text-panel-content').focus();
-  });
+  document.getElementById('btn-text-edit-selected').addEventListener('click', editSelectedTextInPlace);
   document.getElementById('btn-text-apply').addEventListener('click', applyTextPanelToSelected);
+  document.getElementById('btn-text-delete').addEventListener('click', deleteSelectedDrawObjects);
   document.getElementById('btn-text-settings-close').addEventListener('click', ()=>{
     closeTextSettingsPanel();
     activateDrawTool('none');
   });
-  document.getElementById('text-panel-content').addEventListener('keydown', (e)=>{
+
+  const stageTextEditor = stageTextEditorElement();
+  stageTextEditor.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape'){
+      e.preventDefault();
+      finishStageTextEntry(false);
+      return;
+    }
     if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){
       e.preventDefault();
-      activateDrawTool('text');
-      overlay.focus && overlay.focus();
+      finishStageTextEntry(true);
     }
   });
+  stageTextEditor.addEventListener('blur', ()=>{
+    setTimeout(()=>{
+      if(stageTextEdit && document.activeElement !== stageTextEditor) finishStageTextEntry(true);
+    }, 0);
+  });
+  window.addEventListener('resize', positionStageTextEditor);
 
   (function makeTextSettingsDraggable(){
     const panel = document.getElementById('text-settings-panel');
@@ -3306,6 +3486,19 @@ ctx.fill();</textarea>
     renderLayerList();
   }
 
+  function deleteSelectedDrawObjects(){
+    finishStageTextEntry(false);
+    if(selectedDrawIndices.size === 0) return false;
+    pushUndo();
+    const indices = Array.from(selectedDrawIndices).filter(i=>i >= 0 && i < drawObjects.length).sort((a,b)=>b-a);
+    indices.forEach(index=> drawObjects.splice(index,1));
+    selectedDrawIndices.clear();
+    updateSelectedCountUI();
+    renderLayerList();
+    renderPoints();
+    return true;
+  }
+
   function selectEffectLayer(index, openOwnerPanel){
     if(index < 0 || index >= layers.length) return;
     activeIndex = index;
@@ -3546,6 +3739,20 @@ ctx.fill();</textarea>
     }
   });
   overlay.addEventListener('dblclick', (e)=>{
+    if(!isWithinCanvas(e.clientX, e.clientY)) return;
+    const clickPos = canvasCoords(e.clientX, e.clientY);
+    for(let i=drawObjects.length-1; i>=0; i--){
+      const obj = ensureDrawObjectMetadata(drawObjects[i]);
+      if(obj.type !== 'text' || obj.enabled === false) continue;
+      if(pointInBounds(clickPos.x, clickPos.y, getEffectiveBounds(obj), 6)){
+        selectDrawObject(i, false, false);
+        activateDrawTool('text');
+        openTextSettingsPanel();
+        beginStageTextEntry({x:obj.x, y:obj.y}, i);
+        e.preventDefault();
+        return;
+      }
+    }
     // Double-click a Clip instance to jump straight into its own timeline —
     // works no matter how deep you already are, since it just looks at
     // whatever drawObjects are currently active (main scene or a clip).
