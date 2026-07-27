@@ -1,6 +1,7 @@
 {
   "title": "Luke Animate",
-  "version": 4,
+  "version": 5,
+  "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
       "id": "animate",
@@ -11,9 +12,19 @@
         {
           "id": "StickRig",
           "label": "StickRig",
+          "description": "Animate selected Luke Animate Clips with move, scale, rotation and opacity keys.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Stick.svg",
           "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/StickRig.txt",
-          "action": "tool",
+          "action": "animate",
+          "F_Screen": 0
+        },
+        {
+          "id": "DemBones",
+          "label": "Dem Bones",
+          "description": "Create, bind and animate vector bones directly in Luke Animate.",
+          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Bone.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DemBones.txt",
+          "action": "animate",
           "F_Screen": 0
         }
       ]
