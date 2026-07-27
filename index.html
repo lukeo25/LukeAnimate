@@ -1,8 +1,9 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v77</title>
+<title>Luke Animate v81</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -364,6 +365,7 @@
   #stage-text-editor:empty::before{
     content:'Type here'; color:rgba(27,31,36,.38); -webkit-text-stroke:0 transparent;
   }
+
 
 
 
@@ -809,6 +811,26 @@
     flex:0 0 auto;
   }
   #transport-bar .btn.small{ flex:0 0 auto; padding:4px 9px; font-size:12px; }
+  .transport-icon-btn{
+    width:30px; height:30px; min-width:30px; flex:0 0 30px; padding:4px;
+    display:inline-flex; align-items:center; justify-content:center;
+    border:1px solid #4f565f; border-radius:7px;
+    background:#626a74; color:#ffffff; cursor:pointer;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.10);
+  }
+  .transport-icon-btn:hover{ background:#565e67; border-color:#3f454d; }
+  .transport-icon-btn.active{
+    background:#9b2f63; border-color:#d05a90; color:#ffffff;
+    box-shadow:0 0 0 1px rgba(208,90,144,.28), inset 0 0 0 1px rgba(255,255,255,.16);
+  }
+  .transport-icon-btn img{
+    width:21px; height:21px; display:block; object-fit:contain; pointer-events:none;
+    filter:grayscale(1) brightness(0) invert(1); opacity:.96;
+  }
+  .transport-icon-btn.active img{ filter:brightness(0) invert(1); opacity:1; }
+  .transport-icon-fallback{ display:none; font-size:18px; line-height:1; pointer-events:none; }
+  .transport-icon-btn.icon-missing img{ display:none; }
+  .transport-icon-btn.icon-missing .transport-icon-fallback{ display:block; }
   #time-readout{
     font-family:var(--mono); font-size:11.5px; color:var(--accent);
     min-width:100px;
@@ -1011,6 +1033,7 @@
       <div class="hint">Enter creates a new line. Ctrl/Cmd+Enter or clicking elsewhere finishes the text. Escape cancels. Select text and press Delete or Backspace to remove it.</div>
     </div>
   </div>
+
   <div id="clip-breadcrumb" style="display:none;">
     <button class="btn small" id="btn-clip-back">← Back</button>
     <span id="clip-breadcrumb-text">Main Scene</span>
@@ -1397,7 +1420,6 @@
     <div class="hint" style="padding:12px 14px 0;">Click a shape to select it and drag it immediately. Shift-click adds or removes shapes from a multi-selection for creating a reusable <b>Clip</b>. Selected shapes can be moved, scaled, rotated and keyframed directly.</div>
     <div style="padding:10px 14px;">
       <div class="btn-row" style="margin-bottom:8px;">
-        <button class="btn small" id="btn-auto-keyframe" title="When enabled, every transform or inspector change writes a keyframe at the current playhead time">◆ Auto Keyframe: Off</button>
         <span id="selected-count" class="audio-filename" style="flex:0 0 auto;">0 selected</span>
       </div>
       <div class="btn-row" style="margin-bottom:12px;">
@@ -1415,8 +1437,8 @@
         <div class="row"><label>Scale</label><input type="range" id="insp-scale" min="0.1" max="3" step="0.05" value="1"><span class="val" id="val-insp-scale">1.0</span></div>
         <div class="row"><label>Rotation</label><input type="range" id="insp-rotation" min="-180" max="180" step="1" value="0"><span class="val" id="val-insp-rotation">0</span></div>
         <div class="row"><label>Opacity</label><input type="range" id="insp-opacity" min="0" max="100" step="1" value="100"><span class="val" id="val-insp-opacity">100</span></div>
-        <div class="row" id="insp-fill-row"><label>Fill</label><input type="color" id="insp-fill" value="#4fe0c4"></div>
-        <div class="row" id="insp-stroke-row"><label>Border</label><input type="color" id="insp-stroke" value="#1b1f24"></div>
+        <div class="row" id="insp-fill-row"><label>Fill</label><input type="color" id="insp-fill" value="#4fe0c4"><label class="toggle-line" style="flex:0 0 auto;"><input type="checkbox" id="insp-fill-enabled" checked> Visible</label></div>
+        <div class="row" id="insp-stroke-row"><label>Border</label><input type="color" id="insp-stroke" value="#1b1f24"><label class="toggle-line" style="flex:0 0 auto;"><input type="checkbox" id="insp-stroke-enabled" checked> Visible</label></div>
         <div class="row" id="insp-strokewidth-row"><label>Border Width</label><input type="range" id="insp-strokewidth" min="1" max="30" step="1" value="4"><span class="val" id="val-insp-strokewidth">4</span></div>
         <div class="row" id="insp-cornerradius-row" style="display:none;"><label>Corner Radius</label><input type="range" id="insp-cornerradius" min="0" max="200" step="1" value="20"><span class="val" id="val-insp-cornerradius">20</span></div>
         <div id="insp-shape-points-row" style="display:none;margin-top:8px;">
@@ -1424,6 +1446,7 @@
             <button class="btn small" id="btn-edit-shape-points">Edit Points</button>
             <button class="btn small" id="btn-add-shape-point" disabled>+ Point</button>
             <button class="btn small" id="btn-subdivide-shape-points" disabled>Subdivide</button>
+            <button class="btn small danger" id="btn-delete-shape-point" disabled>Delete Point</button>
           </div>
           <div class="hint" id="insp-shape-point-hint" style="padding:6px 0 2px;">Convert this vector to an editable path, then drag its points or add points without changing its outline.</div>
         </div>
@@ -1515,6 +1538,10 @@ ctx.fill();</textarea>
     <button class="btn small" id="btn-transport-play" title="Play">▶</button>
     <button class="btn small" id="btn-transport-pause" title="Pause">⏸</button>
     <button class="btn small" id="btn-transport-stop" title="Stop (pause + reset to 0)">⏹</button>
+    <button class="transport-icon-btn" id="btn-auto-keyframe" type="button" title="Auto Keyframe: Off — click to write changes automatically at the current playhead position" aria-label="Auto Keyframe: Off" aria-pressed="false">
+      <img src="https://lukeo25.github.io/LukeAnimate/SVGs/Key.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
+      <span class="transport-icon-fallback" aria-hidden="true">◆</span>
+    </button>
     <span id="time-readout">0.0s / 6.0s</span>
     <span class="transport-sep"></span>
     <label class="transport-field">Duration<input type="number" id="inp-timelineduration" value="6" min="1" max="120" step="0.5"></label>
@@ -1571,6 +1598,21 @@ ctx.fill();</textarea>
   let playing = false; // start paused at 0 seconds
   let t = 0;              // animation time (seconds)
   let lastFrame = performance.now();
+
+  // WebM export owns the timeline while recording. The normal preview loop only
+  // advances `t` when Play is active, which previously meant a paused project
+  // exported a static first frame. During export we instead derive `t` directly
+  // from the recorder clock so normal keys and external tool evaluators are
+  // evaluated on every captured frame.
+  let exportPlayback = {
+    active: false,
+    startedAt: 0,
+    duration: 0,
+    fps: 30,
+    previousPlaying: false,
+    previousTime: 0,
+    videoTrack: null
+  };
 
   let bgMode = 'transparent'; // 'transparent' or 'color'
   let stageColor = '#ffffff';
@@ -2430,8 +2472,11 @@ ctx.fill();</textarea>
       const y1 = eff.y1 !== undefined ? eff.y1 : obj.y1;
       const x2 = eff.x2 !== undefined ? eff.x2 : obj.x2;
       const y2 = eff.y2 !== undefined ? eff.y2 : obj.y2;
-      ctx.strokeStyle = strokeColor; ctx.lineWidth = strokeWidth; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+      const strokeEnabled = eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false;
+      if(strokeEnabled && strokeWidth > 0){
+        ctx.strokeStyle = strokeColor; ctx.lineWidth = strokeWidth; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+      }
     } else if(obj.type === 'rect'){
       const rx1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
       const ry1 = eff.y1 !== undefined ? eff.y1 : obj.y1;
@@ -2439,12 +2484,14 @@ ctx.fill();</textarea>
       const ry2 = eff.y2 !== undefined ? eff.y2 : obj.y2;
       const x = Math.min(rx1,rx2), y = Math.min(ry1,ry2);
       const w = Math.abs(rx2-rx1), h = Math.abs(ry2-ry1);
+      const fillEnabled = eff.fillEnabled !== undefined ? !!eff.fillEnabled : obj.fillEnabled !== false;
+      const strokeEnabled = eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false;
       ctx.fillStyle = fillColor;
       ctx.strokeStyle = strokeColor;
       ctx.lineWidth = strokeWidth;
       roundedRectPath(ctx, x, y, w, h, cornerRadius);
-      ctx.fill();
-      ctx.stroke();
+      if(fillEnabled) ctx.fill();
+      if(strokeEnabled && strokeWidth > 0) ctx.stroke();
     } else if(obj.type === 'ellipse'){
       const ex1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
       const ey1 = eff.y1 !== undefined ? eff.y1 : obj.y1;
@@ -2452,13 +2499,15 @@ ctx.fill();</textarea>
       const ey2 = eff.y2 !== undefined ? eff.y2 : obj.y2;
       const cx = (ex1+ex2)/2, cy = (ey1+ey2)/2;
       const rx = Math.abs(ex2-ex1)/2, ry = Math.abs(ey2-ey1)/2;
+      const fillEnabled = eff.fillEnabled !== undefined ? !!eff.fillEnabled : obj.fillEnabled !== false;
+      const strokeEnabled = eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false;
       ctx.fillStyle = fillColor;
       ctx.strokeStyle = strokeColor;
       ctx.lineWidth = strokeWidth;
       ctx.beginPath();
       ctx.ellipse(cx,cy,Math.max(0.5,rx),Math.max(0.5,ry),0,0,Math.PI*2);
-      ctx.fill();
-      ctx.stroke();
+      if(fillEnabled) ctx.fill();
+      if(strokeEnabled && strokeWidth > 0) ctx.stroke();
     } else if(obj.type === 'text'){
       const weight = obj.bold ? '700' : '400';
       const style = obj.italic ? 'italic ' : '';
@@ -2676,13 +2725,21 @@ ctx.fill();</textarea>
     if(obj.fillColor === undefined) obj.fillColor = obj.color || '#4fe0c4';
     if(obj.strokeColor === undefined) obj.strokeColor = obj.color || '#1b1f24';
     if(obj.strokeWidth === undefined) obj.strokeWidth = 4;
+    if(obj.strokeEnabled === undefined) obj.strokeEnabled = true;
+    if(obj.fillEnabled === undefined) obj.fillEnabled = obj.type === 'rect' || obj.type === 'ellipse';
     if(obj.type === 'rect' && obj.cornerRadius === undefined) obj.cornerRadius = 0;
     if(obj.keyframes === undefined) obj.keyframes = [];
     ensureDrawObjectMetadata(obj);
     drawObjects.push(obj);
+    const newObjectIndex = drawObjects.length - 1;
     pendingDraw = null;
     freehandPoints = null;
     renderLayerList();
+    if(shapeCanEditPoints(obj)){
+      // Select the newly created shape and show its permanent sidebar controls.
+      // No separate floating properties panel is used.
+      selectDrawObject(newObjectIndex, false, true);
+    }
   }
 
   function handleDrawMouseDown(e){
@@ -3071,7 +3128,9 @@ ctx.fill();</textarea>
       if(stageTextEdit && document.activeElement !== stageTextEditor) finishStageTextEntry(true);
     }, 0);
   });
-  window.addEventListener('resize', positionStageTextEditor);
+  window.addEventListener('resize', ()=>{
+    positionStageTextEditor();
+  });
 
   (function makeTextSettingsDraggable(){
     const panel = document.getElementById('text-settings-panel');
@@ -3211,10 +3270,11 @@ ctx.fill();</textarea>
     const btn = document.getElementById('btn-auto-keyframe');
     if(btn){
       btn.classList.toggle('active', autoKeyframe);
-      btn.textContent = autoKeyframe ? '◆ Auto Keyframe: On' : '◆ Auto Keyframe: Off';
+      btn.setAttribute('aria-pressed', autoKeyframe ? 'true' : 'false');
+      btn.setAttribute('aria-label', autoKeyframe ? 'Auto Keyframe: On' : 'Auto Keyframe: Off');
       btn.title = autoKeyframe
-        ? 'Auto Keyframe is ON — changes write a keyframe at the current playhead time'
-        : 'Auto Keyframe is OFF — click to record changes automatically';
+        ? 'Auto Keyframe: On — changes write a keyframe at the current playhead position'
+        : 'Auto Keyframe: Off — click to write changes automatically at the current playhead position';
     }
   }
 
@@ -3242,9 +3302,16 @@ ctx.fill();</textarea>
       opacity: eff.opacity !== undefined ? eff.opacity : (obj.opacity === undefined ? 1 : obj.opacity),
       strokeWidth: eff.strokeWidth !== undefined ? eff.strokeWidth : (obj.strokeWidth || 4),
       fillColor: toHexColor(eff.fillColor || obj.fillColor || obj.color || '#4fe0c4'),
-      strokeColor: toHexColor(eff.strokeColor || obj.strokeColor || obj.color || '#1b1f24')
+      strokeColor: toHexColor(eff.strokeColor || obj.strokeColor || obj.color || '#1b1f24'),
+      fillEnabled: eff.fillEnabled !== undefined ? !!eff.fillEnabled : obj.fillEnabled !== false,
+      strokeEnabled: eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false
     };
     if(obj.type === 'rect') snapshot.cornerRadius = eff.cornerRadius !== undefined ? eff.cornerRadius : (obj.cornerRadius || 0);
+    if(obj.type === 'freehand'){
+      const pts = Array.isArray(eff.points) ? eff.points : obj.points;
+      snapshot.points = Array.isArray(pts) ? pts.map(point=>({x:Number(point.x)||0,y:Number(point.y)||0})) : [];
+      snapshot.closedPath = eff.closedPath !== undefined ? !!eff.closedPath : !!obj.closedPath;
+    }
     return snapshot;
   }
 
@@ -3379,43 +3446,108 @@ ctx.fill();</textarea>
 
   function convertDrawObjectToEditablePath(obj){
     if(!shapeCanEditPoints(obj)) return null;
-    const originalType=obj.type;
-    const eff=getEffectiveObj(obj,t);
-    let sourcePoints=[];
-    let closedPath=false;
-    let fillEnabled=false;
-    if(originalType==='freehand'){
-      sourcePoints=(Array.isArray(eff.points)?eff.points:obj.points||[]).map(p=>({x:Number(p.x)||0,y:Number(p.y)||0}));
-      closedPath=eff.closedPath!==undefined?!!eff.closedPath:!!obj.closedPath;
-      fillEnabled=eff.fillEnabled!==undefined?!!eff.fillEnabled:!!obj.fillEnabled;
-    }else if(originalType==='line'){
-      sourcePoints=[{x:Number(eff.x1)||0,y:Number(eff.y1)||0},{x:Number(eff.x2)||0,y:Number(eff.y2)||0}];
-    }else if(originalType==='rect'){
-      sourcePoints=editableRoundedRectPoints(eff);
-      closedPath=true;
-      fillEnabled=true;
-    }else if(originalType==='ellipse'){
-      sourcePoints=editableEllipsePoints(eff,64);
-      closedPath=true;
-      fillEnabled=true;
+    if(obj.type === 'freehand'){
+      ensureDrawObjectMetadata(obj);
+      return obj;
     }
-    if(sourcePoints.length<2) return null;
-    const pointsBaked=bakeEffectiveTransformIntoShapePoints(obj,eff,sourcePoints);
-    obj.originalVectorType=obj.originalVectorType||originalType;
-    if(originalType==='rect') obj.originalCornerRadius=Number(eff.cornerRadius)||0;
-    obj.type='freehand';
-    obj.points=pointsBaked;
-    obj.closedPath=closedPath;
-    obj.fillEnabled=fillEnabled;
-    obj.strokeEnabled=eff.strokeEnabled!==undefined?!!eff.strokeEnabled:obj.strokeEnabled!==false;
-    obj.fillColor=eff.fillColor||obj.fillColor||obj.color||'#4fe0c4';
-    obj.strokeColor=eff.strokeColor||obj.strokeColor||obj.color||'#1b1f24';
-    obj.strokeWidth=eff.strokeWidth!==undefined?eff.strokeWidth:(obj.strokeWidth||4);
-    obj.opacity=eff.opacity===undefined?(obj.opacity===undefined?1:obj.opacity):eff.opacity;
-    obj.tx=0;obj.ty=0;obj.tscale=1;obj.trotation=0;obj.keyframes=[];
-    delete obj.x1;delete obj.y1;delete obj.x2;delete obj.y2;delete obj.cornerRadius;
+
+    // Convert only the object's base geometry. Keep its transform and keyframes
+    // untouched so entering point-edit mode never erases or freezes animation.
+    const originalType = obj.type;
+    let sourcePoints = [];
+    let closedPath = false;
+    let fillEnabled = false;
+    if(originalType === 'line'){
+      sourcePoints = [{x:Number(obj.x1)||0,y:Number(obj.y1)||0},{x:Number(obj.x2)||0,y:Number(obj.y2)||0}];
+    }else if(originalType === 'rect'){
+      sourcePoints = editableRoundedRectPoints(obj);
+      closedPath = true;
+      fillEnabled = obj.fillEnabled !== false;
+    }else if(originalType === 'ellipse'){
+      sourcePoints = editableEllipsePoints(obj,64);
+      closedPath = true;
+      fillEnabled = obj.fillEnabled !== false;
+    }
+    if(sourcePoints.length < 2) return null;
+
+    obj.originalVectorType = obj.originalVectorType || originalType;
+    if(originalType === 'rect') obj.originalCornerRadius = Number(obj.cornerRadius)||0;
+    obj.type = 'freehand';
+    obj.points = sourcePoints.map(point=>({x:point.x,y:point.y}));
+    obj.closedPath = closedPath;
+    obj.fillEnabled = fillEnabled;
+    obj.strokeEnabled = obj.strokeEnabled !== false;
+    obj.fillColor = obj.fillColor || obj.color || '#4fe0c4';
+    obj.strokeColor = obj.strokeColor || obj.color || '#1b1f24';
+    obj.strokeWidth = obj.strokeWidth === undefined ? 4 : obj.strokeWidth;
+    obj.opacity = obj.opacity === undefined ? 1 : obj.opacity;
+    if(!Array.isArray(obj.keyframes)) obj.keyframes = [];
+
+    // Geometry-specific keyframe fields from the old primitive are no longer
+    // used, but all transform/appearance keys remain valid.
+    obj.keyframes.forEach(key=>{
+      delete key.x1; delete key.y1; delete key.x2; delete key.y2; delete key.cornerRadius;
+      if(!Array.isArray(key.points)) key.points = obj.points.map(point=>({x:point.x,y:point.y}));
+      key.closedPath = closedPath;
+    });
+
+    delete obj.x1; delete obj.y1; delete obj.x2; delete obj.y2; delete obj.cornerRadius;
     ensureDrawObjectMetadata(obj);
     return obj;
+  }
+
+  function objectLocalPointToScene(obj, point, time){
+    const eff = getEffectiveObj(obj, time);
+    const bounds = getDrawObjectBounds(obj);
+    const pivotX = (bounds.x1 + bounds.x2) / 2;
+    const pivotY = (bounds.y1 + bounds.y2) / 2;
+    const tx = Number(eff.tx)||0;
+    const ty = Number(eff.ty)||0;
+    const scale = eff.tscale === undefined ? 1 : (Number(eff.tscale)||1);
+    const angle = (Number(eff.trotation)||0) * Math.PI / 180;
+    const dx = (point.x - pivotX) * scale;
+    const dy = (point.y - pivotY) * scale;
+    return {
+      x:pivotX + tx + dx*Math.cos(angle) - dy*Math.sin(angle),
+      y:pivotY + ty + dx*Math.sin(angle) + dy*Math.cos(angle)
+    };
+  }
+
+  function scenePointToObjectLocal(obj, point, time){
+    const eff = getEffectiveObj(obj, time);
+    const bounds = getDrawObjectBounds(obj);
+    const pivotX = (bounds.x1 + bounds.x2) / 2;
+    const pivotY = (bounds.y1 + bounds.y2) / 2;
+    const tx = Number(eff.tx)||0;
+    const ty = Number(eff.ty)||0;
+    const scale = eff.tscale === undefined ? 1 : (Number(eff.tscale)||1);
+    const angle = -(Number(eff.trotation)||0) * Math.PI / 180;
+    const dx = point.x - (pivotX + tx);
+    const dy = point.y - (pivotY + ty);
+    const rx = dx*Math.cos(angle) - dy*Math.sin(angle);
+    const ry = dx*Math.sin(angle) + dy*Math.cos(angle);
+    return {x:pivotX + rx/scale, y:pivotY + ry/scale};
+  }
+
+  function currentEditablePointArray(obj){
+    const eff = getEffectiveObj(obj,t);
+    return Array.isArray(eff.points) ? eff.points : (Array.isArray(obj.points) ? obj.points : []);
+  }
+
+  function writeEditablePointAtCurrentTime(obj,index,point){
+    if(autoKeyframe){
+      prepareAutoKeyframe(obj);
+      const keyframe = makeObjectKeyframeSnapshot(obj,t);
+      if(!Array.isArray(keyframe.points)) keyframe.points = currentEditablePointArray(obj).map(p=>({x:p.x,y:p.y}));
+      if(keyframe.points[index]) keyframe.points[index] = {x:point.x,y:point.y};
+      keyframe.time = t;
+      upsertObjectKeyframe(obj,keyframe);
+    }else if(obj.points && obj.points[index]){
+      obj.points[index] = {x:point.x,y:point.y};
+      if(obj.demBones && Array.isArray(obj.demBones.restPoints) && obj.demBones.restPoints[index]){
+        obj.demBones.restPoints[index] = {x:point.x,y:point.y};
+      }
+    }
   }
 
   function shapePointSceneThreshold(pixels=18){
@@ -3431,13 +3563,15 @@ ctx.fill();</textarea>
     return {ratio,point:projected,distance:Math.hypot(point.x-projected.x,point.y-projected.y)};
   }
 
-  function closestEditableShapeSegment(obj,scenePoint){
-    if(!obj||obj.type!=='freehand'||!Array.isArray(obj.points)||obj.points.length<2) return null;
-    const count=obj.closedPath?obj.points.length:obj.points.length-1;
+  function closestEditableShapeSegment(obj,localPoint){
+    if(!obj||obj.type!=='freehand') return null;
+    const pointsNow=currentEditablePointArray(obj);
+    if(!Array.isArray(pointsNow)||pointsNow.length<2) return null;
+    const count=obj.closedPath?pointsNow.length:pointsNow.length-1;
     let best=null;
     for(let i=0;i<count;i++){
-      const j=(i+1)%obj.points.length;
-      const hit=projectPointToSegment(scenePoint,obj.points[i],obj.points[j]);
+      const j=(i+1)%pointsNow.length;
+      const hit=projectPointToSegment(localPoint,pointsNow[i],pointsNow[j]);
       if(!best||hit.distance<best.distance) best={startIndex:i,endIndex:j,insertIndex:i+1,ratio:hit.ratio,point:hit.point,distance:hit.distance};
     }
     return best;
@@ -3454,6 +3588,12 @@ ctx.fill();</textarea>
   }
 
   function syncKnownTopologyInsert(obj,oldLength,startIndex,endIndex,insertIndex,ratio){
+    // Keep every geometry-bearing system aligned with the new topology.
+    if(Array.isArray(obj.keyframes)) obj.keyframes.forEach(key=>{
+      if(!Array.isArray(key.points) || key.points.length !== oldLength) return;
+      const a=key.points[startIndex], b=key.points[endIndex];
+      key.points.splice(insertIndex,0,{x:a.x+(b.x-a.x)*ratio,y:a.y+(b.y-a.y)*ratio});
+    });
     const db=obj.demBones;
     if(!db) return;
     if(Array.isArray(db.restPoints)&&db.restPoints.length===oldLength){
@@ -3473,6 +3613,9 @@ ctx.fill();</textarea>
   }
 
   function syncKnownTopologyDelete(obj,index){
+    if(Array.isArray(obj.keyframes)) obj.keyframes.forEach(key=>{
+      if(Array.isArray(key.points)&&key.points.length>index) key.points.splice(index,1);
+    });
     const db=obj.demBones;
     if(!db) return;
     if(Array.isArray(db.restPoints)&&db.restPoints.length>index) db.restPoints.splice(index,1);
@@ -3485,18 +3628,24 @@ ctx.fill();</textarea>
   function insertEditableShapePoint(obj,scenePoint,recordHistory=true){
     if(!obj) return false;
     if(obj.type!=='freehand') convertDrawObjectToEditablePath(obj);
-    const hit=closestEditableShapeSegment(obj,scenePoint);
-    if(!hit||hit.distance>shapePointSceneThreshold(20)) return false;
+    const localPoint = scenePointToObjectLocal(obj,scenePoint,t);
+    const hit=closestEditableShapeSegment(obj,localPoint);
+    const eff=getEffectiveObj(obj,t);
+    const scale=Math.max(0.01,Math.abs(Number(eff.tscale)||1));
+    if(!hit||hit.distance>(shapePointSceneThreshold(20)/scale)) return false;
     if(recordHistory) pushUndo();
     const oldLength=obj.points.length;
     let insertIndex=hit.insertIndex;
     if(obj.closedPath&&hit.startIndex===oldLength-1) insertIndex=oldLength;
-    obj.points.splice(insertIndex,0,{x:hit.point.x,y:hit.point.y});
+    const baseA=obj.points[hit.startIndex], baseB=obj.points[hit.endIndex];
+    const basePoint={x:baseA.x+(baseB.x-baseA.x)*hit.ratio,y:baseA.y+(baseB.y-baseA.y)*hit.ratio};
+    obj.points.splice(insertIndex,0,basePoint);
     syncKnownTopologyInsert(obj,oldLength,hit.startIndex,hit.endIndex,insertIndex,hit.ratio);
     shapePointSelectedIndex=insertIndex;
     renderShapePointHandles();
     updateInspector();
     renderLayerList();
+    renderTimeline();
     return true;
   }
 
@@ -3510,14 +3659,13 @@ ctx.fill();</textarea>
     const segmentCount=closed?original.length:original.length-1;
     for(let i=segmentCount-1;i>=0;i--){
       const j=(i+1)%original.length;
-      const hit={startIndex:i,endIndex:j,insertIndex:i+1,ratio:0.5,point:{x:(original[i].x+original[j].x)/2,y:(original[i].y+original[j].y)/2},distance:0};
       const oldLength=obj.points.length;
-      let insertIndex=hit.insertIndex;
+      let insertIndex=i+1;
       if(closed&&i===original.length-1) insertIndex=oldLength;
-      obj.points.splice(insertIndex,0,hit.point);
+      obj.points.splice(insertIndex,0,{x:(original[i].x+original[j].x)/2,y:(original[i].y+original[j].y)/2});
       syncKnownTopologyInsert(obj,oldLength,i,j,insertIndex,0.5);
     }
-    renderShapePointHandles();updateInspector();renderLayerList();
+    renderShapePointHandles();updateInspector();renderLayerList();renderTimeline();
     return true;
   }
 
@@ -3530,7 +3678,7 @@ ctx.fill();</textarea>
     obj.points.splice(safe,1);
     syncKnownTopologyDelete(obj,safe);
     shapePointSelectedIndex=Math.max(0,Math.min(obj.points.length-1,safe));
-    renderShapePointHandles();updateInspector();renderLayerList();
+    renderShapePointHandles();updateInspector();renderLayerList();renderTimeline();
     return true;
   }
 
@@ -3563,8 +3711,10 @@ ctx.fill();</textarea>
     if(!shapePointEditMode) return;
     const obj=currentShapePointEditObject();
     if(!obj||obj.type!=='freehand'||!Array.isArray(obj.points)){setShapePointEditMode(false);return;}
-    obj.points.forEach((point,index)=>{
-      const display=sceneToStagePoint(point);
+    const visiblePoints=currentEditablePointArray(obj);
+    visiblePoints.forEach((point,index)=>{
+      const scene=objectLocalPointToScene(obj,point,t);
+      const display=sceneToStagePoint(scene);
       const el=document.createElement('div');
       el.className='shape-point-handle'+(index===shapePointSelectedIndex?' active':'');
       el.style.left=(display.x/W*100)+'%';el.style.top=(display.y/H*100)+'%';
@@ -3572,13 +3722,21 @@ ctx.fill();</textarea>
       el.addEventListener('mousedown',event=>{
         event.preventDefault();event.stopPropagation();
         pushUndo();shapePointSelectedIndex=index;shapePointAddMode=false;
+        inspectorDragging=true;
         function move(ev){
-          const c=canvasCoords(ev.clientX,ev.clientY);
-          obj.points[index]={x:c.x,y:c.y};
-          if(obj.demBones&&Array.isArray(obj.demBones.restPoints)&&obj.demBones.restPoints[index]) obj.demBones.restPoints[index]={x:c.x,y:c.y};
+          const scenePoint=canvasCoords(ev.clientX,ev.clientY);
+          const localPoint=scenePointToObjectLocal(obj,scenePoint,t);
+          writeEditablePointAtCurrentTime(obj,index,localPoint);
           renderShapePointHandles();
+          renderTimeline();
         }
-        function up(){window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up);finishObjectEdit(obj);updateInspector();}
+        function up(){
+          window.removeEventListener('mousemove',move);
+          window.removeEventListener('mouseup',up);
+          inspectorDragging=false;
+          finishObjectEdit(obj);
+          updateInspector();
+        }
         window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
       });
       el.addEventListener('contextmenu',event=>{event.preventDefault();event.stopPropagation();deleteEditableShapePoint(obj,index,true);});
@@ -3737,15 +3895,18 @@ ctx.fill();</textarea>
     const editPointsButton = document.getElementById('btn-edit-shape-points');
     const addPointButton = document.getElementById('btn-add-shape-point');
     const subdivideButton = document.getElementById('btn-subdivide-shape-points');
+    const deletePointButton = document.getElementById('btn-delete-shape-point');
     editPointsButton.classList.toggle('active', samePointObject);
     editPointsButton.textContent = samePointObject ? 'Finish Points' : 'Edit Points';
     addPointButton.disabled = !samePointObject;
     addPointButton.classList.toggle('active', samePointObject && shapePointAddMode);
     addPointButton.textContent = samePointObject && shapePointAddMode ? 'Click Outline…' : '+ Point';
     subdivideButton.disabled = !samePointObject;
+    const editablePointCount = samePointObject ? currentEditablePointArray(obj).length : 0;
+    deletePointButton.disabled = !samePointObject || editablePointCount <= (obj.closedPath ? 3 : 2);
     const pointHint=document.getElementById('insp-shape-point-hint');
     if(pointHint) pointHint.textContent=samePointObject
-      ? ((obj.points?obj.points.length:0)+' points. Drag a point, right-click one to delete, or add points without changing the outline.')
+      ? (editablePointCount+' real vector points. Dragging changes the shape geometry. With Auto Keyframe on, point positions animate on the timeline.')
       : 'Convert this vector to an editable path while preserving rounded corners and its current stage appearance.';
 
     const eff = getEffectiveObj(obj, t);
@@ -3757,6 +3918,8 @@ ctx.fill();</textarea>
       document.getElementById('insp-y').value = Math.round(eff.ty || 0);
       document.getElementById('insp-fill').value = toHexColor(eff.fillColor || obj.fillColor || obj.color || '#4fe0c4');
       document.getElementById('insp-stroke').value = toHexColor(eff.strokeColor || obj.strokeColor || obj.color || '#1b1f24');
+      document.getElementById('insp-fill-enabled').checked = eff.fillEnabled !== undefined ? !!eff.fillEnabled : obj.fillEnabled !== false;
+      document.getElementById('insp-stroke-enabled').checked = eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false;
       setRangeUI('insp-strokewidth','val-insp-strokewidth', Math.max(1, eff.strokeWidth !== undefined ? eff.strokeWidth : (obj.strokeWidth || 4)), v=>Math.round(v));
       if(obj.type === 'rect') setRangeUI('insp-cornerradius','val-insp-cornerradius', Math.max(0, eff.cornerRadius !== undefined ? eff.cornerRadius : (obj.cornerRadius || 0)), v=>Math.round(v));
     }
@@ -3841,7 +4004,17 @@ ctx.fill();</textarea>
     updateSelectedObjectField('strokeColor', e.target.value);
   });
   document.getElementById('insp-stroke').addEventListener('change', (e)=>{ e.target.dataset.historyArmed=''; const sel=getSelectedSingleObject(); finishObjectEdit(sel?sel.obj:null); });
+  document.getElementById('insp-fill-enabled').addEventListener('change', (e)=>{
+    const sel=getSelectedSingleObject(); if(!sel || sel.obj.type==='clipinstance') return;
+    pushUndo(); updateSelectedObjectField('fillEnabled',!!e.target.checked); finishObjectEdit(sel.obj);
+  });
+  document.getElementById('insp-stroke-enabled').addEventListener('change', (e)=>{
+    const sel=getSelectedSingleObject(); if(!sel || sel.obj.type==='clipinstance') return;
+    pushUndo(); updateSelectedObjectField('strokeEnabled',!!e.target.checked); finishObjectEdit(sel.obj);
+  });
 
+
+  // ---------------- permanent sidebar shape properties ----------------
   document.getElementById('btn-edit-shape-points').addEventListener('click', ()=>{
     const sel=getSelectedSingleObject();
     const active=!!(shapePointEditMode&&sel&&sel.obj.id===shapePointEditObjectId);
@@ -3858,24 +4031,38 @@ ctx.fill();</textarea>
     if(subdivideEditableShape(obj)) logToSandbox('Added one point to every outline segment without changing the shape.');
   });
 
+  document.getElementById('btn-delete-shape-point').addEventListener('click', ()=>{
+    const obj=currentShapePointEditObject();if(!obj)return;
+    deleteEditableShapePoint(obj,shapePointSelectedIndex,true);
+  });
+
   document.getElementById('btn-add-keyframe').addEventListener('click', ()=>{
     const sel = getSelectedSingleObject(); if(!sel) return;
     const obj = sel.obj;
     const isClip = obj.type === 'clipinstance';
     pushUndo();
-    const x = parseFloat(document.getElementById('insp-x').value) || 0;
-    const y = parseFloat(document.getElementById('insp-y').value) || 0;
-    const scale = parseFloat(document.getElementById('insp-scale').value);
-    const rotation = parseFloat(document.getElementById('insp-rotation').value);
-    const opacity = parseFloat(document.getElementById('insp-opacity').value) / 100;
-    const strokeWidth = parseFloat(document.getElementById('insp-strokewidth').value) || 4;
-    const cornerRadius = Math.max(0, parseFloat(document.getElementById('insp-cornerradius').value) || 0);
-    const kf = isClip
-      ? { time:t, x, y, scale, rotation, opacity }
-      : { time:t, tx:x, ty:y, tscale:scale, trotation:rotation, opacity, strokeWidth,
-          fillColor: document.getElementById('insp-fill').value, strokeColor: document.getElementById('insp-stroke').value };
-    if(!isClip && obj.type === 'rect') kf.cornerRadius = cornerRadius;
-    upsertObjectKeyframe(obj, kf);
+    const keyframe = makeObjectKeyframeSnapshot(obj,t);
+    keyframe.time = t;
+    if(isClip){
+      keyframe.x = parseFloat(document.getElementById('insp-x').value) || 0;
+      keyframe.y = parseFloat(document.getElementById('insp-y').value) || 0;
+      keyframe.scale = parseFloat(document.getElementById('insp-scale').value);
+      keyframe.rotation = parseFloat(document.getElementById('insp-rotation').value);
+    }else{
+      keyframe.tx = parseFloat(document.getElementById('insp-x').value) || 0;
+      keyframe.ty = parseFloat(document.getElementById('insp-y').value) || 0;
+      keyframe.tscale = parseFloat(document.getElementById('insp-scale').value);
+      keyframe.trotation = parseFloat(document.getElementById('insp-rotation').value);
+      keyframe.strokeWidth = parseFloat(document.getElementById('insp-strokewidth').value) || 4;
+      keyframe.fillColor = document.getElementById('insp-fill').value;
+      keyframe.strokeColor = document.getElementById('insp-stroke').value;
+      keyframe.fillEnabled = !!document.getElementById('insp-fill-enabled').checked;
+      keyframe.strokeEnabled = !!document.getElementById('insp-stroke-enabled').checked;
+      if(obj.type === 'rect') keyframe.cornerRadius = Math.max(0,parseFloat(document.getElementById('insp-cornerradius').value)||0);
+      if(obj.type === 'freehand') keyframe.points = currentEditablePointArray(obj).map(point=>({x:point.x,y:point.y}));
+    }
+    keyframe.opacity = parseFloat(document.getElementById('insp-opacity').value) / 100;
+    upsertObjectKeyframe(obj,keyframe);
     finishObjectEdit(obj);
   });
 
@@ -4313,7 +4500,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 76,
+    version: 80,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -5999,6 +6186,8 @@ ctx.fill();</textarea>
     const frame = Math.max(0, Math.min(info.totalFrames, Math.round(frac * info.totalFrames)));
     t = Math.min(timelineDuration, frame / info.fps);
     syncAudioToTime();
+    updateInspector();
+    renderTransformHandles();
   }
 
   function beginTimelineScrub(e){
@@ -6390,11 +6579,19 @@ ctx.fill();</textarea>
       }
     }
     const result = {};
-    Object.keys(a).forEach(k=>{
+    const keys = new Set([...Object.keys(a||{}), ...Object.keys(b||{})]);
+    keys.forEach(k=>{
       if(k === 'time') return;
-      if(colorKeys.includes(k)) result[k] = lerpColor(a[k], b[k], frac);
-      else if(typeof a[k] === 'number') result[k] = a[k] + ((b[k]!==undefined?b[k]:a[k]) - a[k]) * frac;
-      else result[k] = frac < 0.5 ? a[k] : b[k];
+      const av = a[k];
+      const bv = b[k] !== undefined ? b[k] : av;
+      if(k === 'points' && Array.isArray(av) && Array.isArray(bv) && av.length === bv.length){
+        result.points = av.map((point,index)=>({
+          x:(Number(point.x)||0)+((Number(bv[index].x)||0)-(Number(point.x)||0))*frac,
+          y:(Number(point.y)||0)+((Number(bv[index].y)||0)-(Number(point.y)||0))*frac
+        }));
+      }else if(colorKeys.includes(k)) result[k] = lerpColor(av, bv, frac);
+      else if(typeof av === 'number') result[k] = av + ((typeof bv === 'number' ? bv : av) - av) * frac;
+      else result[k] = frac < 0.5 ? av : bv;
     });
     return result;
   }
@@ -7197,7 +7394,13 @@ ctx.fill();</textarea>
   function render(now){
     const dt = Math.min(0.05, (now - lastFrame)/1000);
     lastFrame = now;
-    if(playing){
+    if(exportPlayback.active){
+      // Use the export clock, not preview play/pause state. This makes the
+      // exported canvas evaluate every normal object keyframe plus StickRig and
+      // Dem Bones object evaluators at the correct time for each recorded frame.
+      const exportElapsed = Math.max(0, (now - exportPlayback.startedAt) / 1000);
+      t = Math.min(exportPlayback.duration, exportElapsed);
+    } else if(playing){
       t += dt;
       if(loopTimeline && timelineDuration > 0 && t >= timelineDuration){
         t = t % timelineDuration;
@@ -7232,7 +7435,7 @@ ctx.fill();</textarea>
       inspTimeEl.textContent = 'F ' + currentFrame + ' · ' + t.toFixed(2) + 's';
       if(document.getElementById('inspector-section').style.display !== 'none' && !inspectorDragging) updateInspector();
     }
-    if(selectShapesMode && !inspectorDragging) renderTransformHandles();
+    if((selectShapesMode || shapePointEditMode) && !inspectorDragging) renderTransformHandles();
 
     // keep the audio element roughly in sync with t without fighting small natural drift
     if(playing && audioLoaded && !audioEl.paused){
@@ -7268,6 +7471,13 @@ ctx.fill();</textarea>
     ctx.restore();
     renderClipPivotCross();
     renderRegisteredStageOverlays();
+
+    // Some browsers expose manual frame requests on canvas capture tracks. Ask
+    // for the just-rendered frame when available; captureStream(fps) remains the
+    // fallback and supplies frames automatically elsewhere.
+    if(exportPlayback.active && exportPlayback.videoTrack && typeof exportPlayback.videoTrack.requestFrame === 'function'){
+      try { exportPlayback.videoTrack.requestFrame(); } catch(error) {}
+    }
 
     requestAnimationFrame(render);
   }
@@ -7396,6 +7606,7 @@ ctx.fill();</textarea>
     }
 
     const stream = canvas.captureStream(fps);
+    const canvasVideoTrack = stream.getVideoTracks ? stream.getVideoTracks()[0] : null;
 
     let recordStream = stream;
     let usingAudio = false;
@@ -7417,6 +7628,14 @@ ctx.fill();</textarea>
     chunks = [];
     mediaRecorder.ondataavailable = (e)=>{ if(e.data.size>0) chunks.push(e.data); };
     mediaRecorder.onstop = ()=>{
+      const restorePlaying = exportPlayback.previousPlaying;
+      const restoreTime = exportPlayback.previousTime;
+      exportPlayback.active = false;
+      exportPlayback.videoTrack = null;
+      playing = restorePlaying;
+      t = restoreTime;
+      lastFrame = performance.now();
+
       const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
       const url = URL.createObjectURL(blob);
       const ext = 'webm';
@@ -7432,7 +7651,19 @@ ctx.fill();</textarea>
       if(usingAudio) stopAudioIfLoaded();
     };
 
+    exportPlayback.previousPlaying = playing;
+    exportPlayback.previousTime = t;
+    exportPlayback.duration = duration;
+    exportPlayback.fps = fps;
+    exportPlayback.startedAt = performance.now();
+    exportPlayback.videoTrack = canvasVideoTrack;
+    exportPlayback.active = true;
+
+    // Export always starts from the beginning and drives its own clock. Preview
+    // playback is temporarily paused to avoid applying two time advances at once.
+    playing = false;
     t = 0;
+    lastFrame = exportPlayback.startedAt;
     layers.forEach(l => l.state = {}); // clean ripple/etc state for a fresh loop
     mediaRecorder.start();
     if(usingAudio) playAudioIfLoaded();
@@ -7442,7 +7673,7 @@ ctx.fill();</textarea>
     recIndicator.classList.add('on');
     downloadLink.classList.remove('show');
 
-    const startedAt = performance.now();
+    const startedAt = exportPlayback.startedAt;
     const tick = ()=>{
       if(!mediaRecorder || mediaRecorder.state !== 'recording') return;
       const elapsed = (performance.now()-startedAt)/1000;
