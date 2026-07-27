@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v63</title>
+<title>Luke Animate v64</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -299,6 +299,92 @@
   #stage-text-editor.active{ display:block; }
   #stage-text-editor:empty::before{
     content:'Type here'; color:rgba(27,31,36,.38); -webkit-text-stroke:0 transparent;
+  }
+
+
+
+  /* ---------- remote Luke Animate configuration ---------- */
+  .config-extension-group{
+    margin:10px 14px 14px;
+    padding:10px;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:8px;
+  }
+  .config-extension-heading{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    margin-bottom:8px;
+    font-size:11px;
+    font-weight:700;
+    color:var(--text-dim);
+    text-transform:uppercase;
+    letter-spacing:.05em;
+  }
+  .config-extension-list{
+    display:grid;
+    grid-template-columns:1fr;
+    gap:7px;
+  }
+  .config-script-button{
+    width:100%;
+    min-height:42px;
+    display:flex;
+    align-items:center;
+    gap:9px;
+    padding:7px 9px;
+    border:1px solid var(--line);
+    border-radius:7px;
+    background:var(--panel);
+    color:var(--text);
+    font:inherit;
+    text-align:left;
+    cursor:pointer;
+  }
+  .config-script-button:hover{
+    border-color:var(--accent-dim);
+    box-shadow:0 3px 10px rgba(0,0,0,.08);
+  }
+  .config-script-button:disabled{
+    opacity:.58;
+    cursor:wait;
+  }
+  .config-script-button img{
+    width:26px;
+    height:26px;
+    flex:0 0 26px;
+    object-fit:contain;
+  }
+  .config-script-button .config-script-label{
+    min-width:0;
+    flex:1;
+    font-size:12px;
+    font-weight:650;
+  }
+  .config-script-button .config-script-arrow{
+    flex:0 0 auto;
+    color:var(--text-dim);
+  }
+  .config-status{
+    padding:6px 8px;
+    border-radius:6px;
+    background:var(--panel-2);
+    color:var(--text-dim);
+    font-size:10.5px;
+    line-height:1.35;
+    overflow-wrap:anywhere;
+  }
+  .config-status.good{ color:#08745f; background:#e7f8f3; }
+  .config-status.bad{ color:#a12b24; background:#fff0ee; }
+  .devtab img.config-tab-icon{
+    display:block;
+    width:22px;
+    height:22px;
+    margin:auto;
+    object-fit:contain;
+    pointer-events:none;
   }
 
   /* ---------- devtools (Behaviours / Type / Import / Tools / Sandbox) ---------- */
@@ -3370,6 +3456,16 @@ ctx.fill();</textarea>
 
   document.getElementById('btn-open-type-panel').addEventListener('click', ()=> openDevPanel('type'));
 
+  const panelTitles = {
+    animate:'Animate',
+    particles:'Particles & Effects',
+    behaviours:'Behaviours',
+    type:'Type',
+    import:'Import / Export',
+    tools:'Tools',
+    sandbox:'Sandbox'
+  };
+
   // ---- main tool-panel switching ----
   // Particles & Effects is the full original editor and is the permanent home
   // for paths, points, layers, all effect settings, timeline controls and export.
@@ -3393,8 +3489,7 @@ ctx.fill();</textarea>
     document.getElementById('sidebar-tools-content').style.display = 'flex';
     document.querySelectorAll('.devtab').forEach(t=> t.classList.toggle('active', t.dataset.panel === name));
     document.querySelectorAll('.devpanel').forEach(p=> p.style.display = (p.id === 'devpanel-'+name) ? 'block' : 'none');
-    const titles = { animate:'Animate', behaviours:'Behaviours', type:'Type', import:'Import / Export', tools:'Tools', sandbox:'Sandbox' };
-    document.getElementById('devpanel-title').textContent = titles[name] || name;
+    document.getElementById('devpanel-title').textContent = panelTitles[name] || name;
     animatePanelOpen = name === 'animate';
     setAnimateSelectionActive(animatePanelOpen && stageTool === 'none', false);
     if(name === 'behaviours') renderBehaviourList();
@@ -3414,6 +3509,277 @@ ctx.fill();</textarea>
       else openDevPanel(name);
     });
   });
+
+
+  // ---------------- Luke Animate remote Config.json ----------------
+  // The deployed application deliberately looks for one configuration only:
+  // https://lukeo25.github.io/LukeAnimate/Config.json
+  // Script and SVG URLs in that file may be absolute or relative to Config.json.
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json';
+  let lukeAnimateConfig = null;
+  let configLoadSequence = 0;
+
+  function resolveConfigAssetUrl(value){
+    if(!value) return '';
+    try{ return new URL(String(value), LUKE_ANIMATE_CONFIG_URL).href; }
+    catch(err){ return String(value); }
+  }
+
+  function getConfigPanelHost(panelId){
+    if(panelId === 'particles') return document.getElementById('sidebar-main-content');
+    return document.getElementById('devpanel-' + panelId);
+  }
+
+  function setConfigStatus(message, state){
+    const node = document.getElementById('luke-config-status');
+    if(!node) return;
+    node.textContent = message;
+    node.className = 'config-status' + (state ? ' ' + state : '');
+  }
+
+  function ensureConfigControls(){
+    const toolsPanel = document.getElementById('devpanel-tools');
+    if(!toolsPanel || document.getElementById('luke-config-controls')) return;
+
+    const block = document.createElement('div');
+    block.id = 'luke-config-controls';
+    block.className = 'config-extension-group';
+
+    const heading = document.createElement('div');
+    heading.className = 'config-extension-heading';
+    const headingText = document.createElement('span');
+    headingText.textContent = 'Luke Animate Config';
+    const reload = document.createElement('button');
+    reload.type = 'button';
+    reload.className = 'btn small';
+    reload.textContent = 'Reload';
+    reload.title = 'Reload Config.json without using the browser cache';
+    reload.addEventListener('click', ()=> loadLukeAnimateConfig(true));
+    heading.appendChild(headingText);
+    heading.appendChild(reload);
+
+    const status = document.createElement('div');
+    status.id = 'luke-config-status';
+    status.className = 'config-status';
+    status.textContent = LUKE_ANIMATE_CONFIG_URL;
+
+    block.appendChild(heading);
+    block.appendChild(status);
+    toolsPanel.insertBefore(block, toolsPanel.firstChild);
+  }
+
+  function removeRenderedConfigExtensions(){
+    document.querySelectorAll('.config-extension-group[data-config-generated="true"]').forEach(node=> node.remove());
+  }
+
+  function applyConfiguredTab(group){
+    const tab = document.querySelector('.devtab[data-panel="' + group.id + '"]');
+    if(!tab) return;
+    if(group.label){
+      panelTitles[group.id] = String(group.label);
+      tab.title = String(group.label);
+    }
+    if(group.tabIcon){
+      const fallback = tab.innerHTML;
+      const img = document.createElement('img');
+      img.className = 'config-tab-icon';
+      img.alt = '';
+      img.src = resolveConfigAssetUrl(group.tabIcon);
+      img.addEventListener('error', ()=>{ tab.innerHTML = fallback; }, { once:true });
+      tab.replaceChildren(img);
+    }
+  }
+
+  function createConfigScriptButton(group, item){
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'config-script-button';
+    button.title = item.description || ('Load ' + (item.label || item.id || 'configured script'));
+
+    if(item.iconUrl){
+      const icon = document.createElement('img');
+      icon.alt = '';
+      icon.src = resolveConfigAssetUrl(item.iconUrl);
+      icon.addEventListener('error', ()=> icon.remove(), { once:true });
+      button.appendChild(icon);
+    }
+
+    const label = document.createElement('span');
+    label.className = 'config-script-label';
+    label.textContent = item.label || item.id || 'Script';
+    const arrow = document.createElement('span');
+    arrow.className = 'config-script-arrow';
+    arrow.textContent = '›';
+    button.appendChild(label);
+    button.appendChild(arrow);
+    button.addEventListener('click', ()=> runConfiguredItem(group, item, button));
+    return button;
+  }
+
+  function renderConfiguredGroup(group){
+    if(!group || !group.id) return;
+    applyConfiguredTab(group);
+    const host = getConfigPanelHost(group.id);
+    if(!host) return;
+
+    const block = document.createElement('div');
+    block.className = 'config-extension-group';
+    block.dataset.configGenerated = 'true';
+    block.dataset.configPanel = group.id;
+
+    const heading = document.createElement('div');
+    heading.className = 'config-extension-heading';
+    heading.textContent = group.sectionLabel || 'Configured Scripts';
+    block.appendChild(heading);
+
+    const list = document.createElement('div');
+    list.className = 'config-extension-list';
+    const items = Array.isArray(group.items) ? group.items : [];
+    if(items.length){
+      items.forEach(item=> list.appendChild(createConfigScriptButton(group, item)));
+    }else{
+      const empty = document.createElement('div');
+      empty.className = 'hint';
+      empty.style.padding = '0';
+      empty.textContent = 'No configured scripts in this panel.';
+      list.appendChild(empty);
+    }
+    block.appendChild(list);
+
+    if(group.id === 'particles'){
+      const header = host.querySelector('.side-header');
+      if(header && header.nextSibling) host.insertBefore(block, header.nextSibling);
+      else host.appendChild(block);
+    }else{
+      host.appendChild(block);
+    }
+  }
+
+  function configMessage(message, bad){
+    setConfigStatus(message, bad ? 'bad' : 'good');
+    try{ logToSandbox(message); }catch(err){}
+  }
+
+  const LukeAnimatePluginAPI = {
+    version: 64,
+    configUrl: LUKE_ANIMATE_CONFIG_URL,
+    get canvas(){ return canvas; },
+    get context(){ return ctx; },
+    get width(){ return W; },
+    get height(){ return H; },
+    get time(){ return t; },
+    get fps(){
+      return Math.max(1, Math.min(120, parseInt(document.getElementById('inp-fps').value, 10) || 30));
+    },
+    get activePanel(){
+      const tab = document.querySelector('.devtab.active');
+      return tab ? tab.dataset.panel : 'animate';
+    },
+    openPanel(panelId){
+      if(panelId === 'particles') showParticlesPanel();
+      else openDevPanel(panelId || 'animate');
+    },
+    log(message){ configMessage(String(message), false); },
+    warn(message){ configMessage(String(message), true); },
+    registerObjectPanelOwner(type, panelId){ registerObjectPanelOwner(type, panelId); },
+    getActiveLayer(){ return activeLayer(); },
+    getLayers(){ return layers; },
+    getDrawObjects(){ return drawObjects; },
+    getSelectedDrawObjects(){
+      return Array.from(selectedDrawIndices).map(index=> drawObjects[index]).filter(Boolean);
+    },
+    addDrawObject(object, panelId){
+      if(!object || typeof object !== 'object') throw new Error('addDrawObject requires an object.');
+      pushUndo();
+      if(panelId) object.panelId = panelId;
+      ensureDrawObjectMetadata(object);
+      drawObjects.push(object);
+      return object;
+    },
+    selectDrawObject(object){
+      const index = drawObjects.indexOf(object);
+      if(index < 0) return false;
+      selectedDrawIndices.clear();
+      selectedDrawIndices.add(index);
+      routeSelectionToPanel(panelForDrawObject(object), true);
+      return true;
+    },
+    reloadConfig(){ return loadLukeAnimateConfig(true); }
+  };
+  window.LukeAnimate = LukeAnimatePluginAPI;
+
+  async function runConfiguredItem(group, item, button){
+    const action = String(item.action || 'script').toLowerCase();
+    const sourceValue = item.scriptUrl || item.toolUrl;
+    if(!sourceValue){
+      configMessage('No scriptUrl or toolUrl is configured for ' + (item.label || item.id || 'this item') + '.', true);
+      return;
+    }
+
+    const sourceUrl = resolveConfigAssetUrl(sourceValue);
+    const originalLabel = button ? button.querySelector('.config-script-label') : null;
+    const originalText = originalLabel ? originalLabel.textContent : '';
+    if(button) button.disabled = true;
+    if(originalLabel) originalLabel.textContent = 'Loading…';
+
+    try{
+      const response = await fetch(sourceUrl, { cache:'no-store' });
+      if(!response.ok) throw new Error('HTTP ' + response.status + ' while loading ' + sourceUrl);
+      const source = await response.text();
+      if(!source.trim()) throw new Error('The configured script is empty.');
+
+      // A Luke Animate script is plain JavaScript. It receives the public API,
+      // its own item record and its parent group. Returning a Promise is allowed.
+      const runner = new Function('LukeAnimate', 'item', 'group', '"use strict";\n' + source + '\n//# sourceURL=' + sourceUrl);
+      const result = runner(LukeAnimatePluginAPI, item, group);
+      if(result && typeof result.then === 'function') await result;
+      configMessage((item.label || item.id || 'Configured script') + ' loaded.', false);
+
+      if(action !== 'script' && action !== 'tool'){
+        configMessage('Unknown action "' + action + '" was executed as JavaScript.', false);
+      }
+    }catch(err){
+      configMessage('Could not load ' + (item.label || item.id || 'configured script') + ': ' + (err && err.message ? err.message : err), true);
+    }finally{
+      if(button) button.disabled = false;
+      if(originalLabel) originalLabel.textContent = originalText;
+    }
+  }
+
+  async function loadLukeAnimateConfig(forceReload){
+    ensureConfigControls();
+    const mySequence = ++configLoadSequence;
+    setConfigStatus('Loading ' + LUKE_ANIMATE_CONFIG_URL + ' …', '');
+    try{
+      const url = forceReload
+        ? LUKE_ANIMATE_CONFIG_URL + '?reload=' + Date.now()
+        : LUKE_ANIMATE_CONFIG_URL;
+      const response = await fetch(url, { cache:'no-store' });
+      if(!response.ok) throw new Error('HTTP ' + response.status);
+      const config = await response.json();
+      if(mySequence !== configLoadSequence) return null;
+      if(!config || !Array.isArray(config.groups)) throw new Error('Config.json must contain a groups array.');
+
+      lukeAnimateConfig = config;
+      removeRenderedConfigExtensions();
+      config.groups.forEach(renderConfiguredGroup);
+      const count = config.groups.reduce((total, group)=> total + (Array.isArray(group.items) ? group.items.length : 0), 0);
+      setConfigStatus('Loaded ' + config.groups.length + ' panels and ' + count + ' configured scripts from Config.json.', 'good');
+
+      const activeTab = document.querySelector('.devtab.active');
+      if(activeTab && activeTab.dataset.panel !== 'particles'){
+        document.getElementById('devpanel-title').textContent = panelTitles[activeTab.dataset.panel] || activeTab.dataset.panel;
+      }
+      window.dispatchEvent(new CustomEvent('lukeanimateconfigloaded', { detail:config }));
+      return config;
+    }catch(err){
+      if(mySequence !== configLoadSequence) return null;
+      lukeAnimateConfig = null;
+      removeRenderedConfigExtensions();
+      setConfigStatus('Config not loaded: ' + (err && err.message ? err.message : err) + '. Expected at ' + LUKE_ANIMATE_CONFIG_URL, 'bad');
+      return null;
+    }
+  }
 
   // ---- Sandbox ----
   document.getElementById('btn-sandbox-run').addEventListener('click', ()=>{
@@ -6371,6 +6737,7 @@ ctx.fill();</textarea>
   syncStageSettingsUI();
   applyZoom();
   openDevPanel('animate');
+  loadLukeAnimateConfig(false);
 })();
 </script>
 </body>
