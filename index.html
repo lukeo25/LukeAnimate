@@ -1,8 +1,9 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v72</title>
+<title>Luke Animate v73</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -97,6 +98,37 @@
     cursor:grab; z-index:7; pointer-events:auto;
   }
   .xform-body-hint{ cursor:move; }
+  .clip-pivot-cross{
+    position:absolute;
+    width:34px;
+    height:34px;
+    margin:-17px 0 0 -17px;
+    z-index:11;
+    cursor:move;
+    pointer-events:auto;
+    filter:drop-shadow(0 1px 2px rgba(255,255,255,.9));
+    touch-action:none;
+  }
+  .clip-pivot-cross::before,
+  .clip-pivot-cross::after{
+    content:"";
+    position:absolute;
+    background:#111820;
+    border-radius:2px;
+  }
+  .clip-pivot-cross::before{left:0;top:15px;width:34px;height:4px;}
+  .clip-pivot-cross::after{left:15px;top:0;width:4px;height:34px;}
+  .clip-pivot-cross .clip-pivot-ring{
+    position:absolute;
+    left:10px;
+    top:10px;
+    width:14px;
+    height:14px;
+    border:3px solid #0e9c86;
+    border-radius:50%;
+    background:#ffffff;
+  }
+  .clip-pivot-cross.dragging .clip-pivot-ring{background:#0e9c86;border-color:#ffffff;}
 
   #topbar{
     position:absolute; top:0; left:0; right:0;
@@ -1528,6 +1560,7 @@ ctx.fill();</textarea>
   const MAX_CLIP_DEPTH = 6;
   const contextStack = []; // for entering/exiting "editing a clip" sessions
   let editingClipId = null; // null = editing the main scene
+  let clipEditViewOffset = { x:0, y:0 }; // screen-space view offset used only while editing inside a Clip
   let selectShapesMode = false; // active in Animate only while the Select tool is chosen
   let animatePanelOpen = false;
   let autoKeyframe = false;
@@ -1543,6 +1576,96 @@ ctx.fill();</textarea>
   let audioLoaded = false;
   let audioDuration = 0;
   let includeAudioInExport = false;
+
+  function ensureClipPivot(clip){
+    if(!clip) return { x:0, y:0 };
+    if(!Number.isFinite(Number(clip.pivotX))) clip.pivotX = 0;
+    if(!Number.isFinite(Number(clip.pivotY))) clip.pivotY = 0;
+    return { x:Number(clip.pivotX), y:Number(clip.pivotY) };
+  }
+
+  function currentClipEditOffset(){
+    return editingClipId ? clipEditViewOffset : { x:0, y:0 };
+  }
+
+  function sceneToStagePoint(point){
+    const offset = currentClipEditOffset();
+    return { x:Number(point.x || 0) + offset.x, y:Number(point.y || 0) + offset.y };
+  }
+
+  function stageToScenePoint(point){
+    const offset = currentClipEditOffset();
+    return { x:Number(point.x || 0) - offset.x, y:Number(point.y || 0) - offset.y };
+  }
+
+  function centreClipEditView(clip){
+    const pivot = ensureClipPivot(clip);
+    clipEditViewOffset = { x:W / 2 - pivot.x, y:H / 2 - pivot.y };
+  }
+
+  function rotateScaleDelta(dx, dy, scale, rotation){
+    const s = Number.isFinite(Number(scale)) ? Number(scale) : 1;
+    const rad = (Number(rotation) || 0) * Math.PI / 180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    return { x:(dx * cos - dy * sin) * s, y:(dx * sin + dy * cos) * s };
+  }
+
+  function mainSceneDrawObjects(){
+    if(contextStack.length) return contextStack[0].data.drawObjects || [];
+    return drawObjects;
+  }
+
+  function compensateInstanceForPivot(instance, dx, dy){
+    if(!instance || instance.type !== 'clipinstance') return;
+    const snapshots = Array.isArray(instance.keyframes)
+      ? instance.keyframes.map(kf=>({ kf, effective:getEffectiveObj(instance, Number(kf.time) || 0) }))
+      : [];
+    const baseDelta = rotateScaleDelta(dx, dy, instance.scale === undefined ? 1 : instance.scale, instance.rotation || 0);
+    instance.x = Number(instance.x || 0) + baseDelta.x;
+    instance.y = Number(instance.y || 0) + baseDelta.y;
+    snapshots.forEach(entry=>{
+      const eff = entry.effective || instance;
+      const delta = rotateScaleDelta(dx, dy, eff.scale === undefined ? 1 : eff.scale, eff.rotation || 0);
+      entry.kf.x = Number(eff.x || 0) + delta.x;
+      entry.kf.y = Number(eff.y || 0) + delta.y;
+    });
+    clipPivotCompensators.forEach((callback, id)=>{
+      try{ callback(instance, { dx, dy, clipId:instance.clipId, api:LukeAnimatePluginAPI }); }
+      catch(err){ console.warn('Luke Animate clip pivot compensator failed:', id, err); }
+    });
+  }
+
+  function moveClipPivotPreserveStage(clipId, newX, newY){
+    const clip = clips[clipId];
+    if(!clip) return false;
+    const oldPivot = ensureClipPivot(clip);
+    const nextX = Number(newX) || 0;
+    const nextY = Number(newY) || 0;
+    const dx = nextX - oldPivot.x;
+    const dy = nextY - oldPivot.y;
+    if(Math.abs(dx) < .0001 && Math.abs(dy) < .0001) return false;
+
+    const arrays = [];
+    const seenArrays = new Set();
+    function addArray(list){
+      if(!Array.isArray(list) || seenArrays.has(list)) return;
+      seenArrays.add(list);
+      arrays.push(list);
+    }
+    addArray(mainSceneDrawObjects());
+    Object.values(clips).forEach(definition=> addArray(definition && definition.drawObjects));
+    arrays.forEach(list=> list.forEach(instance=>{
+      if(instance && instance.type === 'clipinstance' && instance.clipId === clipId){
+        compensateInstanceForPivot(instance, dx, dy);
+      }
+    }));
+
+    clip.pivotX = nextX;
+    clip.pivotY = nextY;
+    renderTimeline();
+    updateInspector();
+    return true;
+  }
 
   // ---------------- layers ----------------
   let layerCounter = 0;
@@ -1612,6 +1735,8 @@ ctx.fill();</textarea>
   // or set obj.panelId directly when creating their object.
   const objectPanelOwners = Object.create(null);
   const objectEvaluators = new Map();
+  const clipPivotCompensators = new Map();
+  const selectionInspectorSuppressors = new Set();
   function registerObjectPanelOwner(type, panelId){
     if(type && panelId) objectPanelOwners[type] = panelId;
   }
@@ -1622,6 +1747,21 @@ ctx.fill();</textarea>
   }
   function unregisterObjectEvaluator(id){
     return objectEvaluators.delete(String(id));
+  }
+  function registerClipPivotCompensator(id, callback){
+    if(!id || typeof callback !== 'function') throw new Error('registerClipPivotCompensator requires an id and function.');
+    clipPivotCompensators.set(String(id), callback);
+    return true;
+  }
+  function unregisterClipPivotCompensator(id){
+    return clipPivotCompensators.delete(String(id));
+  }
+  function setSelectionInspectorSuppressed(ownerId, suppressed){
+    const key = String(ownerId || 'external-tool');
+    if(suppressed) selectionInspectorSuppressors.add(key);
+    else selectionInspectorSuppressors.delete(key);
+    updateInspector();
+    return selectionInspectorSuppressors.size > 0;
   }
   ['freehand','line','rect','ellipse','text','clipinstance'].forEach(type=> registerObjectPanelOwner(type, 'animate'));
 
@@ -2009,17 +2149,19 @@ ctx.fill();</textarea>
     if(!editMode) return;
     points.forEach((p,i)=>{
       const el = document.createElement('div');
+      const displayPoint = sceneToStagePoint(p);
       el.className = 'pt pt-path' + (i===0 ? ' first' : '');
-      el.style.left = (p.x/W*100) + '%';
-      el.style.top = (p.y/H*100) + '%';
+      el.style.left = (displayPoint.x/W*100) + '%';
+      el.style.top = (displayPoint.y/H*100) + '%';
       el.dataset.idx = i;
       overlay.appendChild(el);
     });
     targetPoints.forEach(pt=>{
       const el = document.createElement('div');
+      const displayPoint = sceneToStagePoint(pt);
       el.className = 'pt-target';
-      el.style.left = (pt.x/W*100) + '%';
-      el.style.top = (pt.y/H*100) + '%';
+      el.style.left = (displayPoint.x/W*100) + '%';
+      el.style.top = (displayPoint.y/H*100) + '%';
       el.dataset.pointId = pt.id;
       overlay.appendChild(el);
     });
@@ -2027,10 +2169,10 @@ ctx.fill();</textarea>
 
   function canvasCoords(clientX, clientY){
     const rect = canvas.getBoundingClientRect();
-    return {
+    return stageToScenePoint({
       x: (clientX - rect.left) / rect.width * W,
       y: (clientY - rect.top) / rect.height * H
-    };
+    });
   }
 
   // Hard boundary check: a click must be physically inside the canvas's own
@@ -2287,6 +2429,8 @@ ctx.fill();</textarea>
       targetPoints: [],
       layers: [ makeLayer('particles') ],
       drawObjects: [],
+      pivotX: 0,
+      pivotY: 0,
       timelineDuration: 3,
       loopTimeline: true
     };
@@ -2317,6 +2461,8 @@ ctx.fill();</textarea>
     if(eff.rotation) ctx.rotate(eff.rotation * Math.PI / 180);
     const s = (eff.scale === undefined || eff.scale === null) ? 1 : eff.scale;
     if(s !== 1) ctx.scale(s, s);
+    const clipPivot = ensureClipPivot(clip);
+    if(clipPivot.x || clipPivot.y) ctx.translate(-clipPivot.x, -clipPivot.y);
 
     renderSceneLayers(true);
     renderDrawObjects(); // recurse — a clip's own drawObjects may include further clip instances
@@ -2355,8 +2501,10 @@ ctx.fill();</textarea>
   function enterClipEdit(clipId){
     const clip = clips[clipId];
     if(!clip) return;
-    contextStack.push({ data: captureMainSceneAsContext(), clipId: editingClipId });
+    contextStack.push({ data: captureMainSceneAsContext(), clipId: editingClipId, viewOffset:{ x:clipEditViewOffset.x, y:clipEditViewOffset.y } });
     editingClipId = clipId;
+    ensureClipPivot(clip);
+    centreClipEditView(clip);
     applyContext({
       points: clip.points, closed: clip.closed, targetPoints: clip.targetPoints,
       layers: clip.layers, drawObjects: clip.drawObjects,
@@ -2379,6 +2527,7 @@ ctx.fill();</textarea>
     }
     const prev = contextStack.pop();
     editingClipId = prev.clipId;
+    clipEditViewOffset = prev.viewOffset || { x:0, y:0 };
     applyContext(prev.data);
     updateClipBreadcrumb();
     renderClipLibrary();
@@ -2602,10 +2751,11 @@ ctx.fill();</textarea>
     const shellRect = document.getElementById('canvas-shell').getBoundingClientRect();
     const scaleX = canvasRect.width / W;
     const scaleY = canvasRect.height / H;
-    const anchorScreenX = canvasRect.left + stageTextEdit.x * scaleX;
+    const stageAnchor = sceneToStagePoint(stageTextEdit);
+    const anchorScreenX = canvasRect.left + stageAnchor.x * scaleX;
     const style = textPanelStyle();
     editor.style.left = (anchorScreenX - shellRect.left) + 'px';
-    editor.style.top = (canvasRect.top - shellRect.top + stageTextEdit.y * scaleY) + 'px';
+    editor.style.top = (canvasRect.top - shellRect.top + stageAnchor.y * scaleY) + 'px';
     const leftRoom = Math.max(20, anchorScreenX - canvasRect.left - 4);
     const rightRoom = Math.max(20, canvasRect.right - anchorScreenX - 4);
     const maxEditorWidth = style.align === 'center' ? Math.max(40, Math.min(leftRoom, rightRoom) * 2)
@@ -3069,9 +3219,10 @@ ctx.fill();</textarea>
 
     corners.forEach(c=>{
       const el = document.createElement('div');
+      const displayCorner = sceneToStagePoint(c);
       el.className = 'xform-handle';
-      el.style.left = (c.x/W*100) + '%';
-      el.style.top = (c.y/H*100) + '%';
+      el.style.left = (displayCorner.x/W*100) + '%';
+      el.style.top = (displayCorner.y/H*100) + '%';
       el.title = 'Drag to scale';
       el.addEventListener('mousedown', (e)=>{
         e.stopPropagation(); e.preventDefault();
@@ -3098,9 +3249,10 @@ ctx.fill();</textarea>
     });
 
     const rEl = document.createElement('div');
+    const displayRotate = sceneToStagePoint(rotPos);
     rEl.className = 'xform-rotate-handle';
-    rEl.style.left = (rotPos.x/W*100) + '%';
-    rEl.style.top = (rotPos.y/H*100) + '%';
+    rEl.style.left = (displayRotate.x/W*100) + '%';
+    rEl.style.top = (displayRotate.y/H*100) + '%';
     rEl.title = 'Drag to rotate';
     rEl.addEventListener('mousedown', (e)=>{
       e.stopPropagation(); e.preventDefault();
@@ -3124,6 +3276,54 @@ ctx.fill();</textarea>
     overlay.appendChild(rEl);
   }
 
+  function renderClipPivotCross(){
+    const shell = document.getElementById('canvas-shell');
+    let cross = document.getElementById('clip-pivot-cross');
+    if(!editingClipId){
+      if(cross) cross.remove();
+      return;
+    }
+    const clip = clips[editingClipId];
+    if(!clip) return;
+    if(!cross){
+      cross = document.createElement('div');
+      cross.id = 'clip-pivot-cross';
+      cross.className = 'clip-pivot-cross';
+      cross.title = 'Clip pivot — drag to change the rotation and scale origin without moving the Clip on the main stage';
+      cross.innerHTML = '<span class="clip-pivot-ring"></span>';
+      shell.appendChild(cross);
+      let drag = null;
+      cross.addEventListener('pointerdown', event=>{
+        event.preventDefault();
+        event.stopPropagation();
+        drag = { pointerId:event.pointerId };
+        cross.classList.add('dragging');
+        cross.setPointerCapture(event.pointerId);
+      });
+      cross.addEventListener('pointermove', event=>{
+        if(!drag || drag.pointerId !== event.pointerId || !editingClipId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const next = canvasCoords(event.clientX, event.clientY);
+        moveClipPivotPreserveStage(editingClipId, next.x, next.y);
+        renderClipPivotCross();
+      });
+      function finishPivotDrag(event){
+        if(!drag || drag.pointerId !== event.pointerId) return;
+        drag = null;
+        cross.classList.remove('dragging');
+        renderPoints();
+        renderTransformHandles();
+      }
+      cross.addEventListener('pointerup', finishPivotDrag);
+      cross.addEventListener('pointercancel', finishPivotDrag);
+    }
+    const pivot = ensureClipPivot(clip);
+    const display = sceneToStagePoint(pivot);
+    cross.style.left = (display.x / W * 100) + '%';
+    cross.style.top = (display.y / H * 100) + '%';
+  }
+
   function getSelectedSingleObject(){
     if(selectedDrawIndices.size !== 1) return null;
     const idx = Array.from(selectedDrawIndices)[0];
@@ -3132,6 +3332,7 @@ ctx.fill();</textarea>
 
   function updateInspector(){
     const section = document.getElementById('inspector-section');
+    if(selectionInspectorSuppressors.size){ section.style.display = 'none'; return; }
     const sel = getSelectedSingleObject();
     if(!sel){ section.style.display = 'none'; return; }
     section.style.display = 'block';
@@ -3697,7 +3898,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 72,
+    version: 73,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get context(){ return ctx; },
@@ -3720,6 +3921,9 @@ ctx.fill();</textarea>
     registerObjectPanelOwner(type, panelId){ registerObjectPanelOwner(type, panelId); },
     registerObjectEvaluator(id, evaluator){ return registerObjectEvaluator(id, evaluator); },
     unregisterObjectEvaluator(id){ return unregisterObjectEvaluator(id); },
+    registerClipPivotCompensator(id, callback){ return registerClipPivotCompensator(id, callback); },
+    unregisterClipPivotCompensator(id){ return unregisterClipPivotCompensator(id); },
+    setSelectionInspectorSuppressed(ownerId, suppressed){ return setSelectionInspectorSuppressed(ownerId, suppressed); },
     registerFloatingPanel(panel){ registerFloatingPanel(panel); return panel; },
     bringFloatingPanelToFront(panel){ bringFloatingPanelToFront(panel); return panel; },
     clampFloatingPanelToViewport(panel){ clampFloatingPanelToViewport(panel); return panel; },
@@ -3729,6 +3933,8 @@ ctx.fill();</textarea>
     getLayers(){ return layers; },
     getClips(){ return clips; },
     getEditingClipId(){ return editingClipId; },
+    getClipPivot(clipId){ const clip = clips[clipId]; return clip ? Object.assign({}, ensureClipPivot(clip)) : null; },
+    setClipPivot(clipId, x, y){ return moveClipPivotPreserveStage(clipId, x, y); },
     getDrawObjects(){ return drawObjects; },
     getSelectedDrawObjects(){
       return Array.from(selectedDrawIndices).map(index=> drawObjects[index]).filter(Boolean);
@@ -4646,6 +4852,7 @@ ctx.fill();</textarea>
     H = newHeight;
     canvas.width = W;
     canvas.height = H;
+    if(editingClipId && clips[editingClipId]) centreClipEditView(clips[editingClipId]);
     applyZoom();
     syncStageSettingsUI();
     renderPoints();
@@ -6611,11 +6818,15 @@ ctx.fill();</textarea>
       ctx.globalCompositeOperation = 'source-over';
     }
 
+    ctx.save();
+    if(editingClipId) ctx.translate(clipEditViewOffset.x, clipEditViewOffset.y);
     drawPathGuide();
 
     renderSceneLayers(false);
 
     renderDrawObjects();
+    ctx.restore();
+    renderClipPivotCross();
 
     requestAnimationFrame(render);
   }
