@@ -1,0 +1,1088 @@
+/* Luke Animate Dem Bones GPT v1.0
+   Direct Luke Animate plug-in. No Wick Editor and no LukeToolsBridge.
+   Loaded by Config.json as an Animate tool.
+*/
+(function(){
+  "use strict";
+
+  var API = LukeAnimate;
+  var TOOL_ID = "DemBones";
+  var EVALUATOR_ID = "luke-animate-dem-bones-evaluator";
+  var OVERLAY_ID = "luke-animate-dem-bones-overlay";
+  var SINGLETON_KEY = "__LukeAnimateDemBonesPlugin";
+  var ICON_URL = (item && item.iconUrl) || "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Bone.svg";
+
+  if (!API || typeof API.getDrawObjects !== "function") {
+    throw new Error("Dem Bones requires the Luke Animate v74 plug-in API.");
+  }
+
+  if (window[SINGLETON_KEY]) {
+    window[SINGLETON_KEY].open();
+    return;
+  }
+
+  var state = {
+    panel: null,
+    style: null,
+    open: false,
+    activeRig: null,
+    selectedBoneId: "",
+    mode: "select",
+    addPreview: null,
+    drag: null,
+    currentSceneKey: "",
+    statusTimer: null,
+    listenersBound: false,
+    fileInput: null,
+    lastFrame: -1
+  };
+
+  function n(value, fallback){
+    var number = Number(value);
+    return isFinite(number) ? number : fallback;
+  }
+
+  function clamp(value, min, max){
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function round3(value){
+    return Math.round(n(value, 0) * 1000) / 1000;
+  }
+
+  function clone(value){
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function uid(prefix){
+    return String(prefix || "id") + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9);
+  }
+
+  function escapeHtml(value){
+    return String(value === undefined || value === null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function sceneKey(){
+    return API.getEditingClipId() || "__main_scene__";
+  }
+
+  function currentTime(){
+    return n(API.time, 0);
+  }
+
+  function currentFrame(){
+    return typeof API.getCurrentFrame === "function" ? API.getCurrentFrame() : Math.max(1, Math.round(currentTime() * n(API.fps, 30)) + 1);
+  }
+
+  function sceneObjects(){
+    var objects = API.getDrawObjects();
+    return Array.isArray(objects) ? objects : [];
+  }
+
+  function selectedObjects(){
+    var objects = API.getSelectedDrawObjects();
+    return Array.isArray(objects) ? objects : [];
+  }
+
+  function selectedBone(){
+    if (!state.activeRig) return null;
+    for (var i = 0; i < state.activeRig.bones.length; i += 1) {
+      if (state.activeRig.bones[i].id === state.selectedBoneId) return state.activeRig.bones[i];
+    }
+    return null;
+  }
+
+  function setStatus(message, type){
+    if (!state.panel) return;
+    var box = state.panel.querySelector("[data-db-status]");
+    if (!box) return;
+    box.textContent = String(message || "");
+    box.className = "db-status " + (type || "");
+  }
+
+  function notify(message, bad){
+    setStatus(message, bad ? "bad" : "good");
+    try {
+      if (bad) API.warn(message);
+      else API.log(message);
+    } catch (error) {}
+  }
+
+  function ensureStyle(){
+    if (document.getElementById("la-dem-bones-style")) return;
+    var style = document.createElement("style");
+    style.id = "la-dem-bones-style";
+    style.textContent = [
+      ".la-dem-bones-panel{position:fixed;left:36px;top:74px;width:430px;max-width:calc(100vw - 20px);max-height:calc(100vh - 20px);display:none;flex-direction:column;background:#f4f5f7;border:1px solid #bfc5cc;border-radius:12px;box-shadow:0 18px 54px rgba(0,0,0,.28);overflow:hidden;color:#26303b;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;z-index:10000}",
+      ".la-dem-bones-panel.open{display:flex}",
+      ".db-head{display:flex;align-items:center;gap:9px;padding:9px 10px;background:#ffffff;border-bottom:1px solid #d6dbe1;cursor:move;user-select:none}",
+      ".db-head img{width:26px;height:26px;object-fit:contain;filter:grayscale(1) brightness(.78)}",
+      ".db-title{flex:1;min-width:0}.db-title strong{display:block;font-size:14px;color:#29434a}.db-title span{display:block;font-size:9px;letter-spacing:.11em;color:#798391;text-transform:uppercase;margin-top:2px}",
+      ".db-frame{border:1px solid #b7c0cb;border-radius:999px;background:#fff;padding:5px 10px;font-size:10px;white-space:nowrap}.db-frame b{color:#0e9c86}",
+      ".db-close{width:32px;height:32px;border:1px solid #b7c0cb;border-radius:8px;background:#fff;color:#596575;font-size:20px;line-height:1;cursor:pointer}",
+      ".db-toolbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;padding:9px;background:#fff;border-bottom:1px solid #d6dbe1}",
+      ".db-btn{min-width:0;border:1px solid #b9c1cb;border-radius:8px;background:#eef0f3;color:#4c5867;padding:8px 6px;font-size:11px;cursor:pointer}.db-btn:hover{border-color:#0e9c86}.db-btn.primary,.db-btn.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}.db-btn.danger{color:#b35a5a;border-color:#dfc0c0}.db-btn:disabled{opacity:.4;cursor:default}",
+      ".db-body{min-height:0;overflow:auto;padding:10px 10px 78px}",
+      ".db-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:10px;margin-bottom:9px}.db-section h3{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#647080;margin:0 0 9px}",
+      ".db-help{font-size:11px;line-height:1.45;color:#687383;margin:0}",
+      ".db-row{display:grid;grid-template-columns:88px minmax(0,1fr) 66px;gap:7px;align-items:center;margin-bottom:8px}.db-row:last-child{margin-bottom:0}.db-row label{font-size:11px;color:#627080}.db-row input[type=range]{width:100%;accent-color:#0e9c86}.db-row input[type=number],.db-row input[type=text],.db-row select{width:100%;min-width:0;border:1px solid #cbd1d9;border-radius:7px;background:#f4f5f7;color:#26303b;padding:7px;font-size:11px}",
+      ".db-inline{display:flex;gap:7px;align-items:center}.db-inline>*{flex:1;min-width:0}",
+      ".db-bone-list{display:flex;flex-direction:column;gap:5px;max-height:180px;overflow:auto}.db-bone{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:7px;align-items:center;border:1px solid #d1d7de;border-radius:8px;background:#f4f5f7;padding:7px;cursor:pointer}.db-bone.active{border-color:#0e9c86;background:#e3f7f3}.db-bone .dot{width:12px;height:12px;border-radius:50%;background:#687483;margin:auto}.db-bone.active .dot{background:#0e9c86}.db-bone-name{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.db-bone-parent{font-size:9px;color:#7e8895}",
+      ".db-key-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.db-key-grid .db-btn{width:100%}",
+      ".db-status{position:absolute;left:10px;right:10px;bottom:10px;min-height:38px;max-height:58px;overflow:auto;border:1px solid #cfd5dc;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596575}.db-status.good{border-color:#0e9c86;color:#177e6f}.db-status.bad{border-color:#c76b6b;color:#a04444}",
+      ".db-file{display:none}",
+      "@media(max-width:560px){.la-dem-bones-panel{left:8px;top:58px;width:calc(100vw - 16px)}.db-toolbar{grid-template-columns:repeat(3,minmax(0,1fr))}.db-row{grid-template-columns:76px minmax(0,1fr) 58px}}"
+    ].join("\n");
+    document.head.appendChild(style);
+    state.style = style;
+  }
+
+  function panelHtml(){
+    return '' +
+      '<div class="db-head" data-db-drag>' +
+        '<img src="' + escapeHtml(ICON_URL) + '" alt="">' +
+        '<div class="db-title"><strong>Dem Bones</strong><span>Luke Animate · Vector Bone Warp</span></div>' +
+        '<div class="db-frame">Frame <b data-db-frame>1</b></div>' +
+        '<button class="db-close" type="button" data-db-close title="Close">×</button>' +
+      '</div>' +
+      '<div class="db-toolbar">' +
+        '<button class="db-btn primary" type="button" data-db-use>Use Selection</button>' +
+        '<button class="db-btn" type="button" data-db-add>Add Bone</button>' +
+        '<button class="db-btn" type="button" data-db-bind>Bind</button>' +
+        '<button class="db-btn" type="button" data-db-export>Rig JSON</button>' +
+        '<button class="db-btn" type="button" data-db-import>Import</button>' +
+      '</div>' +
+      '<div class="db-body">' +
+        '<div class="db-section">' +
+          '<h3>Rig Target</h3>' +
+          '<p class="db-help" data-db-target-info>Select one or more shapes, then click Use Selection. Rectangles and ellipses are converted to editable vector paths so their points can bend.</p>' +
+        '</div>' +
+        '<div class="db-section">' +
+          '<h3>Bones</h3>' +
+          '<div class="db-inline" style="margin-bottom:8px">' +
+            '<input type="text" data-db-bone-name placeholder="Selected bone name">' +
+            '<button class="db-btn" type="button" data-db-rename>Rename</button>' +
+            '<button class="db-btn danger" type="button" data-db-delete-bone>Delete</button>' +
+          '</div>' +
+          '<div class="db-bone-list" data-db-bone-list></div>' +
+          '<p class="db-help" style="margin-top:8px">Select a parent bone, choose Add Bone, then drag from head to tail on the stage. Drag a displayed head or tail to edit the rest rig.</p>' +
+        '</div>' +
+        '<div class="db-section">' +
+          '<h3>Animate Selected Bone</h3>' +
+          '<div class="db-row"><label>Move X</label><input type="range" min="-800" max="800" step="1" value="0" data-db-dx><input type="number" step="1" value="0" data-db-dx-num></div>' +
+          '<div class="db-row"><label>Move Y</label><input type="range" min="-800" max="800" step="1" value="0" data-db-dy><input type="number" step="1" value="0" data-db-dy-num></div>' +
+          '<div class="db-row"><label>Rotation</label><input type="range" min="-360" max="360" step="1" value="0" data-db-rotation><input type="number" step="1" value="0" data-db-rotation-num></div>' +
+          '<div class="db-row"><label>Easing</label><select data-db-easing><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="ease-in-out">Ease In/Out</option><option value="hold">Hold</option></select><span></span></div>' +
+          '<div class="db-key-grid">' +
+            '<button class="db-btn primary" type="button" data-db-set-key>Set Key</button>' +
+            '<button class="db-btn" type="button" data-db-delete-key>Delete Key</button>' +
+            '<button class="db-btn" type="button" data-db-reset-pose>Reset Pose</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="db-section">' +
+          '<h3>Rig Actions</h3>' +
+          '<div class="db-key-grid">' +
+            '<button class="db-btn" type="button" data-db-rebind>Rebind</button>' +
+            '<button class="db-btn" type="button" data-db-refresh>Refresh</button>' +
+            '<button class="db-btn danger" type="button" data-db-clear>Clear Rig</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<input class="db-file" type="file" accept="application/json,.json,.dembones" data-db-file>' +
+      '<div class="db-status" data-db-status>Ready. Select shapes and click Use Selection.</div>';
+  }
+
+  function createPanel(){
+    ensureStyle();
+    var panel = document.createElement("div");
+    panel.className = "la-dem-bones-panel open";
+    panel.dataset.lukeAnimateFloatingPanel = "true";
+    panel.innerHTML = panelHtml();
+    document.body.appendChild(panel);
+    state.panel = panel;
+    state.fileInput = panel.querySelector("[data-db-file]");
+    API.registerFloatingPanel(panel);
+    bindPanelEvents();
+    makePanelDraggable(panel, panel.querySelector("[data-db-drag]"));
+    requestAnimationFrame(function(){
+      API.bringFloatingPanelToFront(panel);
+      API.clampFloatingPanelToViewport(panel);
+    });
+  }
+
+  function makePanelDraggable(panel, handle){
+    if (!panel || !handle) return;
+    handle.addEventListener("pointerdown", function(event){
+      if (event.target.closest("button")) return;
+      event.preventDefault();
+      API.bringFloatingPanelToFront(panel);
+      var rect = panel.getBoundingClientRect();
+      var offsetX = event.clientX - rect.left;
+      var offsetY = event.clientY - rect.top;
+      function move(moveEvent){
+        panel.style.left = (moveEvent.clientX - offsetX) + "px";
+        panel.style.top = (moveEvent.clientY - offsetY) + "px";
+        panel.style.right = "auto";
+        panel.style.bottom = "auto";
+      }
+      function up(){
+        window.removeEventListener("pointermove", move, true);
+        window.removeEventListener("pointerup", up, true);
+        API.clampFloatingPanelToViewport(panel);
+      }
+      window.addEventListener("pointermove", move, true);
+      window.addEventListener("pointerup", up, true);
+    });
+  }
+
+  function supportedObject(object){
+    return object && ["freehand", "line", "rect", "ellipse"].indexOf(object.type) !== -1;
+  }
+
+  function ellipsePoints(object, count){
+    var points = [];
+    var cx = (n(object.x1, 0) + n(object.x2, 0)) / 2;
+    var cy = (n(object.y1, 0) + n(object.y2, 0)) / 2;
+    var rx = Math.abs(n(object.x2, 0) - n(object.x1, 0)) / 2;
+    var ry = Math.abs(n(object.y2, 0) - n(object.y1, 0)) / 2;
+    for (var i = 0; i < count; i += 1) {
+      var angle = (i / count) * Math.PI * 2;
+      points.push({ x: cx + Math.cos(angle) * rx, y: cy + Math.sin(angle) * ry });
+    }
+    return points;
+  }
+
+  function convertToWarpPath(object){
+    if (!object || !supportedObject(object)) return null;
+    var points = [];
+    var closedPath = false;
+    var fillEnabled = false;
+    if (object.type === "freehand") {
+      points = (object.points || []).map(function(point){ return { x:n(point.x,0), y:n(point.y,0) }; });
+      closedPath = !!object.closedPath;
+      fillEnabled = !!object.fillEnabled;
+    } else if (object.type === "line") {
+      points = [
+        { x:n(object.x1,0), y:n(object.y1,0) },
+        { x:n(object.x2,0), y:n(object.y2,0) }
+      ];
+    } else if (object.type === "rect") {
+      var x1 = Math.min(n(object.x1,0), n(object.x2,0));
+      var y1 = Math.min(n(object.y1,0), n(object.y2,0));
+      var x2 = Math.max(n(object.x1,0), n(object.x2,0));
+      var y2 = Math.max(n(object.y1,0), n(object.y2,0));
+      points = [{x:x1,y:y1},{x:x2,y:y1},{x:x2,y:y2},{x:x1,y:y2}];
+      closedPath = true;
+      fillEnabled = true;
+    } else if (object.type === "ellipse") {
+      points = ellipsePoints(object, 40);
+      closedPath = true;
+      fillEnabled = true;
+    }
+    if (points.length < 2) return null;
+    object.demBonesOriginalType = object.demBonesOriginalType || object.type;
+    object.type = "freehand";
+    object.points = points;
+    object.closedPath = closedPath;
+    object.fillEnabled = fillEnabled;
+    if (object.strokeEnabled === undefined) object.strokeEnabled = true;
+    if (object.strokeWidth === undefined) object.strokeWidth = 4;
+    return object;
+  }
+
+  function rigTargets(rig){
+    if (!rig) return [];
+    var ids = {};
+    (rig.targetIds || []).forEach(function(id){ ids[id] = true; });
+    return sceneObjects().filter(function(object){
+      return object && ids[object.id] && object.demBones && object.demBones.rigId === rig.id;
+    });
+  }
+
+  function syncRigReferences(rig){
+    if (!rig) return;
+    rigTargets(rig).forEach(function(object){
+      object.demBones.rig = rig;
+    });
+  }
+
+  function findRigsInScene(){
+    var rigs = {};
+    sceneObjects().forEach(function(object){
+      if (!object || !object.demBones || !object.demBones.rigId) return;
+      var rig = object.demBones.rig;
+      if (rig && rig.id) rigs[rig.id] = rigs[rig.id] || rig;
+    });
+    Object.keys(rigs).forEach(function(rigId){
+      var rig = rigs[rigId];
+      sceneObjects().forEach(function(object){
+        if (object && object.demBones && object.demBones.rigId === rigId) object.demBones.rig = rig;
+      });
+    });
+    return Object.keys(rigs).map(function(id){ return rigs[id]; });
+  }
+
+  function createRigFromSelection(){
+    var chosen = selectedObjects().filter(supportedObject);
+    if (!chosen.length) {
+      notify("Select one or more line, rectangle, ellipse or freehand shapes first.", true);
+      return;
+    }
+    API.pushUndo();
+    var rig = {
+      version: 1,
+      id: uid("dem-bones-rig"),
+      name: "Dem Bones Rig",
+      sceneKey: sceneKey(),
+      targetIds: [],
+      bones: [],
+      createdAt: new Date().toISOString()
+    };
+    chosen.forEach(function(object){
+      convertToWarpPath(object);
+      rig.targetIds.push(object.id);
+      object.demBones = {
+        version: 1,
+        rigId: rig.id,
+        rig: rig,
+        restPoints: (object.points || []).map(function(point){ return {x:n(point.x,0),y:n(point.y,0)}; }),
+        weights: [],
+        closedPath: !!object.closedPath
+      };
+    });
+    state.activeRig = rig;
+    state.currentSceneKey = sceneKey();
+    state.selectedBoneId = "";
+    state.mode = "select";
+    renderPanel();
+    API.refreshUI();
+    notify("Loaded " + chosen.length + " shape" + (chosen.length === 1 ? "" : "s") + ". Add bones, then Bind.", false);
+  }
+
+  function selectExistingRig(){
+    var selected = selectedObjects();
+    for (var i = 0; i < selected.length; i += 1) {
+      if (selected[i].demBones && selected[i].demBones.rig) {
+        state.activeRig = selected[i].demBones.rig;
+        state.currentSceneKey = sceneKey();
+        state.selectedBoneId = state.activeRig.bones.length ? state.activeRig.bones[0].id : "";
+        syncRigReferences(state.activeRig);
+        renderPanel();
+        notify("Existing Dem Bones rig loaded.", false);
+        return true;
+      }
+    }
+    var rigs = findRigsInScene();
+    if (rigs.length) {
+      state.activeRig = rigs[0];
+      state.currentSceneKey = sceneKey();
+      state.selectedBoneId = state.activeRig.bones.length ? state.activeRig.bones[0].id : "";
+      syncRigReferences(state.activeRig);
+      renderPanel();
+      notify("Existing Dem Bones rig found in this scene.", false);
+      return true;
+    }
+    return false;
+  }
+
+  function distancePointToSegment(point, a, b){
+    var dx = b.x - a.x;
+    var dy = b.y - a.y;
+    var lengthSq = dx * dx + dy * dy;
+    if (lengthSq <= 0.000001) return Math.hypot(point.x - a.x, point.y - a.y);
+    var t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq;
+    t = clamp(t, 0, 1);
+    var px = a.x + dx * t;
+    var py = a.y + dy * t;
+    return Math.hypot(point.x - px, point.y - py);
+  }
+
+  function bindRig(recordUndo){
+    if (recordUndo === undefined) recordUndo = true;
+    var rig = state.activeRig;
+    if (!rig) {
+      notify("Use Selection or load an existing rig first.", true);
+      return;
+    }
+    if (!rig.bones.length) {
+      notify("Add at least one bone before binding.", true);
+      return;
+    }
+    if (recordUndo) API.pushUndo();
+    var targets = rigTargets(rig);
+    targets.forEach(function(object){
+      var data = object.demBones;
+      data.restPoints = (object.points || data.restPoints || []).map(function(point){ return {x:n(point.x,0),y:n(point.y,0)}; });
+      data.weights = data.restPoints.map(function(point){
+        var distances = rig.bones.map(function(bone){
+          return { boneId:bone.id, distance:distancePointToSegment(point, bone.restHead, bone.restTail) };
+        }).sort(function(a,b){ return a.distance - b.distance; }).slice(0, Math.min(2, rig.bones.length));
+        var total = 0;
+        distances.forEach(function(entry){
+          entry.weight = 1 / Math.max(1, entry.distance * entry.distance);
+          total += entry.weight;
+        });
+        distances.forEach(function(entry){ entry.weight = total > 0 ? entry.weight / total : 1 / distances.length; });
+        return distances;
+      });
+    });
+    syncRigReferences(rig);
+    API.refreshUI();
+    notify("Bound " + targets.length + " shape" + (targets.length === 1 ? "" : "s") + " to " + rig.bones.length + " bone" + (rig.bones.length === 1 ? "" : "s") + ".", false);
+  }
+
+  function angleOf(a, b){
+    return Math.atan2(b.y - a.y, b.x - a.x);
+  }
+
+  function rotateVector(x, y, angle){
+    var c = Math.cos(angle);
+    var s = Math.sin(angle);
+    return { x:x*c - y*s, y:x*s + y*c };
+  }
+
+  function inverseRotateVector(x, y, angle){
+    return rotateVector(x, y, -angle);
+  }
+
+  function easingValue(value, easing){
+    var t = clamp(value, 0, 1);
+    if (easing === "ease-in") return t * t;
+    if (easing === "ease-out") return 1 - Math.pow(1 - t, 2);
+    if (easing === "ease-in-out") return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2;
+    if (easing === "hold") return 0;
+    return t;
+  }
+
+  function interpolatePose(bone, time){
+    var base = bone.basePose || {dx:0,dy:0,rotation:0,easing:"linear"};
+    var keys = (bone.keys || []).slice().sort(function(a,b){ return a.time - b.time; });
+    if (!keys.length) return {dx:n(base.dx,0),dy:n(base.dy,0),rotation:n(base.rotation,0),easing:base.easing || "linear"};
+    if (time <= keys[0].time) {
+      if (keys[0].time <= 0.0001) return clone(keys[0]);
+      var firstRatio = easingValue(time / Math.max(0.0001, keys[0].time), base.easing || "linear");
+      return {
+        dx:n(base.dx,0) + (n(keys[0].dx,0)-n(base.dx,0))*firstRatio,
+        dy:n(base.dy,0) + (n(keys[0].dy,0)-n(base.dy,0))*firstRatio,
+        rotation:n(base.rotation,0) + (n(keys[0].rotation,0)-n(base.rotation,0))*firstRatio,
+        easing:keys[0].easing || "linear"
+      };
+    }
+    if (time >= keys[keys.length-1].time) return clone(keys[keys.length-1]);
+    for (var i = 0; i < keys.length - 1; i += 1) {
+      var a = keys[i];
+      var b = keys[i+1];
+      if (time >= a.time && time <= b.time) {
+        var ratio = easingValue((time-a.time)/Math.max(0.0001,b.time-a.time), a.easing || "linear");
+        return {
+          dx:n(a.dx,0)+(n(b.dx,0)-n(a.dx,0))*ratio,
+          dy:n(a.dy,0)+(n(b.dy,0)-n(a.dy,0))*ratio,
+          rotation:n(a.rotation,0)+(n(b.rotation,0)-n(a.rotation,0))*ratio,
+          easing:a.easing || "linear"
+        };
+      }
+    }
+    return clone(base);
+  }
+
+  function restTransformMap(rig){
+    var map = {};
+    function resolve(bone){
+      if (!bone) return null;
+      if (map[bone.id]) return map[bone.id];
+      var angle = angleOf(bone.restHead, bone.restTail);
+      var length = Math.max(0.001, Math.hypot(bone.restTail.x-bone.restHead.x,bone.restTail.y-bone.restHead.y));
+      var result = {head:{x:bone.restHead.x,y:bone.restHead.y},tail:{x:bone.restTail.x,y:bone.restTail.y},angle:angle,length:length};
+      map[bone.id] = result;
+      return result;
+    }
+    rig.bones.forEach(resolve);
+    return map;
+  }
+
+  function posedTransformMap(rig, time){
+    var byId = {};
+    rig.bones.forEach(function(bone){ byId[bone.id] = bone; });
+    var restMap = restTransformMap(rig);
+    var posed = {};
+    var resolving = {};
+    function resolve(bone){
+      if (!bone) return null;
+      if (posed[bone.id]) return posed[bone.id];
+      if (resolving[bone.id]) return restMap[bone.id];
+      resolving[bone.id] = true;
+      var rest = restMap[bone.id];
+      var pose = interpolatePose(bone, time);
+      var head;
+      var angle;
+      if (bone.parentId && byId[bone.parentId]) {
+        var parent = byId[bone.parentId];
+        var parentRest = restMap[parent.id];
+        var parentPose = resolve(parent);
+        var localHead = inverseRotateVector(rest.head.x-parentRest.head.x, rest.head.y-parentRest.head.y, parentRest.angle);
+        var rotatedHead = rotateVector(localHead.x, localHead.y, parentPose.angle);
+        head = {x:parentPose.head.x+rotatedHead.x+n(pose.dx,0),y:parentPose.head.y+rotatedHead.y+n(pose.dy,0)};
+        angle = parentPose.angle + (rest.angle-parentRest.angle) + n(pose.rotation,0)*Math.PI/180;
+      } else {
+        head = {x:rest.head.x+n(pose.dx,0),y:rest.head.y+n(pose.dy,0)};
+        angle = rest.angle + n(pose.rotation,0)*Math.PI/180;
+      }
+      var tailOffset = rotateVector(rest.length, 0, angle);
+      var result = {head:head,tail:{x:head.x+tailOffset.x,y:head.y+tailOffset.y},angle:angle,length:rest.length};
+      posed[bone.id] = result;
+      delete resolving[bone.id];
+      return result;
+    }
+    rig.bones.forEach(resolve);
+    return posed;
+  }
+
+  function deformPoint(point, weights, restMap, posedMap){
+    if (!weights || !weights.length) return {x:point.x,y:point.y};
+    var x = 0;
+    var y = 0;
+    var total = 0;
+    weights.forEach(function(weight){
+      var rest = restMap[weight.boneId];
+      var posed = posedMap[weight.boneId];
+      if (!rest || !posed) return;
+      var local = inverseRotateVector(point.x-rest.head.x, point.y-rest.head.y, rest.angle);
+      var transformed = rotateVector(local.x, local.y, posed.angle);
+      var w = n(weight.weight, 0);
+      x += (posed.head.x + transformed.x) * w;
+      y += (posed.head.y + transformed.y) * w;
+      total += w;
+    });
+    if (total <= 0.0001) return {x:point.x,y:point.y};
+    return {x:x/total,y:y/total};
+  }
+
+  function evaluator(object, time, effective){
+    if (!object || !object.demBones || !object.demBones.rig) return effective;
+    var data = object.demBones;
+    var rig = data.rig;
+    if (!rig || !Array.isArray(data.restPoints) || !Array.isArray(data.weights) || !data.weights.length) return effective;
+    var restMap = restTransformMap(rig);
+    var posedMap = posedTransformMap(rig, time);
+    var points = data.restPoints.map(function(point,index){
+      return deformPoint(point, data.weights[index], restMap, posedMap);
+    });
+    var result = Object.assign({}, effective);
+    result.points = points;
+    result.closedPath = !!data.closedPath;
+    return result;
+  }
+
+  function addBone(head, tail){
+    var rig = state.activeRig;
+    if (!rig) {
+      notify("Use Selection before adding bones.", true);
+      return;
+    }
+    var length = Math.hypot(tail.x-head.x,tail.y-head.y);
+    if (length < 4) {
+      notify("Drag a longer bone.", true);
+      return;
+    }
+    API.pushUndo();
+    var parent = selectedBone();
+    var bone = {
+      id:uid("bone"),
+      name:"Bone " + (rig.bones.length+1),
+      parentId:parent ? parent.id : "",
+      restHead:{x:round3(head.x),y:round3(head.y)},
+      restTail:{x:round3(tail.x),y:round3(tail.y)},
+      basePose:{dx:0,dy:0,rotation:0,easing:"linear"},
+      keys:[]
+    };
+    rig.bones.push(bone);
+    state.selectedBoneId = bone.id;
+    state.mode = "select";
+    bindRig(false);
+    renderPanel();
+    notify(bone.name + " added.", false);
+  }
+
+  function removeSelectedBone(){
+    var rig = state.activeRig;
+    var bone = selectedBone();
+    if (!rig || !bone) return;
+    API.pushUndo();
+    rig.bones = rig.bones.filter(function(entry){ return entry.id !== bone.id; });
+    rig.bones.forEach(function(entry){ if (entry.parentId === bone.id) entry.parentId = bone.parentId || ""; });
+    state.selectedBoneId = rig.bones.length ? rig.bones[0].id : "";
+    if (rig.bones.length) bindRig();
+    else rigTargets(rig).forEach(function(object){ object.demBones.weights = []; });
+    renderPanel();
+    API.refreshUI();
+    notify("Bone deleted.", false);
+  }
+
+  function renameSelectedBone(){
+    var bone = selectedBone();
+    if (!bone || !state.panel) return;
+    var input = state.panel.querySelector("[data-db-bone-name]");
+    var name = input ? input.value.trim() : "";
+    if (!name) return;
+    bone.name = name;
+    renderPanel();
+    API.refreshUI();
+  }
+
+  function exactKey(bone, time){
+    if (!bone) return null;
+    var tolerance = 0.5 / Math.max(1, n(API.fps, 30));
+    for (var i = 0; i < (bone.keys || []).length; i += 1) {
+      if (Math.abs(n(bone.keys[i].time,0)-time) <= tolerance) return bone.keys[i];
+    }
+    return null;
+  }
+
+  function poseForUi(bone){
+    if (!bone) return {dx:0,dy:0,rotation:0,easing:"linear"};
+    var key = exactKey(bone,currentTime());
+    return key || interpolatePose(bone,currentTime());
+  }
+
+  function readPoseControls(){
+    if (!state.panel) return {dx:0,dy:0,rotation:0,easing:"linear"};
+    return {
+      dx:n(state.panel.querySelector("[data-db-dx-num]").value,0),
+      dy:n(state.panel.querySelector("[data-db-dy-num]").value,0),
+      rotation:n(state.panel.querySelector("[data-db-rotation-num]").value,0),
+      easing:state.panel.querySelector("[data-db-easing]").value || "linear"
+    };
+  }
+
+  function writePoseControls(pose){
+    if (!state.panel) return;
+    pose = pose || {dx:0,dy:0,rotation:0,easing:"linear"};
+    [["[data-db-dx]","[data-db-dx-num]",pose.dx],["[data-db-dy]","[data-db-dy-num]",pose.dy],["[data-db-rotation]","[data-db-rotation-num]",pose.rotation]].forEach(function(entry){
+      var range = state.panel.querySelector(entry[0]);
+      var number = state.panel.querySelector(entry[1]);
+      if (range) range.value = String(round3(entry[2]));
+      if (number) number.value = String(round3(entry[2]));
+    });
+    var easing = state.panel.querySelector("[data-db-easing]");
+    if (easing) easing.value = pose.easing || "linear";
+  }
+
+  function setKeyFromControls(){
+    var bone = selectedBone();
+    if (!bone) {
+      notify("Select a bone first.", true);
+      return;
+    }
+    API.pushUndo();
+    var pose = readPoseControls();
+    var time = currentTime();
+    var key = exactKey(bone,time);
+    if (key) Object.assign(key,pose,{time:time});
+    else bone.keys.push(Object.assign({time:time},pose));
+    bone.keys.sort(function(a,b){return a.time-b.time;});
+    API.refreshUI();
+    renderPanel();
+    notify("Key set for " + bone.name + " on frame " + currentFrame() + ".", false);
+  }
+
+  function livePoseChanged(){
+    var bone = selectedBone();
+    if (!bone) return;
+    var pose = readPoseControls();
+    var time = currentTime();
+    var key = exactKey(bone,time);
+    if (key) Object.assign(key,pose);
+    else if (time <= 0.0001 && !(bone.keys || []).length) bone.basePose = Object.assign({},pose);
+    API.refreshUI();
+  }
+
+  function deleteCurrentKey(){
+    var bone = selectedBone();
+    if (!bone) return;
+    var before = bone.keys.length;
+    var time = currentTime();
+    var tolerance = 0.5 / Math.max(1,n(API.fps,30));
+    bone.keys = bone.keys.filter(function(key){ return Math.abs(n(key.time,0)-time) > tolerance; });
+    if (bone.keys.length !== before) {
+      API.pushUndo();
+      renderPanel();
+      API.refreshUI();
+      notify("Current key deleted.", false);
+    } else notify("There is no key on this frame.", true);
+  }
+
+  function resetPose(){
+    var bone = selectedBone();
+    if (!bone) return;
+    writePoseControls({dx:0,dy:0,rotation:0,easing:"linear"});
+    livePoseChanged();
+  }
+
+  function clearRig(){
+    var rig = state.activeRig;
+    if (!rig) return;
+    API.pushUndo();
+    rigTargets(rig).forEach(function(object){
+      if (object.demBones && Array.isArray(object.demBones.restPoints)) object.points = clone(object.demBones.restPoints);
+      delete object.demBones;
+    });
+    state.activeRig = null;
+    state.selectedBoneId = "";
+    state.mode = "select";
+    renderPanel();
+    API.refreshUI();
+    notify("Dem Bones rig removed. The original rest geometry was restored.", false);
+  }
+
+  function exportRig(){
+    var rig = state.activeRig;
+    if (!rig) {
+      notify("There is no active rig to export.", true);
+      return;
+    }
+    var targets = rigTargets(rig).map(function(object){
+      return {
+        objectId:object.id,
+        objectName:object.name || "",
+        restPoints:clone(object.demBones.restPoints || []),
+        weights:clone(object.demBones.weights || []),
+        closedPath:!!object.demBones.closedPath
+      };
+    });
+    var data = {format:"LukeAnimateDemBones",version:1,rig:clone(rig),targets:targets};
+    var blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = (rig.name || "DemBonesRig").replace(/[^a-z0-9_-]+/gi,"_") + ".dembones.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function(){URL.revokeObjectURL(url);},1000);
+    notify("Exported Dem Bones rig JSON.", false);
+  }
+
+  function importRigFile(file){
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      try {
+        var data = JSON.parse(String(reader.result || ""));
+        if (!data || data.format !== "LukeAnimateDemBones" || !data.rig) throw new Error("Not a Luke Animate Dem Bones file.");
+        var rig = data.rig;
+        rig.id = rig.id || uid("dem-bones-rig");
+        rig.sceneKey = sceneKey();
+        var objects = sceneObjects();
+        var selected = selectedObjects().filter(supportedObject);
+        var targetRecords = Array.isArray(data.targets) ? data.targets : [];
+        var resolved = [];
+        targetRecords.forEach(function(record,index){
+          var object = objects.find(function(entry){ return entry.id === record.objectId; }) || selected[index];
+          if (!object) return;
+          convertToWarpPath(object);
+          object.demBones = {
+            version:1,
+            rigId:rig.id,
+            rig:rig,
+            restPoints:clone(record.restPoints || object.points || []),
+            weights:clone(record.weights || []),
+            closedPath:!!record.closedPath
+          };
+          object.points = clone(object.demBones.restPoints);
+          resolved.push(object);
+        });
+        if (!resolved.length) throw new Error("No matching shapes were found. Select the target shapes before importing.");
+        rig.targetIds = resolved.map(function(object){return object.id;});
+        state.activeRig = rig;
+        state.currentSceneKey = sceneKey();
+        state.selectedBoneId = rig.bones && rig.bones.length ? rig.bones[0].id : "";
+        syncRigReferences(rig);
+        renderPanel();
+        API.refreshUI();
+        notify("Imported Dem Bones rig for " + resolved.length + " shape" + (resolved.length===1?"":"s") + ".", false);
+      } catch (error) {
+        notify("Import failed: " + (error.message || error), true);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function renderBoneList(){
+    if (!state.panel) return;
+    var host = state.panel.querySelector("[data-db-bone-list]");
+    if (!host) return;
+    host.innerHTML = "";
+    var rig = state.activeRig;
+    if (!rig || !rig.bones.length) {
+      host.innerHTML = '<div class="db-help">No bones yet.</div>';
+      return;
+    }
+    var byId = {};
+    rig.bones.forEach(function(bone){byId[bone.id]=bone;});
+    rig.bones.forEach(function(bone){
+      var row = document.createElement("div");
+      row.className = "db-bone" + (bone.id === state.selectedBoneId ? " active" : "");
+      row.innerHTML = '<span class="dot"></span><span class="db-bone-name">' + escapeHtml(bone.name) + '</span><span class="db-bone-parent">' + escapeHtml(bone.parentId && byId[bone.parentId] ? "↳ " + byId[bone.parentId].name : "Root") + '</span>';
+      row.addEventListener("click",function(){
+        state.selectedBoneId = bone.id;
+        state.mode = "select";
+        renderPanel();
+      });
+      host.appendChild(row);
+    });
+  }
+
+  function renderPanel(){
+    if (!state.panel) return;
+    var frame = state.panel.querySelector("[data-db-frame]");
+    if (frame) frame.textContent = String(currentFrame());
+    var rig = state.activeRig;
+    var info = state.panel.querySelector("[data-db-target-info]");
+    if (info) {
+      if (!rig) info.textContent = "Select one or more shapes, then click Use Selection. Rectangles and ellipses are converted to editable vector paths so their points can bend.";
+      else info.textContent = rigTargets(rig).length + " target shape" + (rigTargets(rig).length===1?"":"s") + " · " + rig.bones.length + " bone" + (rig.bones.length===1?"":"s") + " · " + (API.getEditingClipId() ? "inside Clip" : "main scene");
+    }
+    var addButton = state.panel.querySelector("[data-db-add]");
+    if (addButton) addButton.classList.toggle("active",state.mode === "add");
+    var bone = selectedBone();
+    var nameInput = state.panel.querySelector("[data-db-bone-name]");
+    if (nameInput) nameInput.value = bone ? bone.name : "";
+    writePoseControls(poseForUi(bone));
+    renderBoneList();
+    var disabled = !bone;
+    ["[data-db-rename]","[data-db-delete-bone]","[data-db-set-key]","[data-db-delete-key]","[data-db-reset-pose]"].forEach(function(selector){
+      var element = state.panel.querySelector(selector);
+      if (element) element.disabled = disabled;
+    });
+  }
+
+  function toScenePoint(event){
+    var rect = API.canvas.getBoundingClientRect();
+    var stagePoint = {
+      x:(event.clientX-rect.left) * API.width / Math.max(1,rect.width),
+      y:(event.clientY-rect.top) * API.height / Math.max(1,rect.height)
+    };
+    return API.stageToScenePoint(stagePoint);
+  }
+
+  function stageDistance(eventPoint, scenePoint){
+    var stagePoint = API.sceneToStagePoint(scenePoint);
+    return Math.hypot(eventPoint.x-stagePoint.x,eventPoint.y-stagePoint.y);
+  }
+
+  function eventStagePoint(event){
+    var rect = API.canvas.getBoundingClientRect();
+    return {
+      x:(event.clientX-rect.left) * API.width / Math.max(1,rect.width),
+      y:(event.clientY-rect.top) * API.height / Math.max(1,rect.height)
+    };
+  }
+
+  function closestBoneHit(event){
+    var rig = state.activeRig;
+    if (!rig) return null;
+    var stagePoint = eventStagePoint(event);
+    var best = null;
+    rig.bones.forEach(function(bone){
+      var headDistance = stageDistance(stagePoint,bone.restHead);
+      var tailDistance = stageDistance(stagePoint,bone.restTail);
+      if (headDistance <= 12 && (!best || headDistance < best.distance)) best={bone:bone,part:"head",distance:headDistance};
+      if (tailDistance <= 12 && (!best || tailDistance < best.distance)) best={bone:bone,part:"tail",distance:tailDistance};
+      var a = API.sceneToStagePoint(bone.restHead);
+      var b = API.sceneToStagePoint(bone.restTail);
+      var lineDistance = distancePointToSegment(stagePoint,a,b);
+      if (lineDistance <= 8 && (!best || lineDistance < best.distance)) best={bone:bone,part:"line",distance:lineDistance};
+    });
+    return best;
+  }
+
+  function onCanvasPointerDown(event){
+    if (!state.open || !state.activeRig) return;
+    if (state.currentSceneKey !== sceneKey()) return;
+    if (state.mode === "add") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      var start = toScenePoint(event);
+      state.addPreview = {head:start,tail:start};
+      var surface = API.overlay || API.canvas;
+      try { if (surface.setPointerCapture) surface.setPointerCapture(event.pointerId); } catch (captureError) {}
+      state.drag = {type:"add",pointerId:event.pointerId};
+      return;
+    }
+    var hit = closestBoneHit(event);
+    if (!hit) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    state.selectedBoneId = hit.bone.id;
+    renderPanel();
+    if (hit.part === "head" || hit.part === "tail") {
+      API.pushUndo();
+      state.drag = {type:"edit",bone:hit.bone,part:hit.part,pointerId:event.pointerId};
+      var surface = API.overlay || API.canvas;
+      try { if (surface.setPointerCapture) surface.setPointerCapture(event.pointerId); } catch (captureError) {}
+    }
+  }
+
+  function onCanvasPointerMove(event){
+    if (!state.drag) return;
+    if (state.drag.pointerId !== undefined && event.pointerId !== state.drag.pointerId) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    var point = toScenePoint(event);
+    if (state.drag.type === "add" && state.addPreview) state.addPreview.tail = point;
+    if (state.drag.type === "edit") {
+      if (state.drag.part === "head") state.drag.bone.restHead = {x:round3(point.x),y:round3(point.y)};
+      else state.drag.bone.restTail = {x:round3(point.x),y:round3(point.y)};
+      bindRig(false);
+    }
+  }
+
+  function onCanvasPointerUp(event){
+    if (!state.drag) return;
+    if (state.drag.pointerId !== undefined && event.pointerId !== state.drag.pointerId) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (state.drag.type === "add" && state.addPreview) addBone(state.addPreview.head,state.addPreview.tail);
+    state.addPreview = null;
+    state.drag = null;
+  }
+
+  function drawBone(ctx,bone,transform,selected){
+    var head = API.sceneToStagePoint(transform.head);
+    var tail = API.sceneToStagePoint(transform.tail);
+    ctx.save();
+    ctx.lineWidth = selected ? 5 : 3;
+    ctx.strokeStyle = selected ? "#0e9c86" : "#626d79";
+    ctx.fillStyle = selected ? "#0e9c86" : "#f8f9fa";
+    ctx.beginPath();
+    ctx.moveTo(head.x,head.y);
+    ctx.lineTo(tail.x,tail.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(head.x,head.y,selected?7:6,0,Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = "#26303b";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillRect(tail.x-6,tail.y-6,12,12);
+    ctx.strokeRect(tail.x-6,tail.y-6,12,12);
+    ctx.restore();
+  }
+
+  function overlayRenderer(ctx){
+    if (!state.open || !state.activeRig || state.currentSceneKey !== sceneKey()) return;
+    var rig = state.activeRig;
+    var transforms = posedTransformMap(rig,currentTime());
+    rig.bones.forEach(function(bone){ drawBone(ctx,bone,transforms[bone.id],bone.id===state.selectedBoneId); });
+    if (state.addPreview) {
+      drawBone(ctx,{id:"preview"},{head:state.addPreview.head,tail:state.addPreview.tail},true);
+    }
+    var frame = currentFrame();
+    if (frame !== state.lastFrame) {
+      state.lastFrame = frame;
+      if (state.panel) {
+        var frameNode = state.panel.querySelector("[data-db-frame]");
+        if (frameNode) frameNode.textContent = String(frame);
+      }
+    }
+  }
+
+  function bindPanelEvents(){
+    var panel = state.panel;
+    panel.querySelector("[data-db-close]").addEventListener("click",close);
+    panel.querySelector("[data-db-use]").addEventListener("click",function(){ if(!selectExistingRig()) createRigFromSelection(); });
+    panel.querySelector("[data-db-add]").addEventListener("click",function(){
+      if (!state.activeRig) { notify("Use Selection first.",true); return; }
+      state.mode = state.mode === "add" ? "select" : "add";
+      renderPanel();
+      notify(state.mode === "add" ? "Drag on the stage to create a bone. Escape cancels Add Bone mode." : "Add Bone mode closed.",false);
+    });
+    panel.querySelector("[data-db-bind]").addEventListener("click",bindRig);
+    panel.querySelector("[data-db-export]").addEventListener("click",exportRig);
+    panel.querySelector("[data-db-import]").addEventListener("click",function(){state.fileInput.click();});
+    panel.querySelector("[data-db-file]").addEventListener("change",function(){
+      importRigFile(this.files && this.files[0]);
+      this.value = "";
+    });
+    panel.querySelector("[data-db-rename]").addEventListener("click",renameSelectedBone);
+    panel.querySelector("[data-db-delete-bone]").addEventListener("click",removeSelectedBone);
+    panel.querySelector("[data-db-set-key]").addEventListener("click",setKeyFromControls);
+    panel.querySelector("[data-db-delete-key]").addEventListener("click",deleteCurrentKey);
+    panel.querySelector("[data-db-reset-pose]").addEventListener("click",resetPose);
+    panel.querySelector("[data-db-rebind]").addEventListener("click",bindRig);
+    panel.querySelector("[data-db-refresh]").addEventListener("click",function(){
+      state.currentSceneKey = sceneKey();
+      if (!selectExistingRig()) renderPanel();
+    });
+    panel.querySelector("[data-db-clear]").addEventListener("click",clearRig);
+
+    [["[data-db-dx]","[data-db-dx-num]"],["[data-db-dy]","[data-db-dy-num]"],["[data-db-rotation]","[data-db-rotation-num]"]].forEach(function(pair){
+      var range=panel.querySelector(pair[0]);
+      var number=panel.querySelector(pair[1]);
+      range.addEventListener("input",function(){number.value=range.value;livePoseChanged();});
+      number.addEventListener("input",function(){range.value=number.value;livePoseChanged();});
+    });
+    panel.querySelector("[data-db-easing]").addEventListener("change",livePoseChanged);
+  }
+
+  function bindGlobalListeners(){
+    if (state.listenersBound) return;
+    state.listenersBound = true;
+    var surface = API.overlay || API.canvas;
+    surface.addEventListener("pointerdown",onCanvasPointerDown,true);
+    surface.addEventListener("pointermove",onCanvasPointerMove,true);
+    surface.addEventListener("pointerup",onCanvasPointerUp,true);
+    surface.addEventListener("pointercancel",onCanvasPointerUp,true);
+    window.addEventListener("keydown",function(event){
+      if (!state.open) return;
+      if (event.key === "Escape") {
+        state.mode="select";
+        state.addPreview=null;
+        state.drag=null;
+        renderPanel();
+      }
+    },true);
+  }
+
+  function open(){
+    if (!state.panel) createPanel();
+    state.open = true;
+    state.panel.classList.add("open");
+    state.currentSceneKey = sceneKey();
+    API.setSelectionInspectorSuppressed(TOOL_ID,true);
+    API.setConfiguredToolActive(group && group.id ? group.id : "animate",item && (item.id||item.label) ? (item.id||item.label) : TOOL_ID,true);
+    API.bringFloatingPanelToFront(state.panel);
+    API.clampFloatingPanelToViewport(state.panel);
+    if (!selectExistingRig()) renderPanel();
+    notify("Dem Bones is ready. Select shapes and click Use Selection, or choose an existing rigged shape.",false);
+  }
+
+  function close(){
+    state.open = false;
+    state.mode = "select";
+    state.addPreview = null;
+    state.drag = null;
+    if (state.panel) state.panel.classList.remove("open");
+    API.setSelectionInspectorSuppressed(TOOL_ID,false);
+    API.setConfiguredToolActive(group && group.id ? group.id : "animate",item && (item.id||item.label) ? (item.id||item.label) : TOOL_ID,false);
+  }
+
+  var plugin = {
+    open:open,
+    close:close,
+    get panel(){return state.panel;},
+    get activeRig(){return state.activeRig;},
+    refresh:function(){state.currentSceneKey=sceneKey();selectExistingRig();renderPanel();}
+  };
+  window[SINGLETON_KEY] = plugin;
+
+  API.registerObjectEvaluator(EVALUATOR_ID,evaluator);
+  API.registerStageOverlayRenderer(OVERLAY_ID,overlayRenderer);
+  bindGlobalListeners();
+  open();
+})();
