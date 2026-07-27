@@ -1,9 +1,8 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v71</title>
+<title>Luke Animate v72</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -309,14 +308,14 @@
     padding:10px;
     background:var(--panel-2);
     border:1px solid var(--line);
-    border-radius:8px;
+    border-radius:9px;
   }
   .config-extension-heading{
     display:flex;
     align-items:center;
     justify-content:space-between;
     gap:8px;
-    margin-bottom:8px;
+    margin-bottom:9px;
     font-size:11px;
     font-weight:700;
     color:var(--text-dim);
@@ -325,59 +324,71 @@
   }
   .config-extension-list{
     display:grid;
-    grid-template-columns:1fr;
-    gap:7px;
+    grid-template-columns:repeat(auto-fill, 48px);
+    align-items:start;
+    justify-content:start;
+    gap:8px;
   }
   .config-script-button{
-    width:100%;
-    min-height:42px;
+    position:relative;
+    width:48px;
+    height:48px;
+    min-width:48px;
+    min-height:48px;
     display:flex;
     align-items:center;
-    gap:9px;
-    padding:7px 9px;
-    border:1px solid var(--line);
-    border-radius:7px;
-    background:var(--panel);
-    color:var(--text);
+    justify-content:center;
+    padding:7px;
+    border:1px solid #555c66;
+    border-radius:8px;
+    background:#666d76;
+    color:#ffffff;
     font:inherit;
-    text-align:left;
     cursor:pointer;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);
+    transition:background .12s ease,border-color .12s ease,transform .12s ease,box-shadow .12s ease;
   }
   .config-script-button:hover{
-    border-color:var(--accent-dim);
-    box-shadow:0 3px 10px rgba(0,0,0,.08);
+    background:#565d66;
+    border-color:#454b53;
+    transform:translateY(-1px);
+    box-shadow:0 3px 10px rgba(0,0,0,.16),inset 0 0 0 1px rgba(255,255,255,.08);
   }
+  .config-script-button.active{
+    background:var(--accent);
+    border-color:var(--accent);
+    box-shadow:0 0 0 1px rgba(14,156,134,.22),inset 0 0 0 1px rgba(255,255,255,.15);
+  }
+  .config-script-button.active:hover{
+    background:var(--accent-dim);
+    border-color:var(--accent);
+  }
+  .config-script-button.loading,
   .config-script-button:disabled{
-    opacity:.58;
+    opacity:.62;
     cursor:wait;
+    transform:none;
   }
   .config-script-button img{
-    width:26px;
-    height:26px;
-    flex:0 0 26px;
+    width:32px;
+    height:32px;
+    flex:0 0 32px;
     object-fit:contain;
+    pointer-events:none;
+    filter:brightness(0) invert(1);
   }
   .config-script-button .config-script-label{
-    min-width:0;
-    flex:1;
-    font-size:12px;
-    font-weight:650;
+    position:absolute;
+    width:1px;
+    height:1px;
+    padding:0;
+    margin:-1px;
+    overflow:hidden;
+    clip:rect(0,0,0,0);
+    white-space:nowrap;
+    border:0;
   }
-  .config-script-button .config-script-arrow{
-    flex:0 0 auto;
-    color:var(--text-dim);
-  }
-  .config-status{
-    padding:6px 8px;
-    border-radius:6px;
-    background:var(--panel-2);
-    color:var(--text-dim);
-    font-size:10.5px;
-    line-height:1.35;
-    overflow-wrap:anywhere;
-  }
-  .config-status.good{ color:#08745f; background:#e7f8f3; }
-  .config-status.bad{ color:#a12b24; background:#fff0ee; }
+  .config-status{display:none!important;}
   .devtab img.config-tab-icon{
     display:block;
     width:22px;
@@ -3573,34 +3584,12 @@ ctx.fill();</textarea>
   }
 
   function ensureConfigControls(){
-    const toolsPanel = document.getElementById('devpanel-tools');
-    if(!toolsPanel || document.getElementById('luke-config-controls')) return;
-
-    const block = document.createElement('div');
-    block.id = 'luke-config-controls';
-    block.className = 'config-extension-group';
-
-    const heading = document.createElement('div');
-    heading.className = 'config-extension-heading';
-    const headingText = document.createElement('span');
-    headingText.textContent = 'Luke Animate Config';
-    const reload = document.createElement('button');
-    reload.type = 'button';
-    reload.className = 'btn small';
-    reload.textContent = 'Reload';
-    reload.title = 'Reload Config.json without using the browser cache';
-    reload.addEventListener('click', ()=> loadLukeAnimateConfig(true));
-    heading.appendChild(headingText);
-    heading.appendChild(reload);
-
+    // Config loading is global. It must not add a control or tool to the fixed Tools panel.
+    if(document.getElementById('luke-config-status')) return;
     const status = document.createElement('div');
     status.id = 'luke-config-status';
-    status.className = 'config-status';
-    status.textContent = LUKE_ANIMATE_CONFIG_URL;
-
-    block.appendChild(heading);
-    block.appendChild(status);
-    toolsPanel.insertBefore(block, toolsPanel.firstChild);
+    status.hidden = true;
+    document.body.appendChild(status);
   }
 
   function removeRenderedConfigExtensions(){
@@ -3625,11 +3614,33 @@ ctx.fill();</textarea>
     }
   }
 
+  function configuredToolSelector(groupId, itemId){
+    return '.config-script-button[data-config-group="' + CSS.escape(String(groupId || '')) + '"][data-config-item="' + CSS.escape(String(itemId || '')) + '"]';
+  }
+
+  function setConfiguredToolActive(groupId, itemId, active){
+    const selector = configuredToolSelector(groupId, itemId);
+    const button = document.querySelector(selector);
+    if(!button) return false;
+    if(active){
+      document.querySelectorAll('.config-script-button[data-config-group="' + CSS.escape(String(groupId || '')) + '"]').forEach(other=>{
+        if(other !== button) other.classList.remove('active');
+      });
+    }
+    button.classList.toggle('active', !!active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    return true;
+  }
+
   function createConfigScriptButton(group, item){
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'config-script-button';
-    button.title = item.description || ('Load ' + (item.label || item.id || 'configured script'));
+    button.dataset.configGroup = String(group.id || '');
+    button.dataset.configItem = String(item.id || item.label || '');
+    button.title = item.description || item.label || item.id || 'Configured tool';
+    button.setAttribute('aria-label', item.label || item.id || 'Configured tool');
+    button.setAttribute('aria-pressed', 'false');
 
     if(item.iconUrl){
       const icon = document.createElement('img');
@@ -3641,12 +3652,8 @@ ctx.fill();</textarea>
 
     const label = document.createElement('span');
     label.className = 'config-script-label';
-    label.textContent = item.label || item.id || 'Script';
-    const arrow = document.createElement('span');
-    arrow.className = 'config-script-arrow';
-    arrow.textContent = '›';
+    label.textContent = item.label || item.id || 'Tool';
     button.appendChild(label);
-    button.appendChild(arrow);
     button.addEventListener('click', ()=> runConfiguredItem(group, item, button));
     return button;
   }
@@ -3654,6 +3661,9 @@ ctx.fill();</textarea>
   function renderConfiguredGroup(group){
     if(!group || !group.id) return;
     applyConfiguredTab(group);
+    const items = Array.isArray(group.items) ? group.items : [];
+    if(!items.length) return;
+
     const host = getConfigPanelHost(group.id);
     if(!host) return;
 
@@ -3664,21 +3674,12 @@ ctx.fill();</textarea>
 
     const heading = document.createElement('div');
     heading.className = 'config-extension-heading';
-    heading.textContent = group.sectionLabel || 'Configured Scripts';
+    heading.textContent = group.sectionLabel || ((group.label || group.id) + ' Tools');
     block.appendChild(heading);
 
     const list = document.createElement('div');
     list.className = 'config-extension-list';
-    const items = Array.isArray(group.items) ? group.items : [];
-    if(items.length){
-      items.forEach(item=> list.appendChild(createConfigScriptButton(group, item)));
-    }else{
-      const empty = document.createElement('div');
-      empty.className = 'hint';
-      empty.style.padding = '0';
-      empty.textContent = 'No configured scripts in this panel.';
-      list.appendChild(empty);
-    }
+    items.forEach(item=> list.appendChild(createConfigScriptButton(group, item)));
     block.appendChild(list);
 
     if(group.id === 'particles'){
@@ -3696,7 +3697,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 71,
+    version: 72,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get context(){ return ctx; },
@@ -3722,6 +3723,8 @@ ctx.fill();</textarea>
     registerFloatingPanel(panel){ registerFloatingPanel(panel); return panel; },
     bringFloatingPanelToFront(panel){ bringFloatingPanelToFront(panel); return panel; },
     clampFloatingPanelToViewport(panel){ clampFloatingPanelToViewport(panel); return panel; },
+    setConfiguredToolActive(groupId, itemId, active){ return setConfiguredToolActive(groupId, itemId, active); },
+    getConfiguredToolButton(groupId, itemId){ return document.querySelector(configuredToolSelector(groupId, itemId)); },
     getActiveLayer(){ return activeLayer(); },
     getLayers(){ return layers; },
     getClips(){ return clips; },
@@ -3780,10 +3783,10 @@ ctx.fill();</textarea>
     }
 
     const sourceUrl = resolveConfigAssetUrl(sourceValue);
-    const originalLabel = button ? button.querySelector('.config-script-label') : null;
-    const originalText = originalLabel ? originalLabel.textContent : '';
-    if(button) button.disabled = true;
-    if(originalLabel) originalLabel.textContent = 'Loading…';
+    if(button){
+      button.disabled = true;
+      button.classList.add('loading');
+    }
 
     try{
       const response = await fetch(sourceUrl, { cache:'no-store' });
@@ -3796,6 +3799,7 @@ ctx.fill();</textarea>
       const runner = new Function('LukeAnimate', 'item', 'group', '"use strict";\n' + source + '\n//# sourceURL=' + sourceUrl);
       const result = runner(LukeAnimatePluginAPI, item, group);
       if(result && typeof result.then === 'function') await result;
+      if(action === 'tool') setConfiguredToolActive(group.id, item.id || item.label, true);
       configMessage((item.label || item.id || 'Configured script') + ' loaded.', false);
 
       if(action !== 'script' && action !== 'tool'){
@@ -3804,8 +3808,10 @@ ctx.fill();</textarea>
     }catch(err){
       configMessage('Could not load ' + (item.label || item.id || 'configured script') + ': ' + (err && err.message ? err.message : err), true);
     }finally{
-      if(button) button.disabled = false;
-      if(originalLabel) originalLabel.textContent = originalText;
+      if(button){
+        button.disabled = false;
+        button.classList.remove('loading');
+      }
     }
   }
 
