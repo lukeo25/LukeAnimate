@@ -1,4 +1,4 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v6.0
+/* Luke Animate Dem Bones + MyCharacter GPT v7.0
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
    Rebuilds the supplied DemBones/MyCharacter workflow for Luke Animate:
@@ -13,13 +13,16 @@
    v6 rebuilds deformation from the reference envelope skinning model. Points are
    weighted locally to bone envelopes, connected children keep local joint angles,
    and changing a child bone bends only its region instead of moving the part rigidly.
+   v7 removes the false empty-MyCharacter commit gate. When Build Parts contains a
+   valid part and the character list is empty, Commit stores that active part first
+   and then creates or updates the real character Clip automatically.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "6.0";
+  var TOOL_VERSION = "7.0";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -838,12 +841,30 @@
     state.character.parts.forEach(function(part){if(!clips()[part.clipId]&&part.source)createPartClip(part,part.source);var inst={type:"clipinstance",clipId:part.clipId,name:part.name,x:n(part.transform&&part.transform.x,0),y:n(part.transform&&part.transform.y,0),scale:Math.max(.01,n(part.transform&&part.transform.scale,1)),rotation:n(part.transform&&part.transform.rotation,0),timeOffset:0,opacity:n(part.transform&&part.transform.opacity,1),keyframes:[],id:uid("db-part-instance"),__dbPartId:part.id,__dbCharacterId:state.character.id};root.drawObjects.push(inst);});API.refreshUI();
   }
 
-  function addBuildToCharacter(){
-    var build=serializeBuildPart();if(!build){notify("Build a part first.",true);return;}
+  function addBuildToCharacter(options){
+    options=options&&options.__dbInternalOptions?options:{};
+    var build=serializeBuildPart();
+    if(!build){
+      if(!options.silent)notify("Build or import a part first.",true);
+      return null;
+    }
     var part=state.editingPartId?partById(state.editingPartId):null;
-    if(!part){part={id:state.character.nextPartId++,name:(state.activeRig&&state.activeRig.name)||("Part "+state.character.nextPartId),clipId:"",source:null,rig:null,transform:null,pin:null,collapsed:false};state.character.parts.push(part);}
-    else{if(part.clipId&&clips()[part.clipId])delete clips()[part.clipId];}
-    createPartClip(part,build);state.character.selectedPartId=part.id;state.editingPartId=null;ensureCharacterRoot();updateCharacterInstances();state.tab="character";renderAll();notify('Added "'+part.name+'" to MyCharacter.',false);
+    if(!part){
+      var nextId=state.character.nextPartId++;
+      part={id:nextId,name:(state.activeRig&&state.activeRig.name)||("Part "+nextId),clipId:"",source:null,rig:null,transform:null,pin:null,collapsed:false};
+      state.character.parts.push(part);
+    }else if(part.clipId&&clips()[part.clipId]){
+      delete clips()[part.clipId];
+    }
+    createPartClip(part,build);
+    state.character.selectedPartId=part.id;
+    state.editingPartId=null;
+    ensureCharacterRoot();
+    updateCharacterInstances();
+    if(!options.keepTab)state.tab="character";
+    renderAll();
+    if(!options.silent)notify('Added "'+part.name+'" to MyCharacter.',false);
+    return part;
   }
 
   function editCharacterPart(part){
@@ -863,7 +884,19 @@
   }
 
   function commitCharacter(){
-    if(!state.character.parts.length){notify("Add at least one part to MyCharacter first.",true);return;}ensureCharacterRoot();updateCharacterInstances();var root=clips()[state.character.rootClipId];root.name=state.character.name||"MyCharacter";notify('MyCharacter is live on the stage as Clip "'+root.name+'".',false);API.refreshUI();
+    if(!state.character.parts.length){
+      var created=addBuildToCharacter({__dbInternalOptions:true,keepTab:true,silent:true});
+      if(!created){
+        notify("There is no finished Build Parts rig to commit. Import or build a part first.",true);
+        return;
+      }
+    }
+    ensureCharacterRoot();
+    updateCharacterInstances();
+    var root=clips()[state.character.rootClipId];
+    root.name=state.character.name||"MyCharacter";
+    notify('Created / updated character Clip "'+root.name+'" with '+state.character.parts.length+' part'+(state.character.parts.length===1?'':'s')+'.',false);
+    API.refreshUI();
   }
 
   function setPartPin(part,targetPartId,boneId,inheritRotation){
