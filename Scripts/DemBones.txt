@@ -1,9 +1,10 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v1.0
+/* Luke Animate Dem Bones + MyCharacter GPT v2.0
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
    Rebuilds the supplied DemBones/MyCharacter workflow for Luke Animate:
    Build Character, Build Parts, Bones, Edit Bone, Animate, Curves,
    Expression, Commit and Help.
+   v2 restores continuous chain creation and stage-driven bone deformation.
 */
 (function(){
   "use strict";
@@ -267,7 +268,7 @@
     }
     var rig=createRigFromObjects(working,"Stage Part");
     if(state.removeOriginals){ /* the selected objects themselves become the build */ }
-    if(rig){state.tab="bones";renderAll();notify("Stage selection loaded into Build Parts. Add bones, then Bind.",false);}
+    if(rig){state.tab="bones";state.mode="add-bone";renderAll();notify("Stage selection loaded. Drag to create the first bone; keep dragging to extend the chain.",false);}
   }
 
   function addDummy(){
@@ -283,21 +284,161 @@
   function inverseRotateVector(x,y,a){return rotateVector(x,y,-a);}
   function easingValue(v,e){var t=clamp(v,0,1);if(e==="ease-in")return t*t;if(e==="ease-out")return 1-Math.pow(1-t,2);if(e==="ease-in-out")return t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;if(e==="hold")return 0;return t;}
 
-  function bindRig(){
-    var rig=state.activeRig;if(!rig){notify("Build or load a part first.",true);return;}if(!rig.bones.length){notify("Add at least one bone before binding.",true);return;}
-    API.pushUndo();
-    rigObjects(rig).forEach(function(o){var d=o.demBones;d.restPoints=(o.points||d.restPoints||[]).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};});d.weights=d.restPoints.map(function(p){var ds=rig.bones.map(function(b){return{boneId:b.id,distance:distancePointToSegment(p,b.restHead,b.restTail)};}).sort(function(a,b){return a.distance-b.distance;}).slice(0,Math.min(2,rig.bones.length)),total=0;ds.forEach(function(x){x.weight=1/Math.max(1,x.distance*x.distance);total+=x.weight;});ds.forEach(function(x){x.weight=total?x.weight/total:1/ds.length;});return ds;});});
-    syncRigRefs(rig);API.refreshUI();notify("Part bound to "+rig.bones.length+" bone"+(rig.bones.length===1?"":"s")+".",false);
+  function bindRig(recordUndo){
+    var rig=state.activeRig;
+    if(!rig){notify("Build or load a part first.",true);return;}
+    if(!rig.bones.length){notify("Add at least one bone before binding.",true);return;}
+    if(recordUndo!==false) API.pushUndo();
+    rigObjects(rig).forEach(function(o){
+      var d=o.demBones;
+      d.restPoints=((o.points&&o.points.length)?o.points:(d.restPoints||[])).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};});
+      d.weights=d.restPoints.map(function(p){
+        var ds=rig.bones.map(function(b){
+          return{boneId:b.id,distance:distancePointToSegment(p,b.restHead,b.restTail)};
+        }).sort(function(a,b){return a.distance-b.distance;}).slice(0,Math.min(3,rig.bones.length));
+        var total=0;
+        ds.forEach(function(x){x.weight=1/Math.max(1,x.distance*x.distance);total+=x.weight;});
+        ds.forEach(function(x){x.weight=total?x.weight/total:1/ds.length;});
+        return ds;
+      });
+    });
+    syncRigRefs(rig);
+    API.refreshUI();
+    notify("Part bound to "+rig.bones.length+" bone"+(rig.bones.length===1?"":"s")+".",false);
   }
 
-  function selectedBone(){if(!state.activeRig)return null;return(state.activeRig.bones||[]).filter(function(b){return b.id===state.selectedBoneId;})[0]||null;}
+  function selectedBone(){
+    if(!state.activeRig)return null;
+    return(state.activeRig.bones||[]).filter(function(b){return b.id===state.selectedBoneId;})[0]||null;
+  }
+
+  function boneById(id){
+    if(!state.activeRig)return null;
+    return(state.activeRig.bones||[]).filter(function(b){return String(b.id)===String(id);})[0]||null;
+  }
+
+  function scenePixels(pixels){
+    var a=API.stageToScenePoint({x:0,y:0});
+    var b=API.stageToScenePoint({x:pixels,y:0});
+    return Math.max(.001,Math.hypot(b.x-a.x,b.y-a.y));
+  }
+
+  function nearestBoneEndpoint(point,ignoreId){
+    var rig=state.activeRig,best=null;
+    if(!rig)return null;
+    (rig.bones||[]).forEach(function(b){
+      if(ignoreId&&String(b.id)===String(ignoreId))return;
+      [["head",b.restHead],["tail",b.restTail]].forEach(function(entry){
+        var d=Math.hypot(point.x-entry[1].x,point.y-entry[1].y);
+        if(!best||d<best.distance)best={bone:b,type:entry[0],point:entry[1],distance:d};
+      });
+    });
+    return best;
+  }
+
+  function autoConnectNewBone(a,b){
+    var out={head:clone(a),tail:clone(b),parentId:"",connected:false};
+    var rig=state.activeRig;
+    if(!rig||!rig.bones.length)return out;
+    var threshold=scenePixels(18);
+    var headHit=nearestBoneEndpoint(a,null);
+    var tailHit=nearestBoneEndpoint(b,null);
+    var parent=null;
+    if(headHit&&headHit.type==="tail"&&headHit.distance<=threshold){
+      parent=headHit.bone;
+      var dx=headHit.point.x-out.head.x,dy=headHit.point.y-out.head.y;
+      out.head={x:headHit.point.x,y:headHit.point.y};
+      out.tail={x:out.tail.x+dx,y:out.tail.y+dy};
+    }else if(tailHit&&tailHit.type==="tail"&&tailHit.distance<=threshold){
+      parent=tailHit.bone;
+      out.head={x:tailHit.point.x,y:tailHit.point.y};
+      out.tail=clone(a);
+    }else{
+      parent=selectedBone();
+      if(parent){
+        var sx=parent.restTail.x-out.head.x,sy=parent.restTail.y-out.head.y;
+        out.head={x:parent.restTail.x,y:parent.restTail.y};
+        out.tail={x:out.tail.x+sx,y:out.tail.y+sy};
+      }
+    }
+    if(parent){out.parentId=parent.id;out.connected=true;}
+    if(Math.hypot(out.tail.x-out.head.x,out.tail.y-out.head.y)<5){
+      out.tail={x:out.head.x+20,y:out.head.y};
+    }
+    return out;
+  }
+
+  function enforceRestChains(){
+    var rig=state.activeRig;
+    if(!rig)return;
+    var by={};
+    (rig.bones||[]).forEach(function(b){by[b.id]=b;});
+    var visiting={};
+    function solve(parent){
+      if(!parent||visiting[parent.id])return;
+      visiting[parent.id]=true;
+      (rig.bones||[]).forEach(function(child){
+        if(!child||String(child.parentId)!==String(parent.id))return;
+        var dx=parent.restTail.x-child.restHead.x,dy=parent.restTail.y-child.restHead.y;
+        child.restHead={x:child.restHead.x+dx,y:child.restHead.y+dy};
+        child.restTail={x:child.restTail.x+dx,y:child.restTail.y+dy};
+        solve(child);
+      });
+      delete visiting[parent.id];
+    }
+    (rig.bones||[]).forEach(function(b){if(!b.parentId||!by[b.parentId])solve(b);});
+  }
+
   function addBone(head,tail,type){
-    var rig=state.activeRig;if(!rig){notify("Build or load a part first.",true);return;}if(Math.hypot(tail.x-head.x,tail.y-head.y)<4){notify("Drag a longer bone.",true);return;}
-    API.pushUndo();var parent=selectedBone();var bone={id:uid("bone"),name:(type||"Bone")+" "+(rig.bones.length+1),type:type||"bone",parentId:parent?parent.id:"",restHead:{x:head.x,y:head.y},restTail:{x:tail.x,y:tail.y},basePose:{dx:0,dy:0,rotation:0,scale:1,easing:"linear"},keys:[]};rig.bones.push(bone);state.selectedBoneId=bone.id;state.mode="select";bindRig();renderAll();
+    var rig=state.activeRig;
+    if(!rig){notify("Build or load a part first.",true);return;}
+    if(Math.hypot(tail.x-head.x,tail.y-head.y)<4){notify("Drag a longer bone.",true);return;}
+    API.pushUndo();
+    var connected=autoConnectNewBone(head,tail);
+    var bone={
+      id:uid("bone"),
+      name:(type||"Bone")+" "+(rig.bones.length+1),
+      type:type||"bone",
+      parentId:connected.parentId||"",
+      restHead:{x:round3(connected.head.x),y:round3(connected.head.y)},
+      restTail:{x:round3(connected.tail.x),y:round3(connected.tail.y)},
+      basePose:{dx:0,dy:0,rotation:0,scale:1,easing:"linear"},
+      keys:[]
+    };
+    rig.bones.push(bone);
+    state.selectedBoneId=bone.id;
+    state.mode="add-bone";
+    enforceRestChains();
+    bindRig(false);
+    renderAll();
+    notify(bone.name+" added"+(bone.parentId?" to the chain":"")+". Drag again to continue.",false);
   }
 
-  function deleteBone(){var rig=state.activeRig,b=selectedBone();if(!rig||!b)return;API.pushUndo();rig.bones=rig.bones.filter(function(x){return x.id!==b.id;});rig.bones.forEach(function(x){if(x.parentId===b.id)x.parentId="";});state.selectedBoneId=rig.bones[0]?rig.bones[0].id:"";bindRig();renderAll();}
-  function clearBones(){var rig=state.activeRig;if(!rig)return;API.pushUndo();rig.bones=[];state.selectedBoneId="";rigObjects(rig).forEach(function(o){o.demBones.weights=[];});renderAll();API.refreshUI();}
+  function deleteBone(){
+    var rig=state.activeRig,b=selectedBone();
+    if(!rig||!b)return;
+    API.pushUndo();
+    rig.bones=rig.bones.filter(function(x){return x.id!==b.id;});
+    rig.bones.forEach(function(x){if(x.parentId===b.id)x.parentId=b.parentId||"";});
+    state.selectedBoneId=rig.bones.length?rig.bones[rig.bones.length-1].id:"";
+    state.mode=state.tab==="bones"?"add-bone":"select";
+    enforceRestChains();
+    if(rig.bones.length)bindRig(false);else rigObjects(rig).forEach(function(o){o.demBones.weights=[];});
+    renderAll();
+    API.refreshUI();
+  }
+
+  function clearBones(){
+    var rig=state.activeRig;
+    if(!rig)return;
+    API.pushUndo();
+    rig.bones=[];
+    state.selectedBoneId="";
+    state.mode=state.tab==="bones"?"add-bone":"select";
+    rigObjects(rig).forEach(function(o){o.demBones.weights=[];});
+    renderAll();
+    API.refreshUI();
+  }
 
   function interpolatePose(bone,time){
     var base=bone.basePose||{dx:0,dy:0,rotation:0,scale:1,easing:"linear"},keys=(bone.keys||[]).slice().sort(function(a,b){return a.time-b.time;});
@@ -425,7 +566,15 @@
 
   function exactBoneKey(bone,time){return(bone.keys||[]).filter(function(k){return Math.abs(k.time-time)<.0005;})[0]||null;}
   function readPoseInputs(){if(!state.panel)return{dx:0,dy:0,rotation:0,scale:1,easing:"linear"};return{dx:n(state.panel.querySelector("[data-db-pose-dx]").value,0),dy:n(state.panel.querySelector("[data-db-pose-dy]").value,0),rotation:n(state.panel.querySelector("[data-db-pose-rotation]").value,0),scale:Math.max(.01,n(state.panel.querySelector("[data-db-pose-scale]").value,1)),easing:state.panel.querySelector("[data-db-pose-easing]").value||"linear"};}
-  function setBoneKey(){var b=selectedBone();if(!b){notify("Select a bone first.",true);return;}var pose=readPoseInputs(),time=currentTime(),key=exactBoneKey(b,time);if(key)Object.assign(key,pose);else b.keys.push(Object.assign({time:time},pose));b.keys.sort(function(a,b){return a.time-b.time;});API.refreshUI();renderAll();notify("Bone key set on frame "+currentFrame()+".",false);}
+  function previewBonePoseFromInputs(){
+    var b=selectedBone();
+    if(!b||state.tab!=="animate")return;
+    var time=currentTime(),key=exactBoneKey(b,time);
+    if(!key){API.pushUndo();key=ensureBoneKeyForDrag(b,time);}
+    Object.assign(key,readPoseInputs());
+    API.refreshUI();
+  }
+  function setBoneKey(){var b=selectedBone();if(!b){notify("Select a bone first.",true);return;}API.pushUndo();var pose=readPoseInputs(),time=currentTime(),key=exactBoneKey(b,time);if(key)Object.assign(key,pose);else b.keys.push(Object.assign({time:time},pose));b.keys.sort(function(a,b){return a.time-b.time;});API.refreshUI();renderAll();notify("Bone key set on frame "+currentFrame()+".",false);}
   function deleteBoneKey(){var b=selectedBone();if(!b)return;var t=currentTime(),before=b.keys.length;b.keys=b.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});API.refreshUI();renderAll();notify(before!==b.keys.length?"Bone key deleted.":"No bone key on this frame.",false);}
 
   function setCurvePointKey(){var rig=state.activeRig,o=findObjectById(state.selectedCurveId);if(!rig||!o||!o.demBones)return;rig.pointKeys=rig.pointKeys||{};var list=rig.pointKeys[o.id]||(rig.pointKeys[o.id]=[]),t=currentTime(),pts=(o.points||o.demBones.restPoints||[]).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};}),key=list.filter(function(k){return Math.abs(k.time-t)<.0005;})[0];if(key){key.points=pts;key.easing=state.panel.querySelector("[data-db-point-easing]").value||"linear";}else list.push({time:t,points:pts,easing:state.panel.querySelector("[data-db-point-easing]").value||"linear"});list.sort(function(a,b){return a.time-b.time;});API.refreshUI();notify("Curve points keyed on frame "+currentFrame()+".",false);renderAll();}
@@ -438,7 +587,7 @@
   function clearExpressionKey(type){var rig=state.activeRig;if(!rig)return;var bucket=rig.expressions[type],t=currentTime();bucket.keys=bucket.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});API.refreshUI();renderAll();}
 
   function loadSvgFile(file,asExpression){
-    if(!file)return;var reader=new FileReader();reader.onload=function(){try{if(asExpression)importExpressionSvg(reader.result,state.expressionType,state.expressionSlot||"Default");else{var objects=svgTextToObjects(reader.result);if(!objects.length)throw new Error("No supported vector shapes were found.");API.pushUndo();objects.forEach(function(o){API.addDrawObject(o,"animate");});createRigFromObjects(objects,file.name.replace(/\.[^.]+$/,"")||"SVG Part");state.tab="bones";renderAll();API.refreshUI();notify("SVG loaded into Build Parts.",false);}}catch(e){notify("SVG load failed: "+(e.message||e),true);}};reader.readAsText(file);
+    if(!file)return;var reader=new FileReader();reader.onload=function(){try{if(asExpression)importExpressionSvg(reader.result,state.expressionType,state.expressionSlot||"Default");else{var objects=svgTextToObjects(reader.result);if(!objects.length)throw new Error("No supported vector shapes were found.");API.pushUndo();objects.forEach(function(o){API.addDrawObject(o,"animate");});createRigFromObjects(objects,file.name.replace(/\.[^.]+$/,"")||"SVG Part");state.tab="bones";state.mode="add-bone";renderAll();API.refreshUI();notify("SVG loaded into Build Parts.",false);}}catch(e){notify("SVG load failed: "+(e.message||e),true);}};reader.readAsText(file);
   }
 
   function savePart(){var data=serializeBuildPart();if(!data){notify("Build or load a part first.",true);return;}downloadText((data.name||"DemBonesPart")+".dembones.json",JSON.stringify(data,null,2),"application/json");notify("Saved part.",false);}
@@ -448,14 +597,171 @@
 
   function selectedScenePoint(event){var rect=API.canvas.getBoundingClientRect(),sx=(event.clientX-rect.left)*(API.width/rect.width),sy=(event.clientY-rect.top)*(API.height/rect.height);return API.stageToScenePoint({x:sx,y:sy});}
   function stagePointFromScene(p){return API.sceneToStagePoint(p);}
-  function boneHit(event){var rig=state.activeRig;if(!rig)return null;var p=selectedScenePoint(event),map=posedTransformMap(rig,currentTime()),best=null,bestD=14*(API.width/API.canvas.getBoundingClientRect().width);(rig.bones||[]).forEach(function(b){var q=map[b.id];if(!q)return;[["head",q.head],["tail",q.tail]].forEach(function(pair){var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);if(d<bestD){bestD=d;best={bone:b,handle:pair[0],point:p};}});});return best;}
-
-  function onPointerDown(event){if(!state.open||!["bones","editbone","animate","curves","expression"].includes(state.tab))return;if(event.target&&event.target.closest&&event.target.closest(".la-dembones-full"))return;
-    if(state.mode==="add-bone"){event.preventDefault();var p=selectedScenePoint(event);state.addPreview={head:p,tail:p};state.drag={kind:"add",pointerId:event.pointerId};return;}
-    var hit=boneHit(event);if(hit){event.preventDefault();state.selectedBoneId=hit.bone.id;state.drag={kind:"bone",bone:hit.bone,handle:hit.handle,pointerId:event.pointerId};renderAll();}
+  function boneHit(event){
+    var rig=state.activeRig;
+    if(!rig)return null;
+    var p=selectedScenePoint(event);
+    var map=state.tab==="animate"?posedTransformMap(rig,currentTime()):restTransformMap(rig);
+    var best=null,bestD=scenePixels(14),lineD=scenePixels(9);
+    (rig.bones||[]).forEach(function(b){
+      var q=map[b.id];
+      if(!q)return;
+      [["head",q.head],["tail",q.tail]].forEach(function(pair){
+        var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);
+        if(d<bestD&&(!best||d<best.distance)){best={bone:b,handle:pair[0],point:p,distance:d};}
+      });
+      var ld=distancePointToSegment(p,q.head,q.tail);
+      if(ld<lineD&&(!best||ld<best.distance-scenePixels(2))){best={bone:b,handle:"line",point:p,distance:ld};}
+    });
+    return best;
   }
-  function onPointerMove(event){if(!state.open||!state.drag)return;var p=selectedScenePoint(event);if(state.drag.kind==="add"&&state.addPreview){state.addPreview.tail=p;API.refreshUI();}else if(state.drag.kind==="bone"){var b=state.drag.bone;if(state.drag.handle==="head")b.restHead={x:p.x,y:p.y};else b.restTail={x:p.x,y:p.y};API.refreshUI();}}
-  function onPointerUp(event){if(!state.drag)return;if(state.drag.kind==="add"&&state.addPreview){var type=state.panel.querySelector("[data-db-bone-type]")?state.panel.querySelector("[data-db-bone-type]").value:"bone";addBone(state.addPreview.head,state.addPreview.tail,type);}else if(state.drag.kind==="bone")bindRig();state.drag=null;state.addPreview=null;state.mode="select";renderAll();}
+
+  function ensureBoneKeyForDrag(bone,time){
+    var key=exactBoneKey(bone,time);
+    if(key)return key;
+    key=Object.assign({time:time},interpolatePose(bone,time));
+    bone.keys=bone.keys||[];
+    bone.keys.push(key);
+    bone.keys.sort(function(a,b){return a.time-b.time;});
+    return key;
+  }
+
+  function onPointerDown(event){
+    if(!state.open||!["bones","editbone","animate","curves","expression"].includes(state.tab))return;
+    if(event.target&&event.target.closest&&event.target.closest(".la-dembones-full"))return;
+    var point=selectedScenePoint(event);
+    var hit=boneHit(event);
+
+    if(state.tab==="bones"){
+      if(hit){
+        event.preventDefault();event.stopImmediatePropagation();
+        state.selectedBoneId=hit.bone.id;
+        state.mode="add-bone";
+        state.drag={kind:"maybe-add",pointerId:event.pointerId,start:point,current:point};
+        renderAll();
+        return;
+      }
+      if(state.mode!=="add-bone")return;
+      event.preventDefault();event.stopImmediatePropagation();
+      state.addPreview={head:point,tail:point};
+      state.drag={kind:"add",pointerId:event.pointerId,start:point,current:point};
+      return;
+    }
+
+    if(!hit)return;
+    event.preventDefault();event.stopImmediatePropagation();
+    state.selectedBoneId=hit.bone.id;
+
+    if(state.tab==="editbone"){
+      API.pushUndo();
+      state.drag={
+        kind:"edit-rest",
+        pointerId:event.pointerId,
+        bone:hit.bone,
+        handle:hit.handle,
+        startPointer:point,
+        startHead:clone(hit.bone.restHead),
+        startTail:clone(hit.bone.restTail)
+      };
+      renderAll();
+      return;
+    }
+
+    if(state.tab==="animate"){
+      API.pushUndo();
+      var map=posedTransformMap(state.activeRig,currentTime());
+      state.drag={
+        kind:"animate-bone",
+        pointerId:event.pointerId,
+        bone:hit.bone,
+        handle:hit.handle,
+        startPointer:point,
+        startPose:clone(interpolatePose(hit.bone,currentTime())),
+        startTransform:clone(map[hit.bone.id]),
+        key:ensureBoneKeyForDrag(hit.bone,currentTime())
+      };
+      renderAll();
+      return;
+    }
+
+    renderAll();
+  }
+
+  function onPointerMove(event){
+    if(!state.open||!state.drag)return;
+    if(state.drag.pointerId!==undefined&&event.pointerId!==state.drag.pointerId)return;
+    var p=selectedScenePoint(event);
+    event.preventDefault();event.stopImmediatePropagation();
+
+    if(state.drag.kind==="maybe-add"){
+      state.drag.current=p;
+      if(Math.hypot(p.x-state.drag.start.x,p.y-state.drag.start.y)>=scenePixels(8)){
+        state.drag.kind="add";
+        state.addPreview={head:clone(state.drag.start),tail:clone(p)};
+      }
+      API.refreshUI();
+      return;
+    }
+
+    if(state.drag.kind==="add"){
+      state.drag.current=p;
+      if(state.addPreview)state.addPreview.tail=clone(p);
+      API.refreshUI();
+      return;
+    }
+
+    if(state.drag.kind==="edit-rest"){
+      var b=state.drag.bone;
+      var dx=p.x-state.drag.startPointer.x,dy=p.y-state.drag.startPointer.y;
+      if(state.drag.handle==="tail"){
+        b.restTail={x:round3(p.x),y:round3(p.y)};
+      }else{
+        b.restHead={x:round3(state.drag.startHead.x+dx),y:round3(state.drag.startHead.y+dy)};
+        b.restTail={x:round3(state.drag.startTail.x+dx),y:round3(state.drag.startTail.y+dy)};
+      }
+      enforceRestChains();
+      API.refreshUI();
+      return;
+    }
+
+    if(state.drag.kind==="animate-bone"){
+      var key=state.drag.key;
+      var startPose=state.drag.startPose;
+      if(state.drag.handle==="tail"){
+        var desired=Math.atan2(p.y-state.drag.startTransform.head.y,p.x-state.drag.startTransform.head.x);
+        var delta=(desired-state.drag.startTransform.angle)*180/Math.PI;
+        while(delta>180)delta-=360;
+        while(delta<-180)delta+=360;
+        key.rotation=round3(n(startPose.rotation,0)+delta);
+      }else{
+        key.dx=round3(n(startPose.dx,0)+(p.x-state.drag.startPointer.x));
+        key.dy=round3(n(startPose.dy,0)+(p.y-state.drag.startPointer.y));
+      }
+      API.refreshUI();
+      return;
+    }
+  }
+
+  function onPointerUp(event){
+    if(!state.drag)return;
+    if(state.drag.pointerId!==undefined&&event.pointerId!==state.drag.pointerId)return;
+    event.preventDefault();event.stopImmediatePropagation();
+    var finished=state.drag;
+    if(finished.kind==="add"&&state.addPreview){
+      var type=state.panel.querySelector("[data-db-bone-type]")?state.panel.querySelector("[data-db-bone-type]").value:"bone";
+      addBone(state.addPreview.head,state.addPreview.tail,type);
+    }else if(finished.kind==="edit-rest"){
+      bindRig(false);
+      notify("Rest bone edited. Child joints remain connected.",false);
+    }else if(finished.kind==="animate-bone"){
+      API.refreshUI();
+      notify("Bone pose keyed on frame "+currentFrame()+".",false);
+    }
+    state.drag=null;
+    state.addPreview=null;
+    state.mode=state.tab==="bones"?"add-bone":"select";
+    renderAll();
+  }
 
   function drawBone(ctx,bone,q,selected){var h=stagePointFromScene(q.head),t=stagePointFromScene(q.tail);ctx.save();ctx.lineWidth=selected?5:3;ctx.strokeStyle=selected?"#0e9c86":"#626a74";ctx.fillStyle=selected?"#0e9c86":"#ffffff";ctx.beginPath();ctx.moveTo(h.x,h.y);ctx.lineTo(t.x,t.y);ctx.stroke();ctx.beginPath();ctx.arc(h.x,h.y,selected?7:5,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.beginPath();ctx.arc(t.x,t.y,selected?8:6,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle="#26303b";ctx.font="11px Arial";ctx.fillText(bone.name||"Bone",(h.x+t.x)/2+6,(h.y+t.y)/2-6);ctx.restore();}
   function overlayRenderer(ctx){if(!state.open||!state.activeRig)return;var map=posedTransformMap(state.activeRig,currentTime());(state.activeRig.bones||[]).forEach(function(b){if(map[b.id])drawBone(ctx,b,map[b.id],b.id===state.selectedBoneId);});if(state.addPreview){drawBone(ctx,{name:"New Bone"},{head:state.addPreview.head,tail:state.addPreview.tail},true);}}
@@ -496,7 +802,7 @@
   function sourcePage(){var rig=state.activeRig,count=rig?rigObjects(rig).length:0;return '<div class="db-page active"><div class="db-section"><h3>Project</h3><div class="db-grid2"><button class="db-btn primary" data-db-save-part>Save Part</button><button class="db-btn" data-db-load-part>Load Part</button></div></div><div class="db-section"><h3>Source</h3><div class="db-grid3"><button class="db-btn primary" data-db-use-selection>Use Stage Selection</button><button class="db-btn" data-db-load-svg>Load SVG</button><button class="db-btn" data-db-add-dummy>Add Dummy</button></div><label class="db-check" style="margin-top:8px"><input type="checkbox" data-db-remove-originals'+(state.removeOriginals?' checked':'')+'> Remove selected originals after conversion</label><div class="db-grid2" style="margin-top:8px"><button class="db-btn" data-db-export-svg>Export Selection SVG</button><button class="db-btn" data-db-release-stage>Return Shapes To Stage</button></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-add-character>Add To Character</button><button class="db-btn" data-db-cancel-edit>Cancel Part Edit</button></div></div><div class="db-section"><h3>Build Status</h3><p class="db-help">Part: '+esc(rig?rig.name:'None')+'<br>Shapes: '+count+'<br>Bones: '+(rig&&rig.bones?rig.bones.length:0)+'</p></div></div>';}
 
   function boneListHtml(){var rig=state.activeRig;if(!rig||!rig.bones.length)return'<div class="db-empty">No bones yet.</div>';return'<div class="db-list">'+rig.bones.map(function(b){return'<div class="db-bone-row'+(b.id===state.selectedBoneId?' active':'')+'" data-db-bone-id="'+esc(b.id)+'"><span class="db-dot"></span><span>'+esc(b.name)+'</span><span class="db-pill">'+esc(b.type||'bone')+'</span></div>';}).join('')+'</div>';}
-  function bonesPage(){return '<div class="db-page active"><div class="db-section"><h3>Bone Creation</h3><p class="db-help">Choose a bone type, click Add Bone, then drag on the stage. Select an existing bone first to make it the parent.</p><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone">Bone</option><option value="lip">Lip_Bone</option><option value="frame">Frame_Bone</option></select></div><div class="db-grid3"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div></div><div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div></div>';}
+  function bonesPage(){return '<div class="db-page active"><div class="db-section"><h3>Bone Creation</h3><p class="db-help">The Bones tab stays in Add Bone mode. Drag to create the first bone. After it is finished, the next click-and-drag creates a child from the selected bone tail. Click an existing bone without dragging to select it.</p><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone">Bone</option><option value="lip">Lip_Bone</option><option value="frame">Frame_Bone</option></select></div><div class="db-grid3"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div></div><div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div></div>';}
 
   function editBonePage(){var b=selectedBone(),rig=state.activeRig;var parents='<option value="">No parent</option>'+((rig&&rig.bones)||[]).filter(function(x){return!b||x.id!==b.id;}).map(function(x){return'<option value="'+esc(x.id)+'"'+(b&&b.parentId===x.id?' selected':'')+'>'+esc(x.name)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Edit Bone</h3>'+(b?'<div class="db-row"><label>Name</label><input value="'+esc(b.name)+'" data-db-edit-bone-name></div><div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div><div class="db-row three"><label>Head X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.x)+'" data-db-bone-head-x><input type="number" value="'+round3(b.restHead.x)+'" data-db-bone-head-x-num></div><div class="db-row three"><label>Head Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.y)+'" data-db-bone-head-y><input type="number" value="'+round3(b.restHead.y)+'" data-db-bone-head-y-num></div><div class="db-row three"><label>Tail X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x><input type="number" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x-num></div><div class="db-row three"><label>Tail Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y><input type="number" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y-num></div><div class="db-grid2"><button class="db-btn primary" data-db-apply-bone-edit>Apply</button><button class="db-btn danger" data-db-delete-bone>Delete Bone</button></div>':'<div class="db-empty">Select a bone in the Bones tab or on the stage.</div>')+'</div></div>';}
 
@@ -521,15 +827,15 @@
     p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(e){if(e.target.closest('button,input,select'))return;state.character.selectedPartId=n(card.getAttribute('data-db-part-card'),0);renderAll();};});p.querySelectorAll('[data-db-part-toggle]').forEach(function(b){b.onclick=function(){var part=partById(b.getAttribute('data-db-part-toggle'));if(part){part.collapsed=!part.collapsed;renderAll();}};});p.querySelectorAll('[data-db-part-delete]').forEach(function(b){b.onclick=function(){deleteCharacterPart(partById(b.getAttribute('data-db-part-delete')));};});p.querySelectorAll('[data-db-part-edit]').forEach(function(b){b.onclick=function(){editCharacterPart(partById(b.getAttribute('data-db-part-edit')));};});p.querySelectorAll('[data-db-part-up]').forEach(function(b){b.onclick=function(){movePart(partById(b.getAttribute('data-db-part-up')),-1);};});p.querySelectorAll('[data-db-part-down]').forEach(function(b){b.onclick=function(){movePart(partById(b.getAttribute('data-db-part-down')),1);};});p.querySelectorAll('[data-db-part-name]').forEach(function(inp){inp.onchange=function(){var part=partById(inp.getAttribute('data-db-part-name'));if(part){part.name=inp.value||part.name;if(clips()[part.clipId])clips()[part.clipId].name=part.name;updateCharacterInstances();renderAll();}};});
     function partFieldChange(inp){var part=partById(inp.getAttribute('data-db-part-id')),field=inp.getAttribute('data-db-part-field')||inp.getAttribute('data-db-part-number');if(!part||!field)return;part.transform=part.transform||{x:0,y:0,scale:1,rotation:0,opacity:1};part.transform[field]=field==='scale'?Math.max(.01,n(inp.value,1)):n(inp.value,0);updateCharacterInstances();var pair=field==='x'||field==='y'||field==='scale'||field==='rotation'?p.querySelector((inp.hasAttribute('data-db-part-field')?'[data-db-part-number="'+field+'"]':'[data-db-part-field="'+field+'"]')+'[data-db-part-id="'+part.id+'"]'):null;if(pair)pair.value=inp.value;}
     p.querySelectorAll('[data-db-part-field],[data-db-part-number]').forEach(function(inp){inp.oninput=function(){partFieldChange(inp);};});p.querySelectorAll('[data-db-apply-pin]').forEach(function(b){b.onclick=function(){var id=n(b.getAttribute('data-db-apply-pin'),0),target=p.querySelector('[data-db-pin-target="'+id+'"]'),bone=p.querySelector('[data-db-pin-bone="'+id+'"]'),rot=p.querySelector('[data-db-pin-rotation="'+id+'"]');setPartPin(partById(id),n(target&&target.value,0),bone&&bone.value,rot&&rot.checked);};});p.querySelectorAll('[data-db-clear-pin]').forEach(function(b){b.onclick=function(){setPartPin(partById(b.getAttribute('data-db-clear-pin')),0,'',false);};});p.querySelectorAll('[data-db-pin-target]').forEach(function(sel){sel.onchange=function(){var part=partById(sel.getAttribute('data-db-pin-target'));if(part){part.pin=sel.value?{targetPartId:n(sel.value,0),boneId:'',offsetX:0,offsetY:0,inheritRotation:false,rotationOffset:0}:null;renderAll();}};});
-    p.querySelectorAll('[data-db-bone-id]').forEach(function(row){row.onclick=function(){state.selectedBoneId=row.getAttribute('data-db-bone-id');renderAll();};});p.querySelectorAll('[data-db-add-bone]').forEach(function(b){b.onclick=function(){if(!state.activeRig){notify('Build or load a part first.',true);return;}state.mode='add-bone';renderAll();notify('Drag on the stage to create the bone.',false);};});p.querySelectorAll('[data-db-bind-rig]').forEach(function(b){b.onclick=bindRig;});p.querySelectorAll('[data-db-clear-bones]').forEach(function(b){b.onclick=clearBones;});p.querySelectorAll('[data-db-delete-bone]').forEach(function(b){b.onclick=deleteBone;});
+    p.querySelectorAll('[data-db-bone-id]').forEach(function(row){row.onclick=function(){state.selectedBoneId=row.getAttribute('data-db-bone-id');if(state.tab==='bones')state.mode='add-bone';renderAll();};});p.querySelectorAll('[data-db-add-bone]').forEach(function(b){b.onclick=function(){if(!state.activeRig){notify('Build or load a part first.',true);return;}state.mode='add-bone';renderAll();notify('Drag on the stage to create a bone. Keep dragging again to extend the chain.',false);};});p.querySelectorAll('[data-db-bind-rig]').forEach(function(b){b.onclick=bindRig;});p.querySelectorAll('[data-db-clear-bones]').forEach(function(b){b.onclick=clearBones;});p.querySelectorAll('[data-db-delete-bone]').forEach(function(b){b.onclick=deleteBone;});
     var applyBone=p.querySelector('[data-db-apply-bone-edit]');if(applyBone)applyBone.onclick=function(){var b=selectedBone();if(!b)return;b.name=p.querySelector('[data-db-edit-bone-name]').value||b.name;b.type=p.querySelector('[data-db-edit-bone-type]').value;b.parentId=p.querySelector('[data-db-edit-bone-parent]').value;b.restHead.x=n(p.querySelector('[data-db-bone-head-x-num]').value,b.restHead.x);b.restHead.y=n(p.querySelector('[data-db-bone-head-y-num]').value,b.restHead.y);b.restTail.x=n(p.querySelector('[data-db-bone-tail-x-num]').value,b.restTail.x);b.restTail.y=n(p.querySelector('[data-db-bone-tail-y-num]').value,b.restTail.y);bindRig();renderAll();};
     bindPair('[data-db-bone-head-x]','[data-db-bone-head-x-num]');bindPair('[data-db-bone-head-y]','[data-db-bone-head-y-num]');bindPair('[data-db-bone-tail-x]','[data-db-bone-tail-x-num]');bindPair('[data-db-bone-tail-y]','[data-db-bone-tail-y-num]');
-    bindPair('[data-db-pose-dx]','[data-db-pose-dx-num]');bindPair('[data-db-pose-dy]','[data-db-pose-dy-num]');bindPair('[data-db-pose-rotation]','[data-db-pose-rotation-num]');bindPair('[data-db-pose-scale]','[data-db-pose-scale-num]');p.querySelectorAll('[data-db-set-bone-key]').forEach(function(b){b.onclick=setBoneKey;});p.querySelectorAll('[data-db-delete-bone-key]').forEach(function(b){b.onclick=deleteBoneKey;});
+    bindPair('[data-db-pose-dx]','[data-db-pose-dx-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-dy]','[data-db-pose-dy-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-rotation]','[data-db-pose-rotation-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-scale]','[data-db-pose-scale-num]',previewBonePoseFromInputs);p.querySelectorAll('[data-db-set-bone-key]').forEach(function(b){b.onclick=setBoneKey;});p.querySelectorAll('[data-db-delete-bone-key]').forEach(function(b){b.onclick=deleteBoneKey;});
     var curveSel=p.querySelector('[data-db-curve-select]');if(curveSel)curveSel.onchange=function(){state.selectedCurveId=curveSel.value;state.selectedPointIndex=0;renderAll();};p.querySelectorAll('[data-db-point-row]').forEach(function(row){row.onclick=function(e){if(e.target.tagName==='INPUT')return;state.selectedPointIndex=n(row.getAttribute('data-db-point-index'),0);renderAll();};});p.querySelectorAll('[data-db-point-x],[data-db-point-y]').forEach(function(inp){inp.onchange=function(){var o=findObjectById(state.selectedCurveId),i=n(inp.getAttribute('data-db-point-x')||inp.getAttribute('data-db-point-y'),0);if(!o||!o.points||!o.points[i])return;if(inp.hasAttribute('data-db-point-x'))o.points[i].x=n(inp.value,o.points[i].x);else o.points[i].y=n(inp.value,o.points[i].y);API.refreshUI();};});p.querySelectorAll('[data-db-set-point-key]').forEach(function(b){b.onclick=setCurvePointKey;});p.querySelectorAll('[data-db-delete-point-key]').forEach(function(b){b.onclick=deleteCurvePointKey;});
     p.querySelectorAll('[data-db-expression-type]').forEach(function(b){b.onclick=function(){state.expressionType=b.getAttribute('data-db-expression-type');renderAll();};});var esn=p.querySelector('[data-db-expression-slot-name]');if(esn)esn.oninput=function(){state.expressionSlot=esn.value||'Default';};var ess=p.querySelector('[data-db-expression-slot]');if(ess)ess.onchange=function(){state.expressionSlot=ess.value||state.expressionSlot;};p.querySelectorAll('[data-db-import-expression]').forEach(function(b){b.onclick=function(){state.expressionSlot=(p.querySelector('[data-db-expression-slot-name]').value||'Default').trim();state.fileInputs.expression.click();};});p.querySelectorAll('[data-db-set-expression-key]').forEach(function(b){b.onclick=function(){setExpressionKey(state.expressionType,state.expressionSlot);};});p.querySelectorAll('[data-db-clear-expression-key]').forEach(function(b){b.onclick=function(){clearExpressionKey(state.expressionType);};});
   }
 
-  function createPanel(){ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){state.tab=b.getAttribute('data-db-tab');state.mode='select';renderAll();};});state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();}
+  function createPanel(){ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){state.tab=b.getAttribute('data-db-tab');state.mode=state.tab==='bones'?'add-bone':'select';renderAll();};});state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();}
   function makeDraggable(panel,handle){handle.addEventListener('pointerdown',function(e){if(e.target.closest('button'))return;e.preventDefault();API.bringFloatingPanelToFront(panel);var r=panel.getBoundingClientRect(),ox=e.clientX-r.left,oy=e.clientY-r.top;function mv(ev){panel.style.left=(ev.clientX-ox)+'px';panel.style.top=(ev.clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto';}function up(){window.removeEventListener('pointermove',mv,true);window.removeEventListener('pointerup',up,true);API.clampFloatingPanelToViewport(panel);}window.addEventListener('pointermove',mv,true);window.addEventListener('pointerup',up,true);});}
 
   function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.drag=null;state.addPreview=null;renderAll();}},true);setInterval(function(){if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}}},160);}
