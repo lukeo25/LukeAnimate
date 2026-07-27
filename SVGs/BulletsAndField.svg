@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="176.01378mm"
+   height="176.01379mm"
+   viewBox="0 0 176.01378 176.01379"
+   version="1.1"
+   id="svg1"
+   xml:space="preserve"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"><sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm" /><defs
+     id="defs1" /><g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1"
+     transform="translate(-28.958348,-42.336737)"><path
+       style="fill:#ffffff"
+       d="m 66.655832,180.01921 -23.311605,-23.31204 3.793431,-3.91165 c 2.086387,-2.15141 4.09719,-4.20549 4.468451,-4.56462 l 0.675019,-0.65297 23.400743,23.40031 23.400744,23.40031 -4.47413,4.47635 c -2.46077,2.46199 -4.511685,4.47635 -4.557588,4.47635 -0.0459,0 -10.573682,-10.49042 -23.395065,-23.31204 z M 82.487749,164.14527 59.089715,140.74034 83.398051,116.47949 c 13.369584,-13.34346 24.974279,-24.823509 25.788209,-25.511212 13.60213,-11.492627 36.70172,-20.052203 50.50383,-18.714244 8.793,0.852383 13.09369,4.617785 14.54919,12.738332 0.40477,2.258288 0.40642,7.699261 0.003,10.675961 -1.97105,14.552043 -9.76812,31.863693 -19.20715,42.645173 -0.80627,0.92094 -46.67508,46.87262 -49.11365,49.20238 -0.0198,0.0189 -10.565045,-10.49789 -23.433961,-23.37061 z"
+       id="path1"
+       inkscape:export-filename="BulletsAndField.svg"
+       inkscape:export-xdpi="96"
+       inkscape:export-ydpi="96" /><circle
+       style="fill:none;fill-opacity:1;stroke:#ffffff;stroke-width:6.596;stroke-linecap:square;stroke-dasharray:none;stroke-opacity:1;paint-order:markers stroke fill"
+       id="path2"
+       cx="116.96524"
+       cy="130.34363"
+       r="84.708893" /></g></svg>
