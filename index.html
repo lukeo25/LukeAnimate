@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v60</title>
+<title>Luke Animate v63</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -15,6 +15,7 @@
     --accent:#0e9c86;
     --accent-dim:#3fae9b;
     --warn:#b8720f;
+    --floating-panel-z:10000;
     --mono:'JetBrains Mono','SF Mono',Consolas,monospace;
   }
   *{box-sizing:border-box;}
@@ -186,7 +187,7 @@
 
   /* ---------- floating stage settings ---------- */
   #stage-settings-panel{
-    position:absolute; top:88px; right:16px; z-index:40;
+    position:fixed; top:88px; right:16px; z-index:var(--floating-panel-z);
     width:270px; display:none;
     background:rgba(255,255,255,.97); border:1px solid var(--line); border-radius:10px;
     box-shadow:0 14px 38px rgba(0,0,0,.24); backdrop-filter:blur(8px);
@@ -222,13 +223,17 @@
 
   /* ---------- floating text settings ---------- */
   #text-settings-panel{
-    position:absolute; top:76px; right:302px; z-index:42;
+    position:fixed; top:76px; right:302px; z-index:calc(var(--floating-panel-z) + 1);
     width:320px; display:none;
     background:rgba(255,255,255,.98); border:1px solid var(--line); border-radius:10px;
     box-shadow:0 14px 38px rgba(0,0,0,.24); backdrop-filter:blur(8px);
     overflow:hidden;
   }
   #text-settings-panel.open{ display:block; }
+  #stage-settings-panel, #text-settings-panel{
+    isolation:isolate;
+    pointer-events:auto;
+  }
   #text-settings-header{
     display:flex; align-items:center; justify-content:space-between; gap:8px;
     padding:9px 10px 9px 12px; border-bottom:1px solid var(--line);
@@ -259,8 +264,17 @@
     border-radius:6px; background:var(--panel-2); cursor:pointer;
   }
   #text-settings-panel input[type=range]{ flex:1; min-width:70px; }
-  #text-style-buttons{ display:flex; gap:6px; flex:1; }
+  #text-style-buttons, #text-align-buttons{ display:flex; gap:6px; flex:1; }
   #text-style-buttons .draw-tool{ flex:0 0 auto; min-width:38px; }
+  #text-align-buttons .draw-tool{
+    flex:1 1 0; min-width:38px; height:32px; padding:5px 8px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #text-align-buttons .draw-tool svg{
+    width:19px; height:19px; display:block; pointer-events:none;
+    fill:none; stroke:currentColor; stroke-width:1.8;
+    stroke-linecap:round; stroke-linejoin:round;
+  }
   #text-panel-preview{
     min-height:44px; display:flex; align-items:center; overflow:hidden;
     padding:7px 9px; margin:2px 0 10px;
@@ -762,6 +776,20 @@
         <div id="text-style-buttons">
           <button class="draw-tool" id="draw-bold" title="Bold"><b>B</b></button>
           <button class="draw-tool" id="draw-italic" title="Italic"><i>I</i></button>
+        </div>
+      </div>
+      <div class="text-settings-row">
+        <label>Align</label>
+        <div id="text-align-buttons">
+          <button class="draw-tool active" id="text-align-left" data-text-align="left" title="Align text left" aria-label="Align text left">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 9h11M4 13h16M4 17h9M4 21h14"/></svg>
+          </button>
+          <button class="draw-tool" id="text-align-center" data-text-align="center" title="Align text centre" aria-label="Align text centre">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M7 9h10M4 13h16M8 17h8M5 21h14"/></svg>
+          </button>
+          <button class="draw-tool" id="text-align-right" data-text-align="right" title="Align text right" aria-label="Align text right">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M9 9h11M4 13h16M11 17h9M6 21h14"/></svg>
+          </button>
         </div>
       </div>
       <div class="text-settings-row">
@@ -1357,6 +1385,33 @@ ctx.fill();</textarea>
   let stageTextEdit = null; // active in-place text entry {x,y,existingIndex}
   const loadedGoogleFonts = new Set();
 
+  // ---------------- floating panel stacking ----------------
+  // Floating panels are viewport overlays, never children of the fixed side panels.
+  // The most recently opened or clicked panel is always placed above every other UI panel.
+  let floatingPanelZCounter = 10000;
+  function bringFloatingPanelToFront(panel){
+    if(!panel) return;
+    floatingPanelZCounter += 1;
+    panel.style.zIndex = String(floatingPanelZCounter);
+  }
+  function clampFloatingPanelToViewport(panel){
+    if(!panel || !panel.classList.contains('open')) return;
+    const rect = panel.getBoundingClientRect();
+    const margin = 8;
+    const maxLeft = Math.max(margin, window.innerWidth - panel.offsetWidth - margin);
+    const maxTop = Math.max(margin, window.innerHeight - panel.offsetHeight - margin);
+    const left = Math.max(margin, Math.min(maxLeft, rect.left));
+    const top = Math.max(margin, Math.min(maxTop, rect.top));
+    panel.style.left = left + 'px';
+    panel.style.top = top + 'px';
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+  }
+  function registerFloatingPanel(panel){
+    if(!panel) return;
+    panel.addEventListener('pointerdown', ()=> bringFloatingPanelToFront(panel), true);
+  }
+
   // ---------------- Animate: Clips (nestable mini-scenes) ----------------
   // A Clip is shaped exactly like the main scene (its own points/layers/
   // drawObjects/timeline) so all existing rendering + editing UI works on
@@ -1479,6 +1534,7 @@ ctx.fill();</textarea>
     if(obj.type === 'text'){
       if(obj.fillEnabled === undefined) obj.fillEnabled = true;
       if(obj.strokeEnabled === undefined) obj.strokeEnabled = Math.max(0, Number(obj.strokeWidth) || 0) > 0;
+      if(!['left','center','right'].includes(obj.textAlign)) obj.textAlign = 'left';
     }
     if(!obj.panelId) obj.panelId = panelForDrawObject(obj);
     if(!obj.name){
@@ -2038,6 +2094,7 @@ ctx.fill();</textarea>
       const lines = String(obj.text || '').split(/\r?\n/);
       ctx.font = `${style}${weight} ${fontSize}px "${obj.fontFamily}", sans-serif`;
       ctx.textBaseline = 'top';
+      ctx.textAlign = ['left','center','right'].includes(obj.textAlign) ? obj.textAlign : 'left';
       ctx.lineJoin = 'round';
       const fillEnabled = eff.fillEnabled !== undefined ? eff.fillEnabled : obj.fillEnabled !== false;
       const strokeEnabled = eff.strokeEnabled !== undefined ? eff.strokeEnabled : (obj.strokeEnabled !== undefined ? obj.strokeEnabled : Math.max(0, Number(obj.strokeWidth) || 0) > 0);
@@ -2069,7 +2126,9 @@ ctx.fill();</textarea>
       const longest = lines.reduce((maxLine, line)=> Math.max(maxLine, line.length), 0);
       const w = Math.max(20, longest * fontSize * 0.58);
       const h = Math.max(lineHeight, lines.length * lineHeight);
-      return { x1:obj.x, y1:obj.y, x2:obj.x+w, y2:obj.y+h };
+      const align = ['left','center','right'].includes(obj.textAlign) ? obj.textAlign : 'left';
+      const x1 = align === 'center' ? obj.x - w / 2 : (align === 'right' ? obj.x - w : obj.x);
+      return { x1:x1, y1:obj.y, x2:x1+w, y2:obj.y+h };
     }
     if(obj.type === 'clipinstance'){
       const clip = clips[obj.clipId];
@@ -2298,7 +2357,8 @@ ctx.fill();</textarea>
       fontFamily: document.getElementById('draw-font').value,
       fontSize: Math.max(8, parseFloat(document.getElementById('draw-fontsize').value) || 32),
       bold: document.getElementById('draw-bold').classList.contains('active'),
-      italic: document.getElementById('draw-italic').classList.contains('active')
+      italic: document.getElementById('draw-italic').classList.contains('active'),
+      align: (document.querySelector('#text-align-buttons .draw-tool.active') || {}).dataset?.textAlign || 'left'
     };
   }
 
@@ -2344,6 +2404,8 @@ ctx.fill();</textarea>
       ? `${Math.min(4, style.strokeWidth)}px ${style.strokeColor}`
       : '0 transparent';
     preview.style.opacity = String(style.opacity);
+    preview.style.textAlign = style.align;
+    preview.style.justifyContent = style.align === 'center' ? 'center' : (style.align === 'right' ? 'flex-end' : 'flex-start');
     updateTextPanelControls();
   }
 
@@ -2355,6 +2417,10 @@ ctx.fill();</textarea>
     document.getElementById('draw-fontsize').value = Math.round(Number(obj.fontSize) || 32);
     document.getElementById('draw-bold').classList.toggle('active', !!obj.bold);
     document.getElementById('draw-italic').classList.toggle('active', !!obj.italic);
+    const selectedAlignment = ['left','center','right'].includes(obj.textAlign) ? obj.textAlign : 'left';
+    document.querySelectorAll('#text-align-buttons .draw-tool').forEach(button=>{
+      button.classList.toggle('active', button.dataset.textAlign === selectedAlignment);
+    });
     document.getElementById('text-fill-enabled').checked = obj.fillEnabled !== false;
     document.getElementById('text-stroke-enabled').checked = obj.strokeEnabled !== false && Math.max(0, Number(obj.strokeWidth) || 0) > 0;
     document.getElementById('text-fillcolor').value = toHexColor(obj.fillColor || '#4fe0c4');
@@ -2371,6 +2437,8 @@ ctx.fill();</textarea>
   function openTextSettingsPanel(){
     const panel = document.getElementById('text-settings-panel');
     panel.classList.add('open');
+    bringFloatingPanelToFront(panel);
+    requestAnimationFrame(()=> clampFloatingPanelToViewport(panel));
     syncTextPanelFromSelected();
     updateTextPanelPreview();
   }
@@ -2402,6 +2470,9 @@ ctx.fill();</textarea>
     editor.style.lineHeight = '1.2';
     editor.style.fontWeight = style.bold ? '700' : '400';
     editor.style.fontStyle = style.italic ? 'italic' : 'normal';
+    editor.style.textAlign = style.align;
+    editor.style.transform = style.align === 'center' ? 'translateX(-50%)' : (style.align === 'right' ? 'translateX(-100%)' : 'none');
+    editor.style.transformOrigin = 'top left';
     editor.style.color = style.fillEnabled ? style.fillColor : 'transparent';
     editor.style.webkitTextStroke = style.strokeEnabled && style.strokeWidth > 0
       ? `${Math.max(.5, style.strokeWidth * scale)}px ${style.strokeColor}`
@@ -2416,10 +2487,16 @@ ctx.fill();</textarea>
     const shellRect = document.getElementById('canvas-shell').getBoundingClientRect();
     const scaleX = canvasRect.width / W;
     const scaleY = canvasRect.height / H;
-    editor.style.left = (canvasRect.left - shellRect.left + stageTextEdit.x * scaleX) + 'px';
+    const anchorScreenX = canvasRect.left + stageTextEdit.x * scaleX;
+    const style = textPanelStyle();
+    editor.style.left = (anchorScreenX - shellRect.left) + 'px';
     editor.style.top = (canvasRect.top - shellRect.top + stageTextEdit.y * scaleY) + 'px';
-    editor.style.maxWidth = Math.max(40, canvasRect.right - (canvasRect.left + stageTextEdit.x * scaleX) - 4) + 'px';
-    applyStyleToStageTextEditor(textPanelStyle());
+    const leftRoom = Math.max(20, anchorScreenX - canvasRect.left - 4);
+    const rightRoom = Math.max(20, canvasRect.right - anchorScreenX - 4);
+    const maxEditorWidth = style.align === 'center' ? Math.max(40, Math.min(leftRoom, rightRoom) * 2)
+      : (style.align === 'right' ? leftRoom : rightRoom);
+    editor.style.maxWidth = maxEditorWidth + 'px';
+    applyStyleToStageTextEditor(style);
   }
 
   function beginStageTextEntry(canvasPos, existingIndex){
@@ -2472,6 +2549,7 @@ ctx.fill();</textarea>
       obj.lineHeight = style.fontSize * 1.2;
       obj.bold = style.bold;
       obj.italic = style.italic;
+      obj.textAlign = style.align;
       obj.name = 'Text: ' + textValue.replace(/\s+/g,' ').trim().slice(0,24);
       finishObjectEdit(obj);
       selectDrawObject(editing.existingIndex, false, false);
@@ -2482,7 +2560,7 @@ ctx.fill();</textarea>
         fillColor:style.fillColor, strokeColor:style.strokeColor, strokeWidth:style.strokeWidth,
         opacity:style.opacity,
         fontFamily:style.fontFamily, fontSize:style.fontSize, lineHeight:style.fontSize * 1.2,
-        bold:style.bold, italic:style.italic
+        bold:style.bold, italic:style.italic, textAlign:style.align
       });
       selectDrawObject(drawObjects.length - 1, false, false);
     }
@@ -2517,6 +2595,7 @@ ctx.fill();</textarea>
     sel.obj.lineHeight = style.fontSize * 1.2;
     sel.obj.bold = style.bold;
     sel.obj.italic = style.italic;
+    sel.obj.textAlign = style.align;
     ensureGoogleFont(style.fontFamily);
     finishObjectEdit(sel.obj);
     updateInspector();
@@ -2577,6 +2656,13 @@ ctx.fill();</textarea>
     updateTextPanelPreview();
     if(stageTextEdit) positionStageTextEditor();
   });
+  document.querySelectorAll('#text-align-buttons .draw-tool').forEach(button=>{
+    button.addEventListener('click', ()=>{
+      document.querySelectorAll('#text-align-buttons .draw-tool').forEach(other=> other.classList.toggle('active', other === button));
+      updateTextPanelPreview();
+      if(stageTextEdit) positionStageTextEditor();
+    });
+  });
   document.getElementById('btn-text-edit-selected').addEventListener('click', editSelectedTextInPlace);
   document.getElementById('btn-text-apply').addEventListener('click', applyTextPanelToSelected);
   document.getElementById('btn-text-delete').addEventListener('click', deleteSelectedDrawObjects);
@@ -2608,21 +2694,26 @@ ctx.fill();</textarea>
     const panel = document.getElementById('text-settings-panel');
     const header = document.getElementById('text-settings-header');
     let drag = null;
+    registerFloatingPanel(panel);
     header.addEventListener('pointerdown', (e)=>{
       if(e.target.closest && e.target.closest('button')) return;
+      bringFloatingPanelToFront(panel);
       const panelRect = panel.getBoundingClientRect();
-      const wrapRect = document.getElementById('stage-wrap').getBoundingClientRect();
-      drag = { dx:e.clientX-panelRect.left, dy:e.clientY-panelRect.top, wrapRect };
+      panel.style.left = panelRect.left + 'px';
+      panel.style.top = panelRect.top + 'px';
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+      drag = { dx:e.clientX-panelRect.left, dy:e.clientY-panelRect.top };
       header.setPointerCapture && header.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
     header.addEventListener('pointermove', (e)=>{
       if(!drag) return;
-      const maxLeft = Math.max(0, drag.wrapRect.width - panel.offsetWidth);
-      const maxTop = Math.max(58, drag.wrapRect.height - panel.offsetHeight);
-      panel.style.left = Math.max(0, Math.min(maxLeft, e.clientX-drag.wrapRect.left-drag.dx)) + 'px';
-      panel.style.top = Math.max(58, Math.min(maxTop, e.clientY-drag.wrapRect.top-drag.dy)) + 'px';
-      panel.style.right = 'auto';
+      const margin = 8;
+      const maxLeft = Math.max(margin, window.innerWidth - panel.offsetWidth - margin);
+      const maxTop = Math.max(margin, window.innerHeight - panel.offsetHeight - margin);
+      panel.style.left = Math.max(margin, Math.min(maxLeft, e.clientX-drag.dx)) + 'px';
+      panel.style.top = Math.max(margin, Math.min(maxTop, e.clientY-drag.dy)) + 'px';
     });
     function endDrag(e){
       if(!drag) return;
@@ -4136,6 +4227,10 @@ ctx.fill();</textarea>
 
   document.getElementById('btn-stage-settings').addEventListener('click', ()=>{
     stageSettingsPanel.classList.toggle('open');
+    if(stageSettingsPanel.classList.contains('open')){
+      bringFloatingPanelToFront(stageSettingsPanel);
+      requestAnimationFrame(()=> clampFloatingPanelToViewport(stageSettingsPanel));
+    }
     syncStageSettingsUI();
   });
   document.getElementById('btn-stage-settings-close').addEventListener('click', ()=>{
@@ -4172,33 +4267,32 @@ ctx.fill();</textarea>
 
   (function makeStageSettingsDraggable(){
     const header = document.getElementById('stage-settings-header');
-    const wrap = document.getElementById('stage-wrap');
     let dragging = false;
     let offsetX = 0;
     let offsetY = 0;
+    registerFloatingPanel(stageSettingsPanel);
 
     header.addEventListener('pointerdown', (e)=>{
       if(e.target.closest('button')) return;
+      bringFloatingPanelToFront(stageSettingsPanel);
       const panelRect = stageSettingsPanel.getBoundingClientRect();
-      const wrapRect = wrap.getBoundingClientRect();
       dragging = true;
       offsetX = e.clientX - panelRect.left;
       offsetY = e.clientY - panelRect.top;
+      stageSettingsPanel.style.left = panelRect.left + 'px';
+      stageSettingsPanel.style.top = panelRect.top + 'px';
       stageSettingsPanel.style.right = 'auto';
-      stageSettingsPanel.style.left = (panelRect.left - wrapRect.left + wrap.scrollLeft) + 'px';
-      stageSettingsPanel.style.top = (panelRect.top - wrapRect.top + wrap.scrollTop) + 'px';
+      stageSettingsPanel.style.bottom = 'auto';
       header.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
     header.addEventListener('pointermove', (e)=>{
       if(!dragging) return;
-      const wrapRect = wrap.getBoundingClientRect();
-      const maxLeft = Math.max(0, wrap.scrollWidth - stageSettingsPanel.offsetWidth);
-      const maxTop = Math.max(0, wrap.scrollHeight - stageSettingsPanel.offsetHeight);
-      const nextLeft = Math.max(0, Math.min(maxLeft, e.clientX - wrapRect.left + wrap.scrollLeft - offsetX));
-      const nextTop = Math.max(0, Math.min(maxTop, e.clientY - wrapRect.top + wrap.scrollTop - offsetY));
-      stageSettingsPanel.style.left = nextLeft + 'px';
-      stageSettingsPanel.style.top = nextTop + 'px';
+      const margin = 8;
+      const maxLeft = Math.max(margin, window.innerWidth - stageSettingsPanel.offsetWidth - margin);
+      const maxTop = Math.max(margin, window.innerHeight - stageSettingsPanel.offsetHeight - margin);
+      stageSettingsPanel.style.left = Math.max(margin, Math.min(maxLeft, e.clientX-offsetX)) + 'px';
+      stageSettingsPanel.style.top = Math.max(margin, Math.min(maxTop, e.clientY-offsetY)) + 'px';
     });
     function stopDrag(e){
       if(!dragging) return;
@@ -4208,6 +4302,11 @@ ctx.fill();</textarea>
     header.addEventListener('pointerup', stopDrag);
     header.addEventListener('pointercancel', stopDrag);
   })();
+
+  window.addEventListener('resize', ()=>{
+    clampFloatingPanelToViewport(stageSettingsPanel);
+    clampFloatingPanelToViewport(document.getElementById('text-settings-panel'));
+  });
 
   // ---------------- stage zoom ----------------
   function applyZoom(){
