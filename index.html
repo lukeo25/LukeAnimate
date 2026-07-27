@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v64</title>
+<title>Luke Animate v71</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -400,12 +400,21 @@
     background:var(--panel); border-bottom:1px solid var(--line);
   }
   .devtab{
-    width:30px; height:30px; border-radius:7px; border:1px solid var(--line);
-    background:var(--panel-2); color:var(--text-dim); font-size:15px; cursor:pointer;
+    width:30px; height:30px; border-radius:7px; border:1px solid #4f565f;
+    background:#626a74; color:#ffffff; font-size:15px; cursor:pointer;
     display:flex; align-items:center; justify-content:center;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.10);
   }
-  .devtab:hover{ color:var(--text); border-color:var(--accent-dim); }
-  .devtab.active{ background:var(--accent-dim); border-color:var(--accent); color:#ffffff; }
+  .devtab:hover{ color:#ffffff; border-color:#3f454d; background:#565e67; }
+  .devtab.active{
+    background:var(--accent-dim) !important;
+    border-color:var(--accent) !important;
+    color:#ffffff !important;
+    box-shadow:0 0 0 1px rgba(14,156,134,.24), inset 0 0 0 1px rgba(255,255,255,.16) !important;
+  }
+  .devtab.active img.config-tab-icon{
+    filter:none !important;
+  }
   #sidebar-tools-content{
     flex:1; min-height:0; display:flex; flex-direction:column;
   }
@@ -927,8 +936,8 @@
 
 <div id="sidebar-column">
 <div id="devtools-tabs">
-  <button class="devtab active" data-panel="animate" title="Animate">🎬</button>
-  <button class="devtab" data-panel="particles" title="Particles & Effects">✨</button>
+  <button class="devtab active" data-panel="animate" title="Animate"><img class="config-tab-icon" src="https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg" alt=""></button>
+  <button class="devtab" data-panel="particles" title="Particles & Effects"><img class="config-tab-icon" src="https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg" alt=""></button>
   <button class="devtab" data-panel="behaviours" title="Behaviours">⚙</button>
   <button class="devtab" data-panel="type" title="Type">◆</button>
   <button class="devtab" data-panel="import" title="Import / Export">⇅</button>
@@ -1591,8 +1600,17 @@ ctx.fill();</textarea>
   // Future tools only need to call registerObjectPanelOwner(type, panelId),
   // or set obj.panelId directly when creating their object.
   const objectPanelOwners = Object.create(null);
+  const objectEvaluators = new Map();
   function registerObjectPanelOwner(type, panelId){
     if(type && panelId) objectPanelOwners[type] = panelId;
+  }
+  function registerObjectEvaluator(id, evaluator){
+    if(!id || typeof evaluator !== 'function') throw new Error('registerObjectEvaluator requires an id and function.');
+    objectEvaluators.set(String(id), evaluator);
+    return true;
+  }
+  function unregisterObjectEvaluator(id){
+    return objectEvaluators.delete(String(id));
   }
   ['freehand','line','rect','ellipse','text','clipinstance'].forEach(type=> registerObjectPanelOwner(type, 'animate'));
 
@@ -3516,8 +3534,25 @@ ctx.fill();</textarea>
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
   const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json';
+  const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
+  const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
   let configLoadSequence = 0;
+
+  (function setupInitialTabIconFallbacks(){
+    const fallbacks = [
+      { panel:'animate', fallback:'🎬' },
+      { panel:'particles', fallback:'✨' }
+    ];
+    fallbacks.forEach(entry=>{
+      const icon = document.querySelector('.devtab[data-panel="' + entry.panel + '"] img.config-tab-icon');
+      if(!icon) return;
+      icon.addEventListener('error', ()=>{
+        const tab = icon.closest('.devtab');
+        if(tab) tab.textContent = entry.fallback;
+      }, { once:true });
+    });
+  })();
 
   function resolveConfigAssetUrl(value){
     if(!value) return '';
@@ -3661,7 +3696,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 64,
+    version: 71,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get context(){ return ctx; },
@@ -3682,11 +3717,39 @@ ctx.fill();</textarea>
     log(message){ configMessage(String(message), false); },
     warn(message){ configMessage(String(message), true); },
     registerObjectPanelOwner(type, panelId){ registerObjectPanelOwner(type, panelId); },
+    registerObjectEvaluator(id, evaluator){ return registerObjectEvaluator(id, evaluator); },
+    unregisterObjectEvaluator(id){ return unregisterObjectEvaluator(id); },
+    registerFloatingPanel(panel){ registerFloatingPanel(panel); return panel; },
+    bringFloatingPanelToFront(panel){ bringFloatingPanelToFront(panel); return panel; },
+    clampFloatingPanelToViewport(panel){ clampFloatingPanelToViewport(panel); return panel; },
     getActiveLayer(){ return activeLayer(); },
     getLayers(){ return layers; },
+    getClips(){ return clips; },
+    getEditingClipId(){ return editingClipId; },
     getDrawObjects(){ return drawObjects; },
     getSelectedDrawObjects(){
       return Array.from(selectedDrawIndices).map(index=> drawObjects[index]).filter(Boolean);
+    },
+    getTimelineDuration(){ return timelineDuration; },
+    getCurrentFrame(){ return Math.round(t * this.fps) + 1; },
+    frameToTime(frame){ return Math.max(0, (Math.max(1, Math.round(Number(frame) || 1)) - 1) / this.fps); },
+    timeToFrame(time){ return Math.max(1, Math.round(Math.max(0, Number(time) || 0) * this.fps) + 1); },
+    setTime(value){
+      t = Math.max(0, Math.min(timelineDuration, Number(value) || 0));
+      updateInspector();
+      renderTimeline();
+      renderTransformHandles();
+      return t;
+    },
+    setFrame(frame){ return this.setTime(this.frameToTime(frame)); },
+    pushUndo(){ pushUndo(); return true; },
+    getEffectiveObject(object, timeValue){ return getEffectiveObj(object, timeValue === undefined ? t : Number(timeValue) || 0); },
+    refreshUI(){
+      updateInspector();
+      renderTimeline();
+      renderLayerList();
+      renderTransformHandles();
+      return true;
     },
     addDrawObject(object, panelId){
       if(!object || typeof object !== 'object') throw new Error('addDrawObject requires an object.');
@@ -5687,10 +5750,23 @@ ctx.fill();</textarea>
   // value at `time`; returns obj itself (no keyframes = static, edit the base
   // fields directly) when there's nothing to animate.
   function getEffectiveObj(obj, time){
-    if(!obj.keyframes || obj.keyframes.length === 0) return obj;
-    const colorKeys = obj.type === 'clipinstance' ? [] : ['fillColor','strokeColor'];
-    const kf = interpolateKeyframes(obj.keyframes, time, colorKeys);
-    return kf ? Object.assign({}, obj, kf) : obj;
+    let effective = obj;
+    if(obj && obj.keyframes && obj.keyframes.length){
+      const colorKeys = obj.type === 'clipinstance' ? [] : ['fillColor','strokeColor'];
+      const kf = interpolateKeyframes(obj.keyframes, time, colorKeys);
+      if(kf) effective = Object.assign({}, obj, kf);
+    }
+    if(obj && objectEvaluators.size){
+      objectEvaluators.forEach((evaluator, evaluatorId)=>{
+        try{
+          const result = evaluator(obj, time, effective, LukeAnimatePluginAPI);
+          if(result && typeof result === 'object') effective = result;
+        }catch(err){
+          console.warn('Luke Animate object evaluator failed:', evaluatorId, err);
+        }
+      });
+    }
+    return effective;
   }
 
   function hslToRgb(h,s,l){
