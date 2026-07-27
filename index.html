@@ -1,9 +1,8 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v73</title>
+<title>Luke Animate v74</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -1735,6 +1734,7 @@ ctx.fill();</textarea>
   // or set obj.panelId directly when creating their object.
   const objectPanelOwners = Object.create(null);
   const objectEvaluators = new Map();
+  const stageOverlayRenderers = new Map();
   const clipPivotCompensators = new Map();
   const selectionInspectorSuppressors = new Set();
   function registerObjectPanelOwner(type, panelId){
@@ -1747,6 +1747,27 @@ ctx.fill();</textarea>
   }
   function unregisterObjectEvaluator(id){
     return objectEvaluators.delete(String(id));
+  }
+  function registerStageOverlayRenderer(id, renderer){
+    if(!id || typeof renderer !== 'function') throw new Error('registerStageOverlayRenderer requires an id and function.');
+    stageOverlayRenderers.set(String(id), renderer);
+    return true;
+  }
+  function unregisterStageOverlayRenderer(id){
+    return stageOverlayRenderers.delete(String(id));
+  }
+  function renderRegisteredStageOverlays(){
+    if(!stageOverlayRenderers.size) return;
+    stageOverlayRenderers.forEach((renderer, rendererId)=>{
+      try{
+        ctx.save();
+        renderer(ctx, LukeAnimatePluginAPI);
+        ctx.restore();
+      }catch(err){
+        try{ ctx.restore(); }catch(restoreErr){}
+        console.warn('Luke Animate stage overlay renderer failed:', rendererId, err);
+      }
+    });
   }
   function registerClipPivotCompensator(id, callback){
     if(!id || typeof callback !== 'function') throw new Error('registerClipPivotCompensator requires an id and function.');
@@ -2315,18 +2336,33 @@ ctx.fill();</textarea>
     const cornerRadius = Math.max(0, eff.cornerRadius !== undefined ? eff.cornerRadius : (obj.cornerRadius || 0));
 
     if(obj.type === 'freehand'){
-      if(obj.points.length < 2){ ctx.restore(); return; }
+      const renderPoints = Array.isArray(eff.points) ? eff.points : obj.points;
+      if(!renderPoints || renderPoints.length < 2){ ctx.restore(); return; }
+      const closedPath = eff.closedPath !== undefined ? !!eff.closedPath : !!obj.closedPath;
+      const fillEnabled = eff.fillEnabled !== undefined ? !!eff.fillEnabled : !!obj.fillEnabled;
+      const strokeEnabled = eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false;
       ctx.strokeStyle = strokeColor; ctx.lineWidth = strokeWidth;
+      ctx.fillStyle = fillColor;
       ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       ctx.beginPath();
-      obj.points.forEach((p,i)=>{ if(i===0) ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
-      ctx.stroke();
+      renderPoints.forEach((p,i)=>{ if(i===0) ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+      if(closedPath) ctx.closePath();
+      if(closedPath && fillEnabled) ctx.fill();
+      if(strokeEnabled) ctx.stroke();
     } else if(obj.type === 'line'){
+      const x1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
+      const y1 = eff.y1 !== undefined ? eff.y1 : obj.y1;
+      const x2 = eff.x2 !== undefined ? eff.x2 : obj.x2;
+      const y2 = eff.y2 !== undefined ? eff.y2 : obj.y2;
       ctx.strokeStyle = strokeColor; ctx.lineWidth = strokeWidth; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(obj.x1,obj.y1); ctx.lineTo(obj.x2,obj.y2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
     } else if(obj.type === 'rect'){
-      const x = Math.min(obj.x1,obj.x2), y = Math.min(obj.y1,obj.y2);
-      const w = Math.abs(obj.x2-obj.x1), h = Math.abs(obj.y2-obj.y1);
+      const rx1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
+      const ry1 = eff.y1 !== undefined ? eff.y1 : obj.y1;
+      const rx2 = eff.x2 !== undefined ? eff.x2 : obj.x2;
+      const ry2 = eff.y2 !== undefined ? eff.y2 : obj.y2;
+      const x = Math.min(rx1,rx2), y = Math.min(ry1,ry2);
+      const w = Math.abs(rx2-rx1), h = Math.abs(ry2-ry1);
       ctx.fillStyle = fillColor;
       ctx.strokeStyle = strokeColor;
       ctx.lineWidth = strokeWidth;
@@ -2334,8 +2370,12 @@ ctx.fill();</textarea>
       ctx.fill();
       ctx.stroke();
     } else if(obj.type === 'ellipse'){
-      const cx = (obj.x1+obj.x2)/2, cy = (obj.y1+obj.y2)/2;
-      const rx = Math.abs(obj.x2-obj.x1)/2, ry = Math.abs(obj.y2-obj.y1)/2;
+      const ex1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
+      const ey1 = eff.y1 !== undefined ? eff.y1 : obj.y1;
+      const ex2 = eff.x2 !== undefined ? eff.x2 : obj.x2;
+      const ey2 = eff.y2 !== undefined ? eff.y2 : obj.y2;
+      const cx = (ex1+ex2)/2, cy = (ey1+ey2)/2;
+      const rx = Math.abs(ex2-ex1)/2, ry = Math.abs(ey2-ey1)/2;
       ctx.fillStyle = fillColor;
       ctx.strokeStyle = strokeColor;
       ctx.lineWidth = strokeWidth;
@@ -2359,9 +2399,11 @@ ctx.fill();</textarea>
       ctx.lineWidth = Math.max(0, Number(eff.strokeWidth !== undefined ? eff.strokeWidth : (obj.strokeWidth || 0)));
       ctx.fillStyle = fillColor;
       lines.forEach((line, lineIndex)=>{
-        const yy = obj.y + lineIndex * lineHeight;
-        if(strokeEnabled && ctx.lineWidth > 0) ctx.strokeText(line, obj.x, yy);
-        if(fillEnabled) ctx.fillText(line, obj.x, yy);
+        const textX = eff.x !== undefined ? eff.x : obj.x;
+        const textY = eff.y !== undefined ? eff.y : obj.y;
+        const yy = textY + lineIndex * lineHeight;
+        if(strokeEnabled && ctx.lineWidth > 0) ctx.strokeText(line, textX, yy);
+        if(fillEnabled) ctx.fillText(line, textX, yy);
       });
     }
     ctx.restore();
@@ -3898,9 +3940,10 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 73,
+    version: 74,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
+    get overlay(){ return overlay; },
     get context(){ return ctx; },
     get width(){ return W; },
     get height(){ return H; },
@@ -3921,6 +3964,8 @@ ctx.fill();</textarea>
     registerObjectPanelOwner(type, panelId){ registerObjectPanelOwner(type, panelId); },
     registerObjectEvaluator(id, evaluator){ return registerObjectEvaluator(id, evaluator); },
     unregisterObjectEvaluator(id){ return unregisterObjectEvaluator(id); },
+    registerStageOverlayRenderer(id, renderer){ return registerStageOverlayRenderer(id, renderer); },
+    unregisterStageOverlayRenderer(id){ return unregisterStageOverlayRenderer(id); },
     registerClipPivotCompensator(id, callback){ return registerClipPivotCompensator(id, callback); },
     unregisterClipPivotCompensator(id){ return unregisterClipPivotCompensator(id); },
     setSelectionInspectorSuppressed(ownerId, suppressed){ return setSelectionInspectorSuppressed(ownerId, suppressed); },
@@ -3933,6 +3978,8 @@ ctx.fill();</textarea>
     getLayers(){ return layers; },
     getClips(){ return clips; },
     getEditingClipId(){ return editingClipId; },
+    sceneToStagePoint(point){ return sceneToStagePoint(point || {x:0,y:0}); },
+    stageToScenePoint(point){ return stageToScenePoint(point || {x:0,y:0}); },
     getClipPivot(clipId){ const clip = clips[clipId]; return clip ? Object.assign({}, ensureClipPivot(clip)) : null; },
     setClipPivot(clipId, x, y){ return moveClipPivotPreserveStage(clipId, x, y); },
     getDrawObjects(){ return drawObjects; },
@@ -4005,10 +4052,10 @@ ctx.fill();</textarea>
       const runner = new Function('LukeAnimate', 'item', 'group', '"use strict";\n' + source + '\n//# sourceURL=' + sourceUrl);
       const result = runner(LukeAnimatePluginAPI, item, group);
       if(result && typeof result.then === 'function') await result;
-      if(action === 'tool') setConfiguredToolActive(group.id, item.id || item.label, true);
+      if(action === 'tool' || action === 'animate') setConfiguredToolActive(group.id, item.id || item.label, true);
       configMessage((item.label || item.id || 'Configured script') + ' loaded.', false);
 
-      if(action !== 'script' && action !== 'tool'){
+      if(action !== 'script' && action !== 'tool' && action !== 'animate'){
         configMessage('Unknown action "' + action + '" was executed as JavaScript.', false);
       }
     }catch(err){
@@ -6827,6 +6874,7 @@ ctx.fill();</textarea>
     renderDrawObjects();
     ctx.restore();
     renderClipPivotCross();
+    renderRegisteredStageOverlays();
 
     requestAnimationFrame(render);
   }
