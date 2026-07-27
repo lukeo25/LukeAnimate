@@ -1,12 +1,12 @@
 /*
-  Luke Animate StickRig GPT v1.0
+  Luke Animate StickRig GPT v2.0
   Separate config-loaded tool. No Wick Editor or LukeToolsBridge dependency.
   Loaded by Luke Animate Config.json with:
   {
     "id": "stickrig",
     "label": "StickRig",
     "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Stick.svg",
-    "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/StickRig.txt",
+    "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/StickRig.txt",
     "action": "tool",
     "F_Screen": 0
   }
@@ -19,7 +19,16 @@
   const STYLE_ID = "lukeanimate-stickrig-style";
   const DATA_KEY = "_lukeAnimateStickRig";
   const KEY_MARKER = "_lukeAnimateStickRigKey";
-  const VERSION = "1.0";
+  const VERSION = "2.0";
+  const TOOL_GROUP_ID = String(group && group.id ? group.id : "animate");
+  const TOOL_ITEM_ID = String(item && (item.id || item.label) ? (item.id || item.label) : "stickrig");
+  const TOOL_ICON_URL = String(item && item.iconUrl ? item.iconUrl : "https://lukeo25.github.io/LukeAnimate/SVGs/Stick.svg");
+
+  function setToolSelected(active){
+    if(typeof LukeAnimate.setConfiguredToolActive === "function"){
+      LukeAnimate.setConfiguredToolActive(TOOL_GROUP_ID, TOOL_ITEM_ID, !!active);
+    }
+  }
 
   if(!LukeAnimate || typeof LukeAnimate.getSelectedDrawObjects !== "function"){
     throw new Error("StickRig requires the Luke Animate plugin API.");
@@ -29,6 +38,7 @@
   if(existingPanel){
     existingPanel.classList.add("open");
     existingPanel.style.display = "flex";
+    setToolSelected(true);
     LukeAnimate.bringFloatingPanelToFront(existingPanel);
     LukeAnimate.clampFloatingPanelToViewport(existingPanel);
     return;
@@ -127,6 +137,7 @@
         cursor:move;
         user-select:none;
       }
+      #${PANEL_ID} .sr-tool-icon{width:34px;height:34px;flex:0 0 34px;object-fit:contain;filter:brightness(0) invert(1);background:#666d76;border:1px solid #555c66;border-radius:7px;padding:5px;}
       #${PANEL_ID} .sr-title{flex:1;min-width:0;}
       #${PANEL_ID} .sr-title strong{display:block;font-size:13px;color:#183c39;}
       #${PANEL_ID} .sr-title span{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;margin-top:1px;}
@@ -228,6 +239,7 @@
   panel.id = PANEL_ID;
   panel.innerHTML = `
     <div class="sr-header" id="sr-header">
+      <img class="sr-tool-icon" src="${escapeHtml(TOOL_ICON_URL)}" alt="">
       <div class="sr-title"><strong>StickRig</strong><span>Luke Animate · Move · Scale · Rotate</span></div>
       <div class="sr-frame">Frame <b id="sr-frame-value">1</b></div>
       <button type="button" class="sr-close" id="sr-close" title="Close StickRig">×</button>
@@ -247,6 +259,7 @@
   `;
   document.body.appendChild(panel);
   LukeAnimate.registerFloatingPanel(panel);
+  setToolSelected(true);
   LukeAnimate.bringFloatingPanelToFront(panel);
 
   const importInput = document.createElement("input");
@@ -924,7 +937,10 @@
     renderCards();
     setStatus("Cleared all StickRig keys from the loaded Clip.", "good");
   });
-  panel.querySelector("#sr-close").addEventListener("click", function(){ panel.style.display = "none"; });
+  panel.querySelector("#sr-close").addEventListener("click", function(){
+    panel.style.display = "none";
+    setToolSelected(false);
+  });
 
   function selectionKey(){
     return LukeAnimate.getSelectedDrawObjects().map(function(obj){ return obj && (obj.id || obj._id || obj.clipId || obj.type); }).join("|");
