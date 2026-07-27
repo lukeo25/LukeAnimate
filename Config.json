@@ -15,7 +15,7 @@
           "description": "Animate nested Luke Animate Clip parts with separate move, scale and rotation keys.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Stick.svg",
           "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/StickRig.txt",
-          "action": "tool",
+          "action": "animate",
           "F_Screen": 0
         }
       ]
