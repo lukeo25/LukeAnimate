@@ -1,8 +1,9 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v74</title>
+<title>Luke Animate v75</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -171,11 +172,35 @@
     flex:1 1 auto;
   }
   .draw-tool{
-    background:var(--panel-2); color:var(--text-dim); border:1px solid var(--line);
-    border-radius:6px; padding:6px 10px; font-size:11.5px; cursor:pointer; font-family:inherit;
+    background:#626a74; color:#ffffff; border:1px solid #4f565f;
+    border-radius:7px; padding:6px 10px; font-size:11.5px; cursor:pointer; font-family:inherit;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.10);
   }
-  .draw-tool:hover{ color:var(--text); border-color:var(--accent-dim); }
-  .draw-tool.active{ background:var(--accent-dim); border-color:var(--accent); color:#ffffff; font-weight:700; }
+  .draw-tool:hover{ color:#ffffff; border-color:#3f454d; background:#565e67; }
+  .draw-tool.active{
+    background:var(--accent-dim); border-color:var(--accent); color:#ffffff; font-weight:700;
+    box-shadow:0 0 0 1px rgba(14,156,134,.24), inset 0 0 0 1px rgba(255,255,255,.16);
+  }
+  .draw-tool.icon-only{
+    width:36px; height:34px; min-width:36px; padding:5px;
+    display:inline-flex; align-items:center; justify-content:center; flex:0 0 36px;
+  }
+  .draw-tool-icon, .draw-tool-inline-icon{
+    width:22px; height:22px; display:block; object-fit:contain; pointer-events:none;
+  }
+  .draw-tool-icon{
+    filter:grayscale(1) brightness(0) invert(1); opacity:.96;
+  }
+  .draw-tool.active .draw-tool-icon{ filter:brightness(0) invert(1); opacity:1; }
+  .draw-tool-inline-icon{ fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .draw-tool-fallback{ display:none; font-size:19px; line-height:1; pointer-events:none; }
+  .draw-tool.icon-missing .draw-tool-icon{ display:none; }
+  .draw-tool.icon-missing .draw-tool-fallback{ display:block; }
+  .sr-only{
+    position:absolute !important; width:1px !important; height:1px !important; padding:0 !important;
+    margin:-1px !important; overflow:hidden !important; clip:rect(0,0,0,0) !important;
+    white-space:nowrap !important; border:0 !important;
+  }
   .toolbar-sep{ width:1px; height:20px; background:var(--line); margin:0 2px; }
   .toolbar-field{
     display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-dim);
@@ -815,12 +840,30 @@
       <button class="btn small" id="btn-redo" style="flex:0 0 auto;" disabled title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
     </div>
     <div id="draw-toolbar">
-      <button class="draw-tool active" id="tool-none" data-tool="none" title="Select / edit path &amp; points">↖ Select</button>
-      <button class="draw-tool" id="tool-freehand" data-tool="freehand" title="Freehand draw">✎ Draw</button>
-      <button class="draw-tool" id="tool-line" data-tool="line" title="Straight line">／ Line</button>
-      <button class="draw-tool" id="tool-rect" data-tool="rect" title="Rectangle">▭ Rect</button>
-      <button class="draw-tool" id="tool-ellipse" data-tool="ellipse" title="Ellipse">◯ Ellipse</button>
-      <button class="draw-tool" id="tool-text" data-tool="text" title="Add text">T Text</button>
+      <button class="draw-tool icon-only active" id="tool-none" data-tool="none" title="Select / edit path and points" aria-label="Select">
+        <img class="draw-tool-icon" src="https://lukeo25.github.io/LukeAnimate/SVGs/Select.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
+        <span class="draw-tool-fallback" aria-hidden="true">↖</span><span class="sr-only">Select</span>
+      </button>
+      <button class="draw-tool icon-only" id="tool-freehand" data-tool="freehand" title="Freehand draw" aria-label="Draw">
+        <img class="draw-tool-icon" src="https://lukeo25.github.io/LukeAnimate/SVGs/Draw.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
+        <span class="draw-tool-fallback" aria-hidden="true">✎</span><span class="sr-only">Draw</span>
+      </button>
+      <button class="draw-tool icon-only" id="tool-line" data-tool="line" title="Straight line" aria-label="Line">
+        <svg class="draw-tool-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19L19 5"></path></svg>
+        <span class="sr-only">Line</span>
+      </button>
+      <button class="draw-tool icon-only" id="tool-rect" data-tool="rect" title="Rectangle" aria-label="Rectangle">
+        <svg class="draw-tool-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="6" width="15" height="12" rx="1"></rect></svg>
+        <span class="sr-only">Rectangle</span>
+      </button>
+      <button class="draw-tool icon-only" id="tool-ellipse" data-tool="ellipse" title="Ellipse" aria-label="Ellipse">
+        <img class="draw-tool-icon" src="https://lukeo25.github.io/LukeAnimate/SVGs/Circle.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
+        <span class="draw-tool-fallback" aria-hidden="true">◯</span><span class="sr-only">Ellipse</span>
+      </button>
+      <button class="draw-tool icon-only" id="tool-text" data-tool="text" title="Add text" aria-label="Text">
+        <img class="draw-tool-icon" src="https://lukeo25.github.io/LukeAnimate/SVGs/Text.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
+        <span class="draw-tool-fallback" aria-hidden="true">T</span><span class="sr-only">Text</span>
+      </button>
       <span class="toolbar-sep"></span>
       <label class="toolbar-field">Fill<input type="color" id="draw-fillcolor" value="#4fe0c4" title="Fill colour"></label>
       <label class="toolbar-field">Border<input type="color" id="draw-strokecolor" value="#1b1f24" title="Border colour"></label>
