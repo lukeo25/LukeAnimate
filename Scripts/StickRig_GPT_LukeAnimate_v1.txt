@@ -1,0 +1,959 @@
+/*
+  Luke Animate StickRig GPT v1.0
+  Separate config-loaded tool. No Wick Editor or LukeToolsBridge dependency.
+  Loaded by Luke Animate Config.json with:
+  {
+    "id": "stickrig",
+    "label": "StickRig",
+    "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Stick.svg",
+    "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/StickRig.txt",
+    "action": "tool",
+    "F_Screen": 0
+  }
+*/
+(function(){
+  "use strict";
+
+  const PLUGIN_ID = "lukeanimate-stickrig";
+  const PANEL_ID = "lukeanimate-stickrig-panel";
+  const STYLE_ID = "lukeanimate-stickrig-style";
+  const DATA_KEY = "_lukeAnimateStickRig";
+  const KEY_MARKER = "_lukeAnimateStickRigKey";
+  const VERSION = "1.0";
+
+  if(!LukeAnimate || typeof LukeAnimate.getSelectedDrawObjects !== "function"){
+    throw new Error("StickRig requires the Luke Animate plugin API.");
+  }
+
+  const existingPanel = document.getElementById(PANEL_ID);
+  if(existingPanel){
+    existingPanel.classList.add("open");
+    existingPanel.style.display = "flex";
+    LukeAnimate.bringFloatingPanelToFront(existingPanel);
+    LukeAnimate.clampFloatingPanelToViewport(existingPanel);
+    return;
+  }
+
+  const state = {
+    root: null,
+    rootClip: null,
+    nodes: [],
+    nodeMap: new Map(),
+    activeId: "",
+    openChannel: "move",
+    lastFrame: -1,
+    lastSelectionKey: "",
+    pollTimer: null,
+    editUndoArmed: false,
+    importInput: null
+  };
+
+  function num(value, fallback){
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function clamp(value, min, max){
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function round3(value){
+    return Math.round(num(value, 0) * 1000) / 1000;
+  }
+
+  function escapeHtml(value){
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function currentFrame(){
+    if(typeof LukeAnimate.getCurrentFrame === "function") return LukeAnimate.getCurrentFrame();
+    return Math.max(1, Math.round(num(LukeAnimate.time, 0) * Math.max(1, num(LukeAnimate.fps, 30))) + 1);
+  }
+
+  function frameToTime(frame){
+    if(typeof LukeAnimate.frameToTime === "function") return LukeAnimate.frameToTime(frame);
+    return (Math.max(1, Math.round(num(frame, 1))) - 1) / Math.max(1, num(LukeAnimate.fps, 30));
+  }
+
+  function maxFrame(){
+    return Math.max(1, Math.round(num(LukeAnimate.getTimelineDuration && LukeAnimate.getTimelineDuration(), 1) * Math.max(1, num(LukeAnimate.fps, 30))) + 1);
+  }
+
+  function setStatus(message, type){
+    const node = panel.querySelector("#sr-status");
+    if(!node) return;
+    node.textContent = String(message || "");
+    node.className = "sr-status" + (type ? " " + type : "");
+    if(type === "bad") LukeAnimate.warn(message);
+    else if(message) LukeAnimate.log(message);
+  }
+
+  function ensureStyle(){
+    if(document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+      #${PANEL_ID}{
+        position:fixed;
+        top:78px;
+        right:360px;
+        width:390px;
+        max-width:calc(100vw - 16px);
+        height:min(720px, calc(100vh - 96px));
+        display:flex;
+        flex-direction:column;
+        background:rgba(255,255,255,.985);
+        border:1px solid var(--line,#d9dce1);
+        border-radius:11px;
+        box-shadow:0 18px 52px rgba(0,0,0,.28);
+        overflow:hidden;
+        color:var(--text,#1b1f24);
+        font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      }
+      #${PANEL_ID} *{box-sizing:border-box;}
+      #${PANEL_ID} .sr-header{
+        flex:0 0 auto;
+        display:flex;
+        align-items:center;
+        gap:9px;
+        padding:9px 10px 9px 12px;
+        background:#f1f2f5;
+        border-bottom:1px solid var(--line,#d9dce1);
+        cursor:move;
+        user-select:none;
+      }
+      #${PANEL_ID} .sr-title{flex:1;min-width:0;}
+      #${PANEL_ID} .sr-title strong{display:block;font-size:13px;color:#183c39;}
+      #${PANEL_ID} .sr-title span{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;margin-top:1px;}
+      #${PANEL_ID} .sr-frame{
+        flex:0 0 auto;
+        min-width:72px;
+        text-align:center;
+        padding:5px 8px;
+        border:1px solid #aeb6c0;
+        border-radius:999px;
+        background:#fff;
+        color:#4b5563;
+        font-size:10px;
+        font-family:Consolas,monospace;
+      }
+      #${PANEL_ID} .sr-frame b{color:#0e9c86;}
+      #${PANEL_ID} .sr-close{
+        flex:0 0 auto;
+        width:28px;height:28px;padding:0;
+        border:1px solid #c9ced5;border-radius:7px;
+        background:#fff;color:#4b5563;cursor:pointer;font-size:17px;
+      }
+      #${PANEL_ID} .sr-toolbar{
+        flex:0 0 auto;
+        display:grid;
+        grid-template-columns:repeat(5,minmax(0,1fr));
+        gap:6px;
+        padding:8px 10px;
+        border-bottom:1px solid var(--line,#d9dce1);
+        background:#fff;
+      }
+      #${PANEL_ID} button{
+        font:inherit;
+        border:1px solid #bfc5cd;
+        border-radius:7px;
+        background:#f1f2f5;
+        color:#374151;
+        padding:6px 8px;
+        cursor:pointer;
+      }
+      #${PANEL_ID} button:hover{border-color:#0e9c86;color:#087565;}
+      #${PANEL_ID} button.primary{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700;}
+      #${PANEL_ID} button.danger{background:#fff4f2;border-color:#e2a29d;color:#a7332d;}
+      #${PANEL_ID} button.active{background:#0e9c86;border-color:#0e9c86;color:#fff;}
+      #${PANEL_ID} button:disabled{opacity:.4;cursor:default;}
+      #${PANEL_ID} .sr-body{flex:1 1 auto;min-height:0;overflow:auto;padding:9px 10px 120px;background:#eef0f3;}
+      #${PANEL_ID} .sr-empty{
+        padding:18px 12px;border:1px dashed #aeb6c0;border-radius:9px;background:#fff;color:#6b7280;
+        text-align:center;font-size:11px;line-height:1.5;
+      }
+      #${PANEL_ID} .sr-card{border:1px solid #cfd4da;border-radius:10px;background:#fff;margin-bottom:8px;overflow:hidden;}
+      #${PANEL_ID} .sr-card.active{border-color:#0e9c86;box-shadow:inset 0 0 0 1px rgba(14,156,134,.16);}
+      #${PANEL_ID} .sr-card.has-key{border-left:4px solid #0e9c86;}
+      #${PANEL_ID} .sr-card-head{display:flex;align-items:center;gap:7px;padding:8px;background:#f7f8fa;}
+      #${PANEL_ID} .sr-expand{width:28px;height:28px;padding:0;flex:0 0 28px;}
+      #${PANEL_ID} .sr-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:700;color:#27313d;}
+      #${PANEL_ID} .sr-depth{display:inline-block;width:calc(var(--sr-depth,0) * 10px);flex:0 0 auto;}
+      #${PANEL_ID} .sr-key-badge{flex:0 0 auto;min-width:58px;text-align:center;font-size:9px;padding:4px 6px;border:1px solid #c7cdd4;border-radius:999px;color:#6b7280;background:#fff;}
+      #${PANEL_ID} .sr-key-badge.keyed{border-color:#0e9c86;color:#087565;background:#e8f8f4;}
+      #${PANEL_ID} .sr-animate{flex:0 0 auto;padding:5px 7px;font-size:10px;}
+      #${PANEL_ID} .sr-card-body{display:none;border-top:1px solid #d9dce1;padding:8px;background:#fff;}
+      #${PANEL_ID} .sr-card.open .sr-card-body{display:block;}
+      #${PANEL_ID} .sr-channel{border:1px solid #d3d7dd;border-radius:8px;margin-bottom:7px;overflow:hidden;}
+      #${PANEL_ID} .sr-channel:last-child{margin-bottom:0;}
+      #${PANEL_ID} .sr-channel.move{border-left:3px solid #0e9c86;}
+      #${PANEL_ID} .sr-channel.scale{border-left:3px solid #467db7;}
+      #${PANEL_ID} .sr-channel.rotate{border-left:3px solid #7b5bb6;}
+      #${PANEL_ID} .sr-channel-head{display:grid;grid-template-columns:28px 1fr auto auto;align-items:center;gap:6px;padding:7px;background:#f4f5f7;cursor:pointer;}
+      #${PANEL_ID} .sr-channel-head button{padding:4px 6px;font-size:9px;}
+      #${PANEL_ID} .sr-channel-title{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#4b5563;}
+      #${PANEL_ID} .sr-channel-body{display:none;padding:8px;border-top:1px solid #d9dce1;}
+      #${PANEL_ID} .sr-channel.open .sr-channel-body{display:block;}
+      #${PANEL_ID} .sr-control{display:grid;grid-template-columns:38px minmax(70px,1fr) 70px;gap:7px;align-items:center;margin-bottom:7px;}
+      #${PANEL_ID} .sr-control:last-child{margin-bottom:0;}
+      #${PANEL_ID} .sr-control label{font-size:10px;color:#6b7280;text-align:right;}
+      #${PANEL_ID} input[type=range]{width:100%;accent-color:#0e9c86;}
+      #${PANEL_ID} input[type=number],#${PANEL_ID} select{
+        width:100%;min-width:0;border:1px solid #c7cdd4;border-radius:6px;background:#fff;color:#27313d;padding:5px 6px;font-size:10px;
+      }
+      #${PANEL_ID} .sr-quick{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:7px;}
+      #${PANEL_ID} .sr-quick button{padding:4px 2px;font-size:9px;}
+      #${PANEL_ID} .sr-channel-footer{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;}
+      #${PANEL_ID} .sr-status{
+        position:absolute;left:10px;right:10px;bottom:10px;max-height:86px;overflow:auto;
+        border:1px solid #c9ced5;border-radius:8px;background:rgba(255,255,255,.97);padding:7px 9px;
+        color:#4b5563;font:10px/1.35 Consolas,monospace;white-space:pre-wrap;box-shadow:0 6px 22px rgba(0,0,0,.12);
+      }
+      #${PANEL_ID} .sr-status.good{border-color:#0e9c86;color:#087565;}
+      #${PANEL_ID} .sr-status.bad{border-color:#d8746c;color:#a7332d;}
+      #${PANEL_ID} .sr-status.warn{border-color:#c69b3c;color:#805d0c;}
+      @media(max-width:700px){#${PANEL_ID}{left:8px!important;right:auto!important;width:calc(100vw - 16px);height:calc(100vh - 16px);top:8px!important;}}
+    `;
+    document.head.appendChild(style);
+  }
+
+  ensureStyle();
+
+  const panel = document.createElement("div");
+  panel.id = PANEL_ID;
+  panel.innerHTML = `
+    <div class="sr-header" id="sr-header">
+      <div class="sr-title"><strong>StickRig</strong><span>Luke Animate · Move · Scale · Rotate</span></div>
+      <div class="sr-frame">Frame <b id="sr-frame-value">1</b></div>
+      <button type="button" class="sr-close" id="sr-close" title="Close StickRig">×</button>
+    </div>
+    <div class="sr-toolbar">
+      <button type="button" class="primary" id="sr-load">Load</button>
+      <button type="button" id="sr-refresh">Refresh</button>
+      <button type="button" id="sr-export" disabled>Rig JSON</button>
+      <button type="button" id="sr-import">Import</button>
+      <button type="button" class="danger" id="sr-clear" disabled>Clear</button>
+    </div>
+    <div class="sr-body" id="sr-body">
+      <div class="sr-empty" id="sr-empty">Select a Luke Animate <b>Clip</b> instance, then click <b>Load</b>.<br>StickRig animates the clip instances nested inside it.</div>
+      <div id="sr-cards"></div>
+    </div>
+    <div class="sr-status" id="sr-status">Ready. Select a Clip instance and click Load.</div>
+  `;
+  document.body.appendChild(panel);
+  LukeAnimate.registerFloatingPanel(panel);
+  LukeAnimate.bringFloatingPanelToFront(panel);
+
+  const importInput = document.createElement("input");
+  importInput.type = "file";
+  importInput.accept = ".json,application/json";
+  importInput.style.display = "none";
+  document.body.appendChild(importInput);
+  state.importInput = importInput;
+
+  function makeDraggable(){
+    const header = panel.querySelector("#sr-header");
+    let drag = null;
+    header.addEventListener("pointerdown", function(event){
+      if(event.target.closest("button")) return;
+      const rect = panel.getBoundingClientRect();
+      drag = { dx:event.clientX - rect.left, dy:event.clientY - rect.top, pointerId:event.pointerId };
+      header.setPointerCapture(event.pointerId);
+      LukeAnimate.bringFloatingPanelToFront(panel);
+      event.preventDefault();
+    });
+    header.addEventListener("pointermove", function(event){
+      if(!drag || drag.pointerId !== event.pointerId) return;
+      panel.style.left = (event.clientX - drag.dx) + "px";
+      panel.style.top = (event.clientY - drag.dy) + "px";
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+    });
+    function stop(event){
+      if(!drag || drag.pointerId !== event.pointerId) return;
+      drag = null;
+      LukeAnimate.clampFloatingPanelToViewport(panel);
+    }
+    header.addEventListener("pointerup", stop);
+    header.addEventListener("pointercancel", stop);
+  }
+  makeDraggable();
+
+  function objectKey(obj, path){
+    if(!obj) return "";
+    if(obj.id) return "id:" + obj.id;
+    if(obj._id) return "id:" + obj._id;
+    if(!obj._stickRigObjectId) obj._stickRigObjectId = "sr-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    return "temp:" + obj._stickRigObjectId + ":" + path.join(".");
+  }
+
+  function clipName(obj, clip, fallback){
+    return String(obj && obj.name || clip && clip.name || fallback || "Clip Part");
+  }
+
+  function selectedRoot(){
+    const selected = LukeAnimate.getSelectedDrawObjects();
+    if(selected.length !== 1) return null;
+    return selected[0] && selected[0].type === "clipinstance" ? selected[0] : null;
+  }
+
+  function buildHierarchy(root){
+    const clips = LukeAnimate.getClips();
+    const nodes = [];
+    const nodeMap = new Map();
+    const visited = new Set();
+    const rootClip = clips[root.clipId];
+
+    function walkClipDefinition(clip, depth, path){
+      if(!clip || depth > 12) return;
+      const objects = Array.isArray(clip.drawObjects) ? clip.drawObjects : [];
+      objects.forEach(function(obj, index){
+        if(!obj || obj.type !== "clipinstance") return;
+        const childClip = clips[obj.clipId];
+        const childPath = path.concat(index);
+        const id = objectKey(obj, childPath);
+        if(visited.has(id)) return;
+        visited.add(id);
+        const node = {
+          id:id,
+          obj:obj,
+          clip:childClip || null,
+          depth:depth,
+          path:childPath,
+          name:clipName(obj, childClip, "Clip Part " + (nodes.length + 1))
+        };
+        nodes.push(node);
+        nodeMap.set(id, node);
+        if(childClip) walkClipDefinition(childClip, depth + 1, childPath);
+      });
+    }
+
+    walkClipDefinition(rootClip, 0, []);
+    return { nodes:nodes, nodeMap:nodeMap, rootClip:rootClip };
+  }
+
+  function emptyChannel(){
+    return { keys:{}, easing:{} };
+  }
+
+  function readBase(obj){
+    return {
+      x:round3(num(obj && obj.x, 0)),
+      y:round3(num(obj && obj.y, 0)),
+      scale:round3(Math.max(0.01, num(obj && obj.scale, 1))),
+      rotation:round3(num(obj && obj.rotation, 0)),
+      opacity:clamp(num(obj && obj.opacity, 1), 0, 1)
+    };
+  }
+
+  function ensureData(obj){
+    let data = obj[DATA_KEY];
+    if(!data || typeof data !== "object"){
+      data = {
+        version:1,
+        base:readBase(obj),
+        rotationMin:-359,
+        rotationMax:360,
+        channels:{ move:emptyChannel(), scale:emptyChannel(), rotate:emptyChannel() }
+      };
+      const existing = Array.isArray(obj.keyframes) ? obj.keyframes.filter(k=>!k[KEY_MARKER]) : [];
+      existing.forEach(function(kf){
+        const frame = Math.max(1, Math.round(num(kf.time, 0) * Math.max(1, num(LukeAnimate.fps, 30))) + 1);
+        if(kf.x !== undefined || kf.y !== undefined){
+          data.channels.move.keys[String(frame)] = { x:round3(num(kf.x, data.base.x)), y:round3(num(kf.y, data.base.y)) };
+          data.channels.move.easing[String(frame)] = "linear";
+        }
+        if(kf.scale !== undefined){
+          data.channels.scale.keys[String(frame)] = { scale:round3(Math.max(.01, num(kf.scale, data.base.scale))) };
+          data.channels.scale.easing[String(frame)] = "linear";
+        }
+        if(kf.rotation !== undefined){
+          data.channels.rotate.keys[String(frame)] = { rotation:round3(num(kf.rotation, data.base.rotation)) };
+          data.channels.rotate.easing[String(frame)] = "linear";
+        }
+      });
+      obj[DATA_KEY] = data;
+    }
+    if(!data.base) data.base = readBase(obj);
+    if(!data.channels) data.channels = {};
+    ["move","scale","rotate"].forEach(function(channel){
+      if(!data.channels[channel]) data.channels[channel] = emptyChannel();
+      if(!data.channels[channel].keys) data.channels[channel].keys = {};
+      if(!data.channels[channel].easing) data.channels[channel].easing = {};
+    });
+    data.rotationMin = num(data.rotationMin, -359);
+    data.rotationMax = num(data.rotationMax, 360);
+    return data;
+  }
+
+  function sortedFrames(channel){
+    return Object.keys(channel.keys || {}).map(Number).filter(Number.isFinite).sort(function(a,b){ return a-b; });
+  }
+
+  function easingValue(t, easing){
+    t = clamp(t, 0, 1);
+    if(easing === "ease-in") return t * t;
+    if(easing === "ease-out") return 1 - Math.pow(1 - t, 2);
+    if(easing === "ease-in-out") return t < .5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2)/2;
+    if(easing === "hold") return 0;
+    return t;
+  }
+
+  function interpolateChannel(data, channelName, frame){
+    const channel = data.channels[channelName];
+    const frames = sortedFrames(channel);
+    const base = data.base;
+    const properties = channelName === "move" ? ["x","y"] : channelName === "scale" ? ["scale"] : ["rotation"];
+    const baseValue = {};
+    properties.forEach(function(property){ baseValue[property] = base[property]; });
+    if(!frames.length) return baseValue;
+
+    if(frame <= frames[0]){
+      if(frames[0] <= 1) return Object.assign({}, channel.keys[String(frames[0])]);
+      const next = channel.keys[String(frames[0])];
+      const ratio = easingValue((frame - 1) / Math.max(1, frames[0] - 1), "linear");
+      const out = {};
+      properties.forEach(function(property){ out[property] = baseValue[property] + (num(next[property], baseValue[property]) - baseValue[property]) * ratio; });
+      return out;
+    }
+    if(frame >= frames[frames.length - 1]) return Object.assign({}, channel.keys[String(frames[frames.length - 1])]);
+
+    let previousFrame = frames[0];
+    let nextFrame = frames[frames.length - 1];
+    for(let i=0;i<frames.length-1;i++){
+      if(frame >= frames[i] && frame <= frames[i+1]){
+        previousFrame = frames[i];
+        nextFrame = frames[i+1];
+        break;
+      }
+    }
+    const previous = channel.keys[String(previousFrame)];
+    const next = channel.keys[String(nextFrame)];
+    const easing = channel.easing[String(previousFrame)] || "linear";
+    const ratio = easingValue((frame - previousFrame) / Math.max(1, nextFrame - previousFrame), easing);
+    const out = {};
+    properties.forEach(function(property){
+      const from = num(previous[property], baseValue[property]);
+      let to = num(next[property], from);
+      if(channelName === "rotate"){
+        let delta = to - from;
+        while(delta > 180) delta -= 360;
+        while(delta < -180) delta += 360;
+        to = from + delta;
+      }
+      out[property] = from + (to - from) * ratio;
+    });
+    return out;
+  }
+
+  function evaluateData(data, frame){
+    const move = interpolateChannel(data, "move", frame);
+    const scale = interpolateChannel(data, "scale", frame);
+    const rotate = interpolateChannel(data, "rotate", frame);
+    return {
+      x:round3(num(move.x, data.base.x)),
+      y:round3(num(move.y, data.base.y)),
+      scale:round3(Math.max(.01, num(scale.scale, data.base.scale))),
+      rotation:round3(num(rotate.rotation, data.base.rotation))
+    };
+  }
+
+  function channelFramesAt(data, frame){
+    const found = [];
+    ["move","scale","rotate"].forEach(function(channel){
+      if(data.channels[channel].keys[String(frame)]) found.push(channel);
+    });
+    return found;
+  }
+
+  function allUserFrames(data){
+    const set = new Set();
+    ["move","scale","rotate"].forEach(function(channel){
+      sortedFrames(data.channels[channel]).forEach(function(frame){ set.add(frame); });
+    });
+    return Array.from(set).sort(function(a,b){ return a-b; });
+  }
+
+  function compileKeys(obj, data){
+    const external = Array.isArray(obj.keyframes) ? obj.keyframes.filter(function(kf){ return !kf[KEY_MARKER]; }) : [];
+    const compiled = allUserFrames(data).map(function(frame){
+      const pose = evaluateData(data, frame);
+      return {
+        time:frameToTime(frame),
+        x:pose.x,
+        y:pose.y,
+        scale:pose.scale,
+        rotation:pose.rotation,
+        [KEY_MARKER]:true,
+        _stickRigSourceFrame:frame,
+        _stickRigChannels:channelFramesAt(data, frame)
+      };
+    });
+    obj.keyframes = external.concat(compiled).sort(function(a,b){ return num(a.time,0)-num(b.time,0); });
+  }
+
+  function evaluator(obj, time, effective){
+    const data = obj && obj[DATA_KEY];
+    if(!data) return effective;
+    const frame = Math.max(1, Math.round(num(time, 0) * Math.max(1, num(LukeAnimate.fps, 30))) + 1);
+    const pose = evaluateData(data, frame);
+    return Object.assign({}, effective || obj, pose);
+  }
+
+  LukeAnimate.registerObjectEvaluator(PLUGIN_ID, evaluator);
+
+  function syncExternalTimelineChanges(node){
+    const obj = node.obj;
+    const data = obj && obj[DATA_KEY];
+    if(!data) return false;
+    const keys = Array.isArray(obj.keyframes) ? obj.keyframes.filter(function(kf){ return kf[KEY_MARKER]; }) : [];
+    let changed = false;
+
+    keys.slice().forEach(function(kf){
+      const oldFrame = Math.max(1, Math.round(num(kf._stickRigSourceFrame, 1)));
+      const newFrame = Math.max(1, Math.round(num(kf.time, 0) * Math.max(1, num(LukeAnimate.fps, 30))) + 1);
+      if(oldFrame === newFrame) return;
+      const channels = Array.isArray(kf._stickRigChannels) ? kf._stickRigChannels : [];
+      channels.forEach(function(channelName){
+        const channel = data.channels[channelName];
+        const source = channel.keys[String(oldFrame)];
+        if(!source) return;
+        channel.keys[String(newFrame)] = source;
+        channel.easing[String(newFrame)] = channel.easing[String(oldFrame)] || "linear";
+        delete channel.keys[String(oldFrame)];
+        delete channel.easing[String(oldFrame)];
+      });
+      kf._stickRigSourceFrame = newFrame;
+      changed = true;
+    });
+
+    const actualSourceFrames = new Set(keys.map(function(kf){ return Math.max(1, Math.round(num(kf._stickRigSourceFrame, 1))); }));
+    allUserFrames(data).forEach(function(frame){
+      if(actualSourceFrames.has(frame)) return;
+      const channels = channelFramesAt(data, frame);
+      if(!channels.length) return;
+      channels.forEach(function(channelName){
+        delete data.channels[channelName].keys[String(frame)];
+        delete data.channels[channelName].easing[String(frame)];
+      });
+      changed = true;
+    });
+
+    if(changed) compileKeys(obj, data);
+    return changed;
+  }
+
+  function nodeHasAnyKeys(node){
+    const data = ensureData(node.obj);
+    return allUserFrames(data).length > 0;
+  }
+
+  function currentKeyCount(node){
+    const data = ensureData(node.obj);
+    return channelFramesAt(data, currentFrame()).length;
+  }
+
+  function setChannelKey(node, channelName, values, useUndo, rerender){
+    if(!node) return;
+    if(useUndo && typeof LukeAnimate.pushUndo === "function") LukeAnimate.pushUndo();
+    const data = ensureData(node.obj);
+    const frame = currentFrame();
+    const key = String(frame);
+    const current = evaluateData(data, frame);
+    if(channelName === "move") data.channels.move.keys[key] = { x:round3(num(values.x, current.x)), y:round3(num(values.y, current.y)) };
+    else if(channelName === "scale") data.channels.scale.keys[key] = { scale:round3(Math.max(.01, num(values.scale, current.scale))) };
+    else data.channels.rotate.keys[key] = { rotation:round3(num(values.rotation, current.rotation)) };
+    if(!data.channels[channelName].easing[key]) data.channels[channelName].easing[key] = "linear";
+    compileKeys(node.obj, data);
+    LukeAnimate.refreshUI();
+    if(rerender !== false) renderCards();
+  }
+
+  function deleteChannelKey(node, channelName){
+    if(!node) return;
+    const data = ensureData(node.obj);
+    const frame = currentFrame();
+    if(!data.channels[channelName].keys[String(frame)]){
+      setStatus("No " + channelName + " key exists at frame " + frame + ".", "warn");
+      return;
+    }
+    LukeAnimate.pushUndo();
+    delete data.channels[channelName].keys[String(frame)];
+    delete data.channels[channelName].easing[String(frame)];
+    compileKeys(node.obj, data);
+    LukeAnimate.refreshUI();
+    renderCards();
+    setStatus("Deleted " + channelName + " key at frame " + frame + ".", "good");
+  }
+
+  function clearNodeKeys(node, useUndo){
+    if(!node) return;
+    if(useUndo) LukeAnimate.pushUndo();
+    const data = ensureData(node.obj);
+    data.channels.move = emptyChannel();
+    data.channels.scale = emptyChannel();
+    data.channels.rotate = emptyChannel();
+    compileKeys(node.obj, data);
+  }
+
+  function inputControl(label, kind, value, min, max, step, field){
+    return `
+      <div class="sr-control">
+        <label>${escapeHtml(label)}</label>
+        <input type="range" data-role="range" data-field="${field}" data-kind="${kind}" min="${min}" max="${max}" step="${step}" value="${value}">
+        <input type="number" data-role="number" data-field="${field}" data-kind="${kind}" min="${min}" max="${max}" step="${step}" value="${value}">
+      </div>`;
+  }
+
+  function channelHtml(node, channelName, pose, data){
+    const frame = currentFrame();
+    const keyed = !!data.channels[channelName].keys[String(frame)];
+    const open = state.openChannel === channelName;
+    let controls = "";
+    if(channelName === "move"){
+      const rangeX = Math.max(1000, num(LukeAnimate.width, 960) * 2);
+      const rangeY = Math.max(1000, num(LukeAnimate.height, 540) * 2);
+      controls += inputControl("X", channelName, pose.x, -rangeX, rangeX, .1, "x");
+      controls += inputControl("Y", channelName, pose.y, -rangeY, rangeY, .1, "y");
+    }else if(channelName === "scale"){
+      controls += inputControl("Scale", channelName, pose.scale, .01, 10, .01, "scale");
+    }else{
+      controls += inputControl("Rotate", channelName, pose.rotation, data.rotationMin, data.rotationMax, .1, "rotation");
+      controls += `
+        <div class="sr-control"><label>Min</label><span></span><input type="number" data-role="rotation-min" value="${data.rotationMin}" step="1"></div>
+        <div class="sr-control"><label>Max</label><span></span><input type="number" data-role="rotation-max" value="${data.rotationMax}" step="1"></div>
+        <div class="sr-quick">
+          ${[-180,-90,0,90,180].map(function(v){ return `<button type="button" data-role="quick-rotate" data-value="${v}">${v}°</button>`; }).join("")}
+        </div>`;
+    }
+    const easing = data.channels[channelName].easing[String(frame)] || "linear";
+    controls += `
+      <div class="sr-control"><label>Ease</label><span></span>
+        <select data-role="easing" data-channel="${channelName}">
+          <option value="linear"${easing==="linear"?" selected":""}>Linear</option>
+          <option value="ease-in"${easing==="ease-in"?" selected":""}>Ease In</option>
+          <option value="ease-out"${easing==="ease-out"?" selected":""}>Ease Out</option>
+          <option value="ease-in-out"${easing==="ease-in-out"?" selected":""}>Ease In/Out</option>
+          <option value="hold"${easing==="hold"?" selected":""}>Hold</option>
+        </select>
+      </div>
+      <div class="sr-channel-footer">
+        <button type="button" class="primary" data-role="set-key" data-channel="${channelName}">${keyed ? "Update Key" : "Set Key"}</button>
+        <button type="button" class="danger" data-role="delete-key" data-channel="${channelName}"${keyed?"":" disabled"}>Delete Key</button>
+      </div>`;
+    return `
+      <div class="sr-channel ${channelName}${open?" open":""}" data-channel="${channelName}">
+        <div class="sr-channel-head" data-role="channel-head" data-channel="${channelName}">
+          <button type="button" tabindex="-1">${open?"−":"+"}</button>
+          <div class="sr-channel-title">${channelName}</div>
+          <span class="sr-key-badge${keyed?" keyed":""}">${keyed?"Keyed":"No Key"}</span>
+          <button type="button" data-role="set-key" data-channel="${channelName}">Set</button>
+        </div>
+        <div class="sr-channel-body">${controls}</div>
+      </div>`;
+  }
+
+  function renderCards(){
+    const cards = panel.querySelector("#sr-cards");
+    const empty = panel.querySelector("#sr-empty");
+    const clearButton = panel.querySelector("#sr-clear");
+    const exportButton = panel.querySelector("#sr-export");
+    cards.innerHTML = "";
+    const hasRoot = !!state.root;
+    clearButton.disabled = !hasRoot || !state.nodes.some(nodeHasAnyKeys);
+    exportButton.disabled = !hasRoot;
+
+    if(!hasRoot){
+      empty.style.display = "block";
+      empty.innerHTML = "Select a Luke Animate <b>Clip</b> instance, then click <b>Load</b>.<br>StickRig animates the clip instances nested inside it.";
+      return;
+    }
+    if(!state.nodes.length){
+      empty.style.display = "block";
+      empty.innerHTML = "The selected Clip contains no nested Clip instances.<br>Create child Clips inside it, then click <b>Refresh</b>.";
+      return;
+    }
+    empty.style.display = "none";
+
+    const frame = currentFrame();
+    state.nodes.forEach(function(node){
+      const data = ensureData(node.obj);
+      const pose = evaluateData(data, frame);
+      const isActive = state.activeId === node.id;
+      const hasAny = nodeHasAnyKeys(node);
+      const keyCount = currentKeyCount(node);
+      const card = document.createElement("div");
+      card.className = "sr-card" + (isActive?" active open":"") + (hasAny?" has-key":"");
+      card.dataset.nodeId = node.id;
+      card.innerHTML = `
+        <div class="sr-card-head">
+          <span class="sr-depth" style="--sr-depth:${node.depth}"></span>
+          <button type="button" class="sr-expand" data-role="open-node">${isActive?"−":"+"}</button>
+          <div class="sr-name" title="${escapeHtml(node.name)}">${escapeHtml(node.name)}</div>
+          <span class="sr-key-badge${keyCount?" keyed":""}">${keyCount ? keyCount + " key" + (keyCount===1?"":"s") : "No key"}</span>
+          <button type="button" class="sr-animate${isActive?" active":""}" data-role="open-node">Animate</button>
+        </div>
+        <div class="sr-card-body">
+          ${channelHtml(node,"move",pose,data)}
+          ${channelHtml(node,"scale",pose,data)}
+          ${channelHtml(node,"rotate",pose,data)}
+        </div>`;
+      cards.appendChild(card);
+    });
+  }
+
+  function getNodeFromElement(element){
+    const card = element.closest(".sr-card");
+    return card ? state.nodeMap.get(card.dataset.nodeId) : null;
+  }
+
+  function channelValuesFromCard(card, channelName){
+    const values = {};
+    card.querySelectorAll('[data-kind="' + channelName + '"][data-role="number"]').forEach(function(input){
+      values[input.dataset.field] = num(input.value, 0);
+    });
+    return values;
+  }
+
+  function updatePairedInput(input){
+    const card = input.closest(".sr-card");
+    if(!card) return;
+    const role = input.dataset.role;
+    const otherRole = role === "range" ? "number" : "range";
+    const other = card.querySelector('[data-kind="' + input.dataset.kind + '"][data-field="' + input.dataset.field + '"][data-role="' + otherRole + '"]');
+    if(other) other.value = input.value;
+  }
+
+  panel.querySelector("#sr-cards").addEventListener("click", function(event){
+    const roleNode = event.target.closest("[data-role]");
+    if(!roleNode) return;
+    const node = getNodeFromElement(roleNode);
+    const role = roleNode.dataset.role;
+    if(role === "open-node"){
+      state.activeId = state.activeId === node.id ? "" : node.id;
+      renderCards();
+      return;
+    }
+    if(role === "channel-head"){
+      state.openChannel = roleNode.dataset.channel;
+      renderCards();
+      return;
+    }
+    if(role === "set-key"){
+      const channel = roleNode.dataset.channel;
+      const values = channelValuesFromCard(roleNode.closest(".sr-card"), channel);
+      setChannelKey(node, channel, values, true);
+      setStatus("Set " + channel + " key for " + node.name + " at frame " + currentFrame() + ".", "good");
+      return;
+    }
+    if(role === "delete-key"){
+      deleteChannelKey(node, roleNode.dataset.channel);
+      return;
+    }
+    if(role === "quick-rotate"){
+      const value = num(roleNode.dataset.value, 0);
+      setChannelKey(node, "rotate", {rotation:value}, true);
+      setStatus("Set rotation to " + value + "° at frame " + currentFrame() + ".", "good");
+      return;
+    }
+  });
+
+  panel.querySelector("#sr-cards").addEventListener("input", function(event){
+    const input = event.target;
+    const role = input.dataset.role;
+    const node = getNodeFromElement(input);
+    if(!node) return;
+    if(role === "range" || role === "number"){
+      updatePairedInput(input);
+      const channel = input.dataset.kind;
+      const values = channelValuesFromCard(input.closest(".sr-card"), channel);
+      if(!state.editUndoArmed){
+        LukeAnimate.pushUndo();
+        state.editUndoArmed = true;
+      }
+      setChannelKey(node, channel, values, false, false);
+      return;
+    }
+    if(role === "rotation-min" || role === "rotation-max"){
+      const data = ensureData(node.obj);
+      if(role === "rotation-min") data.rotationMin = num(input.value, -359);
+      else data.rotationMax = num(input.value, 360);
+      if(data.rotationMin > data.rotationMax){
+        const swap = data.rotationMin;
+        data.rotationMin = data.rotationMax;
+        data.rotationMax = swap;
+      }
+      renderCards();
+    }
+  });
+
+  panel.querySelector("#sr-cards").addEventListener("change", function(event){
+    const input = event.target;
+    state.editUndoArmed = false;
+    const node = getNodeFromElement(input);
+    if(!node) return;
+    if(input.dataset.role === "easing"){
+      const data = ensureData(node.obj);
+      const frame = currentFrame();
+      const channel = input.dataset.channel;
+      if(!data.channels[channel].keys[String(frame)]){
+        const pose = evaluateData(data, frame);
+        const values = channel === "move" ? {x:pose.x,y:pose.y} : channel === "scale" ? {scale:pose.scale} : {rotation:pose.rotation};
+        setChannelKey(node, channel, values, true);
+      }
+      data.channels[channel].easing[String(frame)] = input.value;
+      compileKeys(node.obj, data);
+      LukeAnimate.refreshUI();
+      renderCards();
+    }
+  });
+
+  function loadSelection(){
+    const root = selectedRoot();
+    if(!root){
+      state.root = null;
+      state.rootClip = null;
+      state.nodes = [];
+      state.nodeMap = new Map();
+      state.activeId = "";
+      renderCards();
+      setStatus("Select exactly one Clip instance in Luke Animate, then click Load.", "bad");
+      return;
+    }
+    const result = buildHierarchy(root);
+    if(!result.rootClip){
+      setStatus("The selected Clip instance refers to a missing Clip definition.", "bad");
+      return;
+    }
+    state.root = root;
+    state.rootClip = result.rootClip;
+    state.nodes = result.nodes;
+    state.nodeMap = result.nodeMap;
+    state.activeId = result.nodes.length ? result.nodes[0].id : "";
+    state.nodes.forEach(function(node){
+      const data = ensureData(node.obj);
+      compileKeys(node.obj, data);
+    });
+    LukeAnimate.refreshUI();
+    renderCards();
+    setStatus("Loaded " + result.nodes.length + " nested Clip part" + (result.nodes.length===1?"":"s") + " from " + clipName(root, result.rootClip, "selected Clip") + ".", "good");
+  }
+
+  function refreshHierarchy(){
+    if(!state.root){ loadSelection(); return; }
+    const result = buildHierarchy(state.root);
+    state.rootClip = result.rootClip;
+    state.nodes = result.nodes;
+    state.nodeMap = result.nodeMap;
+    if(!state.nodeMap.has(state.activeId)) state.activeId = result.nodes.length ? result.nodes[0].id : "";
+    renderCards();
+    setStatus("Refreshed StickRig hierarchy.", "good");
+  }
+
+  function exportRig(){
+    if(!state.root) return;
+    const payload = {
+      format:"LukeAnimateStickRig",
+      version:1,
+      exportedAt:new Date().toISOString(),
+      root:{ clipId:state.root.clipId, name:clipName(state.root,state.rootClip,"Clip") },
+      nodes:state.nodes.map(function(node){
+        return { id:node.id, path:node.path, name:node.name, clipId:node.obj.clipId, data:JSON.parse(JSON.stringify(ensureData(node.obj))) };
+      })
+    };
+    const blob = new Blob([JSON.stringify(payload,null,2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = (payload.root.name || "StickRig").replace(/[^a-z0-9_-]+/gi,"_") + "_StickRig.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    setStatus("Exported StickRig JSON.", "good");
+  }
+
+  function importRigFile(file){
+    if(!state.root){
+      setStatus("Load a Clip before importing a StickRig JSON file.", "bad");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = function(){
+      try{
+        const payload = JSON.parse(String(reader.result || ""));
+        if(!payload || payload.format !== "LukeAnimateStickRig" || !Array.isArray(payload.nodes)) throw new Error("Not a Luke Animate StickRig JSON file.");
+        LukeAnimate.pushUndo();
+        let applied = 0;
+        payload.nodes.forEach(function(saved){
+          let node = state.nodeMap.get(saved.id);
+          if(!node && Array.isArray(saved.path)){
+            node = state.nodes.find(function(candidate){ return JSON.stringify(candidate.path) === JSON.stringify(saved.path); });
+          }
+          if(!node) node = state.nodes.find(function(candidate){ return candidate.name === saved.name && candidate.obj.clipId === saved.clipId; });
+          if(!node || !saved.data) return;
+          node.obj[DATA_KEY] = JSON.parse(JSON.stringify(saved.data));
+          compileKeys(node.obj, ensureData(node.obj));
+          applied += 1;
+        });
+        LukeAnimate.refreshUI();
+        renderCards();
+        setStatus("Imported StickRig data for " + applied + " part" + (applied===1?"":"s") + ".", "good");
+      }catch(err){
+        setStatus("Import failed: " + (err && err.message ? err.message : err), "bad");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  panel.querySelector("#sr-load").addEventListener("click", loadSelection);
+  panel.querySelector("#sr-refresh").addEventListener("click", refreshHierarchy);
+  panel.querySelector("#sr-export").addEventListener("click", exportRig);
+  panel.querySelector("#sr-import").addEventListener("click", function(){ importInput.value = ""; importInput.click(); });
+  importInput.addEventListener("change", function(){ if(importInput.files && importInput.files[0]) importRigFile(importInput.files[0]); });
+  panel.querySelector("#sr-clear").addEventListener("click", function(){
+    if(!state.root) return;
+    LukeAnimate.pushUndo();
+    state.nodes.forEach(function(node){ clearNodeKeys(node, false); });
+    LukeAnimate.refreshUI();
+    renderCards();
+    setStatus("Cleared all StickRig keys from the loaded Clip.", "good");
+  });
+  panel.querySelector("#sr-close").addEventListener("click", function(){ panel.style.display = "none"; });
+
+  function selectionKey(){
+    return LukeAnimate.getSelectedDrawObjects().map(function(obj){ return obj && (obj.id || obj._id || obj.clipId || obj.type); }).join("|");
+  }
+
+  function poll(){
+    const frame = currentFrame();
+    const frameValue = panel.querySelector("#sr-frame-value");
+    if(frameValue) frameValue.textContent = String(frame);
+
+    let changed = false;
+    if(state.root){
+      state.nodes.forEach(function(node){ if(syncExternalTimelineChanges(node)) changed = true; });
+    }
+    if(changed){
+      LukeAnimate.refreshUI();
+      renderCards();
+      setStatus("Synchronized StickRig with timeline key changes.", "good");
+    }else if(frame !== state.lastFrame && state.root){
+      if(!panel.contains(document.activeElement)) renderCards();
+    }
+    state.lastFrame = frame;
+    state.lastSelectionKey = selectionKey();
+  }
+
+  state.pollTimer = window.setInterval(poll, 160);
+  window.addEventListener("resize", function(){ LukeAnimate.clampFloatingPanelToViewport(panel); });
+
+  renderCards();
+  poll();
+  setStatus("StickRig " + VERSION + " loaded. Select a Clip instance and click Load.", "good");
+})();
