@@ -1,21 +1,21 @@
 {
   "title": "Luke Animate",
-  "version": 1,
+  "version": 2,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
       "id": "animate",
       "label": "Animate",
       "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg",
-      "sectionLabel": "Configured Scripts",
+      "sectionLabel": "Animate Tools",
       "items": [
         {
-          "id": "animate_placeholder",
-          "label": "Animate Placeholder",
-          "description": "Placeholder external script for the Animate panel.",
-          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/AnimatePlaceholder.txt",
-          "action": "script",
+          "id": "stickrig",
+          "label": "StickRig",
+          "description": "Animate nested Luke Animate Clip parts with separate move, scale and rotation keys.",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Stick.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/StickRig.txt",
+          "action": "tool",
           "F_Screen": 0
         }
       ]
@@ -23,7 +23,7 @@
     {
       "id": "particles",
       "label": "Particles & Effects",
-      "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Particles.svg",
+      "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg",
       "sectionLabel": "Configured Scripts",
       "items": [
         {
