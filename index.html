@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v75</title>
+<title>Luke Animate v76</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -86,6 +86,16 @@
     border-radius:4px; border:2px solid #0c0d0e; cursor:grab;
     transform:rotate(45deg); background:var(--warn);
   }
+
+  .shape-point-handle{
+    position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px;
+    border-radius:50%; background:#ffffff; border:2px solid #17212b;
+    cursor:grab; z-index:9; pointer-events:auto;
+    box-shadow:0 0 0 1px rgba(255,255,255,.65);
+  }
+  .shape-point-handle.active{background:var(--accent);}
+  .shape-point-handle:hover{background:var(--accent-dim);}
+  .shape-point-handle:active{cursor:grabbing;}
 
   .xform-handle{
     position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px;
@@ -1409,6 +1419,14 @@
         <div class="row" id="insp-stroke-row"><label>Border</label><input type="color" id="insp-stroke" value="#1b1f24"></div>
         <div class="row" id="insp-strokewidth-row"><label>Border Width</label><input type="range" id="insp-strokewidth" min="1" max="30" step="1" value="4"><span class="val" id="val-insp-strokewidth">4</span></div>
         <div class="row" id="insp-cornerradius-row" style="display:none;"><label>Corner Radius</label><input type="range" id="insp-cornerradius" min="0" max="200" step="1" value="20"><span class="val" id="val-insp-cornerradius">20</span></div>
+        <div id="insp-shape-points-row" style="display:none;margin-top:8px;">
+          <div class="btn-row">
+            <button class="btn small" id="btn-edit-shape-points">Edit Points</button>
+            <button class="btn small" id="btn-add-shape-point" disabled>+ Point</button>
+            <button class="btn small" id="btn-subdivide-shape-points" disabled>Subdivide</button>
+          </div>
+          <div class="hint" id="insp-shape-point-hint" style="padding:6px 0 2px;">Convert this vector to an editable path, then drag its points or add points without changing its outline.</div>
+        </div>
         <div class="btn-row" style="margin-top:8px;">
           <button class="btn small primary" id="btn-add-keyframe">+ Keyframe @ <span id="insp-current-time">0.0s</span></button>
         </div>
@@ -1604,6 +1622,11 @@ ctx.fill();</textarea>
   let editingClipId = null; // null = editing the main scene
   let clipEditViewOffset = { x:0, y:0 }; // screen-space view offset used only while editing inside a Clip
   let selectShapesMode = false; // active in Animate only while the Select tool is chosen
+  let shapePointEditMode = false; // edit the actual vector outline of one selected shape
+  let shapePointAddMode = false;  // next click on an outline inserts a point
+  let shapePointEditObjectId = null;
+  let shapePointSelectedIndex = 0;
+
   let animatePanelOpen = false;
   let autoKeyframe = false;
   let selectedDrawIndices = new Set();
@@ -2015,6 +2038,16 @@ ctx.fill();</textarea>
   window.addEventListener('keydown', (e)=>{
     const tag = (e.target.tagName || '').toLowerCase();
     if(tag === 'input' || tag === 'select' || tag === 'textarea' || e.target.isContentEditable) return; // don't hijack typing/sliders
+    if(e.key === 'Escape' && shapePointEditMode){
+      e.preventDefault();
+      if(shapePointAddMode){shapePointAddMode=false;overlay.style.cursor='default';updateInspector();}
+      else setShapePointEditMode(false);
+      return;
+    }
+    if((e.key === 'Delete' || e.key === 'Backspace') && shapePointEditMode){
+      const obj=currentShapePointEditObject();
+      if(obj){e.preventDefault();deleteEditableShapePoint(obj,shapePointSelectedIndex,true);return;}
+    }
     if((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawIndices.size > 0){
       e.preventDefault();
       deleteSelectedDrawObjects();
@@ -3291,8 +3324,271 @@ ctx.fill();</textarea>
     return { x: lt.pivotX + r.x, y: lt.pivotY + r.y };
   }
 
+  function shapeCanEditPoints(obj){
+    return !!obj && ['freehand','line','rect','ellipse'].includes(obj.type);
+  }
+
+  function editableRoundedRectPoints(eff){
+    const x1=Math.min(Number(eff.x1)||0,Number(eff.x2)||0);
+    const y1=Math.min(Number(eff.y1)||0,Number(eff.y2)||0);
+    const x2=Math.max(Number(eff.x1)||0,Number(eff.x2)||0);
+    const y2=Math.max(Number(eff.y1)||0,Number(eff.y2)||0);
+    const w=x2-x1,h=y2-y1;
+    const r=Math.max(0,Math.min(Number(eff.cornerRadius)||0,w/2,h/2));
+    if(r<=0.001) return [{x:x1,y:y1},{x:x2,y:y1},{x:x2,y:y2},{x:x1,y:y2}];
+    const segments=Math.max(4,Math.min(18,Math.ceil(r/4)));
+    const out=[];
+    function arc(cx,cy,start,end,includeStart){
+      for(let i=includeStart?0:1;i<=segments;i++){
+        const a=start+(end-start)*(i/segments);
+        out.push({x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r});
+      }
+    }
+    arc(x2-r,y1+r,-Math.PI/2,0,true);
+    arc(x2-r,y2-r,0,Math.PI/2,false);
+    arc(x1+r,y2-r,Math.PI/2,Math.PI,false);
+    arc(x1+r,y1+r,Math.PI,Math.PI*1.5,false);
+    return out;
+  }
+
+  function editableEllipsePoints(eff,count=64){
+    const cx=((Number(eff.x1)||0)+(Number(eff.x2)||0))/2;
+    const cy=((Number(eff.y1)||0)+(Number(eff.y2)||0))/2;
+    const rx=Math.abs((Number(eff.x2)||0)-(Number(eff.x1)||0))/2;
+    const ry=Math.abs((Number(eff.y2)||0)-(Number(eff.y1)||0))/2;
+    const out=[];
+    for(let i=0;i<count;i++){
+      const a=i/count*Math.PI*2;
+      out.push({x:cx+Math.cos(a)*rx,y:cy+Math.sin(a)*ry});
+    }
+    return out;
+  }
+
+  function bakeEffectiveTransformIntoShapePoints(obj,eff,sourcePoints){
+    const b=getDrawObjectBounds(obj);
+    const pivotX=(b.x1+b.x2)/2,pivotY=(b.y1+b.y2)/2;
+    const tx=Number(eff.tx)||0,ty=Number(eff.ty)||0;
+    const scale=eff.tscale===undefined?1:Number(eff.tscale)||1;
+    const angle=(Number(eff.trotation)||0)*Math.PI/180;
+    const cos=Math.cos(angle),sin=Math.sin(angle);
+    return sourcePoints.map(p=>{
+      const dx=(p.x-pivotX)*scale,dy=(p.y-pivotY)*scale;
+      return {x:pivotX+tx+dx*cos-dy*sin,y:pivotY+ty+dx*sin+dy*cos};
+    });
+  }
+
+  function convertDrawObjectToEditablePath(obj){
+    if(!shapeCanEditPoints(obj)) return null;
+    const originalType=obj.type;
+    const eff=getEffectiveObj(obj,t);
+    let sourcePoints=[];
+    let closedPath=false;
+    let fillEnabled=false;
+    if(originalType==='freehand'){
+      sourcePoints=(Array.isArray(eff.points)?eff.points:obj.points||[]).map(p=>({x:Number(p.x)||0,y:Number(p.y)||0}));
+      closedPath=eff.closedPath!==undefined?!!eff.closedPath:!!obj.closedPath;
+      fillEnabled=eff.fillEnabled!==undefined?!!eff.fillEnabled:!!obj.fillEnabled;
+    }else if(originalType==='line'){
+      sourcePoints=[{x:Number(eff.x1)||0,y:Number(eff.y1)||0},{x:Number(eff.x2)||0,y:Number(eff.y2)||0}];
+    }else if(originalType==='rect'){
+      sourcePoints=editableRoundedRectPoints(eff);
+      closedPath=true;
+      fillEnabled=true;
+    }else if(originalType==='ellipse'){
+      sourcePoints=editableEllipsePoints(eff,64);
+      closedPath=true;
+      fillEnabled=true;
+    }
+    if(sourcePoints.length<2) return null;
+    const pointsBaked=bakeEffectiveTransformIntoShapePoints(obj,eff,sourcePoints);
+    obj.originalVectorType=obj.originalVectorType||originalType;
+    if(originalType==='rect') obj.originalCornerRadius=Number(eff.cornerRadius)||0;
+    obj.type='freehand';
+    obj.points=pointsBaked;
+    obj.closedPath=closedPath;
+    obj.fillEnabled=fillEnabled;
+    obj.strokeEnabled=eff.strokeEnabled!==undefined?!!eff.strokeEnabled:obj.strokeEnabled!==false;
+    obj.fillColor=eff.fillColor||obj.fillColor||obj.color||'#4fe0c4';
+    obj.strokeColor=eff.strokeColor||obj.strokeColor||obj.color||'#1b1f24';
+    obj.strokeWidth=eff.strokeWidth!==undefined?eff.strokeWidth:(obj.strokeWidth||4);
+    obj.opacity=eff.opacity===undefined?(obj.opacity===undefined?1:obj.opacity):eff.opacity;
+    obj.tx=0;obj.ty=0;obj.tscale=1;obj.trotation=0;obj.keyframes=[];
+    delete obj.x1;delete obj.y1;delete obj.x2;delete obj.y2;delete obj.cornerRadius;
+    ensureDrawObjectMetadata(obj);
+    return obj;
+  }
+
+  function shapePointSceneThreshold(pixels=18){
+    const a=stageToScenePoint({x:0,y:0});
+    const b=stageToScenePoint({x:pixels,y:0});
+    return Math.max(0.001,Math.hypot(b.x-a.x,b.y-a.y));
+  }
+
+  function projectPointToSegment(point,a,b){
+    const dx=b.x-a.x,dy=b.y-a.y,len2=dx*dx+dy*dy;
+    const ratio=len2>0.000001?Math.max(0,Math.min(1,((point.x-a.x)*dx+(point.y-a.y)*dy)/len2)):0;
+    const projected={x:a.x+dx*ratio,y:a.y+dy*ratio};
+    return {ratio,point:projected,distance:Math.hypot(point.x-projected.x,point.y-projected.y)};
+  }
+
+  function closestEditableShapeSegment(obj,scenePoint){
+    if(!obj||obj.type!=='freehand'||!Array.isArray(obj.points)||obj.points.length<2) return null;
+    const count=obj.closedPath?obj.points.length:obj.points.length-1;
+    let best=null;
+    for(let i=0;i<count;i++){
+      const j=(i+1)%obj.points.length;
+      const hit=projectPointToSegment(scenePoint,obj.points[i],obj.points[j]);
+      if(!best||hit.distance<best.distance) best={startIndex:i,endIndex:j,insertIndex:i+1,ratio:hit.ratio,point:hit.point,distance:hit.distance};
+    }
+    return best;
+  }
+
+  function blendKnownBoneWeights(a,b,ratio){
+    const map=new Map();
+    (a||[]).forEach(w=>map.set(w.boneId,(map.get(w.boneId)||0)+(Number(w.weight)||0)*(1-ratio)));
+    (b||[]).forEach(w=>map.set(w.boneId,(map.get(w.boneId)||0)+(Number(w.weight)||0)*ratio));
+    const out=Array.from(map.entries()).map(([boneId,weight])=>({boneId,weight})).filter(w=>w.weight>0.00001);
+    const total=out.reduce((sum,w)=>sum+w.weight,0)||1;
+    out.forEach(w=>w.weight/=total);
+    return out;
+  }
+
+  function syncKnownTopologyInsert(obj,oldLength,startIndex,endIndex,insertIndex,ratio){
+    const db=obj.demBones;
+    if(!db) return;
+    if(Array.isArray(db.restPoints)&&db.restPoints.length===oldLength){
+      const a=db.restPoints[startIndex],b=db.restPoints[endIndex];
+      db.restPoints.splice(insertIndex,0,{x:a.x+(b.x-a.x)*ratio,y:a.y+(b.y-a.y)*ratio});
+    }
+    if(Array.isArray(db.weights)&&db.weights.length===oldLength){
+      db.weights.splice(insertIndex,0,blendKnownBoneWeights(db.weights[startIndex],db.weights[endIndex],ratio));
+    }
+    const rig=db.rig;
+    const keys=rig&&rig.pointKeys&&rig.pointKeys[obj.id];
+    if(Array.isArray(keys)) keys.forEach(key=>{
+      if(!Array.isArray(key.points)||key.points.length!==oldLength) return;
+      const a=key.points[startIndex],b=key.points[endIndex];
+      key.points.splice(insertIndex,0,{x:a.x+(b.x-a.x)*ratio,y:a.y+(b.y-a.y)*ratio});
+    });
+  }
+
+  function syncKnownTopologyDelete(obj,index){
+    const db=obj.demBones;
+    if(!db) return;
+    if(Array.isArray(db.restPoints)&&db.restPoints.length>index) db.restPoints.splice(index,1);
+    if(Array.isArray(db.weights)&&db.weights.length>index) db.weights.splice(index,1);
+    const rig=db.rig;
+    const keys=rig&&rig.pointKeys&&rig.pointKeys[obj.id];
+    if(Array.isArray(keys)) keys.forEach(key=>{if(Array.isArray(key.points)&&key.points.length>index) key.points.splice(index,1);});
+  }
+
+  function insertEditableShapePoint(obj,scenePoint,recordHistory=true){
+    if(!obj) return false;
+    if(obj.type!=='freehand') convertDrawObjectToEditablePath(obj);
+    const hit=closestEditableShapeSegment(obj,scenePoint);
+    if(!hit||hit.distance>shapePointSceneThreshold(20)) return false;
+    if(recordHistory) pushUndo();
+    const oldLength=obj.points.length;
+    let insertIndex=hit.insertIndex;
+    if(obj.closedPath&&hit.startIndex===oldLength-1) insertIndex=oldLength;
+    obj.points.splice(insertIndex,0,{x:hit.point.x,y:hit.point.y});
+    syncKnownTopologyInsert(obj,oldLength,hit.startIndex,hit.endIndex,insertIndex,hit.ratio);
+    shapePointSelectedIndex=insertIndex;
+    renderShapePointHandles();
+    updateInspector();
+    renderLayerList();
+    return true;
+  }
+
+  function subdivideEditableShape(obj){
+    if(!obj) return false;
+    if(obj.type!=='freehand') convertDrawObjectToEditablePath(obj);
+    if(!obj.points||obj.points.length<2) return false;
+    pushUndo();
+    const original=obj.points.map(p=>({x:p.x,y:p.y}));
+    const closed=!!obj.closedPath;
+    const segmentCount=closed?original.length:original.length-1;
+    for(let i=segmentCount-1;i>=0;i--){
+      const j=(i+1)%original.length;
+      const hit={startIndex:i,endIndex:j,insertIndex:i+1,ratio:0.5,point:{x:(original[i].x+original[j].x)/2,y:(original[i].y+original[j].y)/2},distance:0};
+      const oldLength=obj.points.length;
+      let insertIndex=hit.insertIndex;
+      if(closed&&i===original.length-1) insertIndex=oldLength;
+      obj.points.splice(insertIndex,0,hit.point);
+      syncKnownTopologyInsert(obj,oldLength,i,j,insertIndex,0.5);
+    }
+    renderShapePointHandles();updateInspector();renderLayerList();
+    return true;
+  }
+
+  function deleteEditableShapePoint(obj,index,recordHistory=true){
+    if(!obj||obj.type!=='freehand'||!Array.isArray(obj.points)) return false;
+    const minimum=obj.closedPath?3:2;
+    if(obj.points.length<=minimum){logToSandbox('This path needs at least '+minimum+' points',true);return false;}
+    if(recordHistory) pushUndo();
+    const safe=Math.max(0,Math.min(obj.points.length-1,index));
+    obj.points.splice(safe,1);
+    syncKnownTopologyDelete(obj,safe);
+    shapePointSelectedIndex=Math.max(0,Math.min(obj.points.length-1,safe));
+    renderShapePointHandles();updateInspector();renderLayerList();
+    return true;
+  }
+
+  function currentShapePointEditObject(){
+    const sel=getSelectedSingleObject();
+    if(!sel||!sel.obj||sel.obj.id!==shapePointEditObjectId) return null;
+    return sel.obj;
+  }
+
+  function setShapePointEditMode(active){
+    const sel=getSelectedSingleObject();
+    if(active){
+      if(!sel||!shapeCanEditPoints(sel.obj)){logToSandbox('Select one vector shape first',true);return false;}
+      pushUndo();
+      const obj=convertDrawObjectToEditablePath(sel.obj);
+      if(!obj){logToSandbox('This object cannot be converted to editable points',true);return false;}
+      shapePointEditMode=true;shapePointAddMode=false;shapePointEditObjectId=obj.id;shapePointSelectedIndex=0;
+      stageTool='none';selectShapesMode=false;overlay.style.cursor='default';
+      logToSandbox('Point editing active. Drag points, or click + Point then click an outline segment.');
+    }else{
+      shapePointEditMode=false;shapePointAddMode=false;shapePointEditObjectId=null;
+      overlay.querySelectorAll('.shape-point-handle').forEach(el=>el.remove());
+      if(animatePanelOpen) setAnimateSelectionActive(true);
+    }
+    updateInspector();renderTransformHandles();return true;
+  }
+
+  function renderShapePointHandles(){
+    overlay.querySelectorAll('.shape-point-handle').forEach(el=>el.remove());
+    if(!shapePointEditMode) return;
+    const obj=currentShapePointEditObject();
+    if(!obj||obj.type!=='freehand'||!Array.isArray(obj.points)){setShapePointEditMode(false);return;}
+    obj.points.forEach((point,index)=>{
+      const display=sceneToStagePoint(point);
+      const el=document.createElement('div');
+      el.className='shape-point-handle'+(index===shapePointSelectedIndex?' active':'');
+      el.style.left=(display.x/W*100)+'%';el.style.top=(display.y/H*100)+'%';
+      el.title='Point '+index+' — drag to move; right-click to delete';
+      el.addEventListener('mousedown',event=>{
+        event.preventDefault();event.stopPropagation();
+        pushUndo();shapePointSelectedIndex=index;shapePointAddMode=false;
+        function move(ev){
+          const c=canvasCoords(ev.clientX,ev.clientY);
+          obj.points[index]={x:c.x,y:c.y};
+          if(obj.demBones&&Array.isArray(obj.demBones.restPoints)&&obj.demBones.restPoints[index]) obj.demBones.restPoints[index]={x:c.x,y:c.y};
+          renderShapePointHandles();
+        }
+        function up(){window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up);finishObjectEdit(obj);updateInspector();}
+        window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+      });
+      el.addEventListener('contextmenu',event=>{event.preventDefault();event.stopPropagation();deleteEditableShapePoint(obj,index,true);});
+      overlay.appendChild(el);
+    });
+  }
+
   function renderTransformHandles(){
     overlay.querySelectorAll('.xform-handle, .xform-rotate-handle').forEach(e=>e.remove());
+    if(shapePointEditMode){ renderShapePointHandles(); return; }
     if(!selectShapesMode) return;
     const sel = getSelectedSingleObject();
     if(!sel) return;
@@ -3419,20 +3715,38 @@ ctx.fill();</textarea>
     const section = document.getElementById('inspector-section');
     if(selectionInspectorSuppressors.size){ section.style.display = 'none'; return; }
     const sel = getSelectedSingleObject();
-    if(!sel){ section.style.display = 'none'; return; }
+    if(!sel){ section.style.display = 'none'; if(shapePointEditMode) setShapePointEditMode(false); return; }
     section.style.display = 'block';
     const obj = sel.obj;
     const isClip = obj.type === 'clipinstance';
     document.getElementById('inspector-label').textContent = isClip
       ? (clips[obj.clipId] ? clips[obj.clipId].name : 'Clip instance')
       : (obj.type.charAt(0).toUpperCase()+obj.type.slice(1));
-    const canFill = !isClip && (obj.type === 'rect' || obj.type === 'ellipse' || obj.type === 'text');
+    const canFill = !isClip && (obj.type === 'rect' || obj.type === 'ellipse' || obj.type === 'text' || (obj.type === 'freehand' && obj.closedPath));
     const canStroke = !isClip;
     const canRoundCorners = !isClip && obj.type === 'rect';
     document.getElementById('insp-fill-row').style.display = canFill ? 'flex' : 'none';
     document.getElementById('insp-stroke-row').style.display = canStroke ? 'flex' : 'none';
     document.getElementById('insp-strokewidth-row').style.display = canStroke ? 'flex' : 'none';
     document.getElementById('insp-cornerradius-row').style.display = canRoundCorners ? 'flex' : 'none';
+
+    const canEditPoints = !isClip && shapeCanEditPoints(obj);
+    const pointsRow = document.getElementById('insp-shape-points-row');
+    pointsRow.style.display = canEditPoints ? 'block' : 'none';
+    const samePointObject = shapePointEditMode && shapePointEditObjectId === obj.id;
+    const editPointsButton = document.getElementById('btn-edit-shape-points');
+    const addPointButton = document.getElementById('btn-add-shape-point');
+    const subdivideButton = document.getElementById('btn-subdivide-shape-points');
+    editPointsButton.classList.toggle('active', samePointObject);
+    editPointsButton.textContent = samePointObject ? 'Finish Points' : 'Edit Points';
+    addPointButton.disabled = !samePointObject;
+    addPointButton.classList.toggle('active', samePointObject && shapePointAddMode);
+    addPointButton.textContent = samePointObject && shapePointAddMode ? 'Click Outline…' : '+ Point';
+    subdivideButton.disabled = !samePointObject;
+    const pointHint=document.getElementById('insp-shape-point-hint');
+    if(pointHint) pointHint.textContent=samePointObject
+      ? ((obj.points?obj.points.length:0)+' points. Drag a point, right-click one to delete, or add points without changing the outline.')
+      : 'Convert this vector to an editable path while preserving rounded corners and its current stage appearance.';
 
     const eff = getEffectiveObj(obj, t);
     if(isClip){
@@ -3527,6 +3841,22 @@ ctx.fill();</textarea>
     updateSelectedObjectField('strokeColor', e.target.value);
   });
   document.getElementById('insp-stroke').addEventListener('change', (e)=>{ e.target.dataset.historyArmed=''; const sel=getSelectedSingleObject(); finishObjectEdit(sel?sel.obj:null); });
+
+  document.getElementById('btn-edit-shape-points').addEventListener('click', ()=>{
+    const sel=getSelectedSingleObject();
+    const active=!!(shapePointEditMode&&sel&&sel.obj.id===shapePointEditObjectId);
+    setShapePointEditMode(!active);
+  });
+  document.getElementById('btn-add-shape-point').addEventListener('click', ()=>{
+    const obj=currentShapePointEditObject();if(!obj)return;
+    shapePointAddMode=!shapePointAddMode;
+    overlay.style.cursor=shapePointAddMode?'crosshair':'default';
+    updateInspector();
+  });
+  document.getElementById('btn-subdivide-shape-points').addEventListener('click', ()=>{
+    const obj=currentShapePointEditObject();if(!obj)return;
+    if(subdivideEditableShape(obj)) logToSandbox('Added one point to every outline segment without changing the shape.');
+  });
 
   document.getElementById('btn-add-keyframe').addEventListener('click', ()=>{
     const sel = getSelectedSingleObject(); if(!sel) return;
@@ -3983,7 +4313,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 74,
+    version: 76,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -4066,6 +4396,9 @@ ctx.fill();</textarea>
       routeSelectionToPanel(panelForDrawObject(object), true);
       return true;
     },
+    convertDrawObjectToEditablePath(object){ return convertDrawObjectToEditablePath(object); },
+    insertDrawObjectPoint(object, scenePoint){ return insertEditableShapePoint(object, scenePoint, true); },
+    subdivideDrawObjectPoints(object){ return subdivideEditableShape(object); },
     reloadConfig(){ return loadLukeAnimateConfig(true); }
   };
   window.LukeAnimate = LukeAnimatePluginAPI;
@@ -4310,6 +4643,7 @@ ctx.fill();</textarea>
 
   function deleteSelectedDrawObjects(){
     finishStageTextEntry(false);
+    if(shapePointEditMode) setShapePointEditMode(false);
     if(selectedDrawIndices.size === 0) return false;
     pushUndo();
     const indices = Array.from(selectedDrawIndices).filter(i=>i >= 0 && i < drawObjects.length).sort((a,b)=>b-a);
@@ -4334,6 +4668,7 @@ ctx.fill();</textarea>
   function selectDrawObject(index, additive, openOwnerPanel){
     if(index < 0 || index >= drawObjects.length) return;
     const obj = ensureDrawObjectMetadata(drawObjects[index]);
+    if(shapePointEditMode && obj.id !== shapePointEditObjectId) setShapePointEditMode(false);
     if(additive){
       if(selectedDrawIndices.has(index)) selectedDrawIndices.delete(index);
       else selectedDrawIndices.add(index);
@@ -4454,8 +4789,23 @@ ctx.fill();</textarea>
   });
 
   overlay.addEventListener('mousedown', (e)=>{
-    if(e.ctrlKey || e.metaKey) return; // Ctrl/Cmd+drag pans regardless of panel
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
+
+    if(shapePointEditMode){
+      const obj=currentShapePointEditObject();
+      if(!obj){setShapePointEditMode(false);return;}
+      if(shapePointAddMode){
+        const c=canvasCoords(e.clientX,e.clientY);
+        if(insertEditableShapePoint(obj,c,true)){
+          shapePointAddMode=false;overlay.style.cursor='default';
+          logToSandbox('Point inserted on the selected outline.');
+        }else logToSandbox('Click closer to the selected outline',true);
+        e.preventDefault();e.stopPropagation();updateInspector();return;
+      }
+      if(e.target===overlay){e.preventDefault();return;}
+    }
+
+    if(e.ctrlKey || e.metaKey) return; // Ctrl/Cmd+drag pans regardless of panel
 
     if(placingClipId){
       const c = canvasCoords(e.clientX, e.clientY);
