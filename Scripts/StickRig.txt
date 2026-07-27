@@ -1,5 +1,5 @@
 /*
-  Luke Animate StickRig GPT v2.0
+  Luke Animate StickRig GPT v3.0
   Separate config-loaded tool. No Wick Editor or LukeToolsBridge dependency.
   Loaded by Luke Animate Config.json with:
   {
@@ -19,7 +19,7 @@
   const STYLE_ID = "lukeanimate-stickrig-style";
   const DATA_KEY = "_lukeAnimateStickRig";
   const KEY_MARKER = "_lukeAnimateStickRigKey";
-  const VERSION = "2.0";
+  const VERSION = "3.0";
   const TOOL_GROUP_ID = String(group && group.id ? group.id : "animate");
   const TOOL_ITEM_ID = String(item && (item.id || item.label) ? (item.id || item.label) : "stickrig");
   const TOOL_ICON_URL = String(item && item.iconUrl ? item.iconUrl : "https://lukeo25.github.io/LukeAnimate/SVGs/Stick.svg");
@@ -27,6 +27,12 @@
   function setToolSelected(active){
     if(typeof LukeAnimate.setConfiguredToolActive === "function"){
       LukeAnimate.setConfiguredToolActive(TOOL_GROUP_ID, TOOL_ITEM_ID, !!active);
+    }
+  }
+
+  function suppressFixedInspector(active){
+    if(typeof LukeAnimate.setSelectionInspectorSuppressed === "function"){
+      LukeAnimate.setSelectionInspectorSuppressed(PLUGIN_ID, !!active);
     }
   }
 
@@ -39,6 +45,7 @@
     existingPanel.classList.add("open");
     existingPanel.style.display = "flex";
     setToolSelected(true);
+    suppressFixedInspector(true);
     LukeAnimate.bringFloatingPanelToFront(existingPanel);
     LukeAnimate.clampFloatingPanelToViewport(existingPanel);
     return;
@@ -205,6 +212,7 @@
       #${PANEL_ID} .sr-channel.move{border-left:3px solid #0e9c86;}
       #${PANEL_ID} .sr-channel.scale{border-left:3px solid #467db7;}
       #${PANEL_ID} .sr-channel.rotate{border-left:3px solid #7b5bb6;}
+      #${PANEL_ID} .sr-channel.opacity{border-left:3px solid #68717c;}
       #${PANEL_ID} .sr-channel-head{display:grid;grid-template-columns:28px 1fr auto auto;align-items:center;gap:6px;padding:7px;background:#f4f5f7;cursor:pointer;}
       #${PANEL_ID} .sr-channel-head button{padding:4px 6px;font-size:9px;}
       #${PANEL_ID} .sr-channel-title{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#4b5563;}
@@ -240,7 +248,7 @@
   panel.innerHTML = `
     <div class="sr-header" id="sr-header">
       <img class="sr-tool-icon" src="${escapeHtml(TOOL_ICON_URL)}" alt="">
-      <div class="sr-title"><strong>StickRig</strong><span>Luke Animate · Move · Scale · Rotate</span></div>
+      <div class="sr-title"><strong>StickRig</strong><span>Luke Animate · Move · Scale · Rotate · Opacity</span></div>
       <div class="sr-frame">Frame <b id="sr-frame-value">1</b></div>
       <button type="button" class="sr-close" id="sr-close" title="Close StickRig">×</button>
     </div>
@@ -252,7 +260,7 @@
       <button type="button" class="danger" id="sr-clear" disabled>Clear</button>
     </div>
     <div class="sr-body" id="sr-body">
-      <div class="sr-empty" id="sr-empty">Select a Luke Animate <b>Clip</b> instance, then click <b>Load</b>.<br>StickRig animates the clip instances nested inside it.</div>
+      <div class="sr-empty" id="sr-empty">Select a Luke Animate <b>Clip</b> instance, then click <b>Load</b>.<br>Its transform controls and any nested Clip parts will appear here.</div>
       <div id="sr-cards"></div>
     </div>
     <div class="sr-status" id="sr-status">Ready. Select a Clip instance and click Load.</div>
@@ -260,6 +268,7 @@
   document.body.appendChild(panel);
   LukeAnimate.registerFloatingPanel(panel);
   setToolSelected(true);
+  suppressFixedInspector(true);
   LukeAnimate.bringFloatingPanelToFront(panel);
 
   const importInput = document.createElement("input");
@@ -322,6 +331,19 @@
     const visited = new Set();
     const rootClip = clips[root.clipId];
 
+    const rootNode = {
+      id:objectKey(root, ["root"]),
+      obj:root,
+      clip:rootClip || null,
+      depth:0,
+      path:[],
+      isRoot:true,
+      name:clipName(root, rootClip, "Selected Clip")
+    };
+    nodes.push(rootNode);
+    nodeMap.set(rootNode.id, rootNode);
+    visited.add(rootNode.id);
+
     function walkClipDefinition(clip, depth, path){
       if(!clip || depth > 12) return;
       const objects = Array.isArray(clip.drawObjects) ? clip.drawObjects : [];
@@ -346,7 +368,7 @@
       });
     }
 
-    walkClipDefinition(rootClip, 0, []);
+    walkClipDefinition(rootClip, 1, []);
     return { nodes:nodes, nodeMap:nodeMap, rootClip:rootClip };
   }
 
@@ -372,7 +394,7 @@
         base:readBase(obj),
         rotationMin:-359,
         rotationMax:360,
-        channels:{ move:emptyChannel(), scale:emptyChannel(), rotate:emptyChannel() }
+        channels:{ move:emptyChannel(), scale:emptyChannel(), rotate:emptyChannel(), opacity:emptyChannel() }
       };
       const existing = Array.isArray(obj.keyframes) ? obj.keyframes.filter(k=>!k[KEY_MARKER]) : [];
       existing.forEach(function(kf){
@@ -389,12 +411,16 @@
           data.channels.rotate.keys[String(frame)] = { rotation:round3(num(kf.rotation, data.base.rotation)) };
           data.channels.rotate.easing[String(frame)] = "linear";
         }
+        if(kf.opacity !== undefined){
+          data.channels.opacity.keys[String(frame)] = { opacity:clamp(num(kf.opacity, data.base.opacity), 0, 1) };
+          data.channels.opacity.easing[String(frame)] = "linear";
+        }
       });
       obj[DATA_KEY] = data;
     }
     if(!data.base) data.base = readBase(obj);
     if(!data.channels) data.channels = {};
-    ["move","scale","rotate"].forEach(function(channel){
+    ["move","scale","rotate","opacity"].forEach(function(channel){
       if(!data.channels[channel]) data.channels[channel] = emptyChannel();
       if(!data.channels[channel].keys) data.channels[channel].keys = {};
       if(!data.channels[channel].easing) data.channels[channel].easing = {};
@@ -421,7 +447,7 @@
     const channel = data.channels[channelName];
     const frames = sortedFrames(channel);
     const base = data.base;
-    const properties = channelName === "move" ? ["x","y"] : channelName === "scale" ? ["scale"] : ["rotation"];
+    const properties = channelName === "move" ? ["x","y"] : channelName === "scale" ? ["scale"] : channelName === "rotate" ? ["rotation"] : ["opacity"];
     const baseValue = {};
     properties.forEach(function(property){ baseValue[property] = base[property]; });
     if(!frames.length) return baseValue;
@@ -468,17 +494,19 @@
     const move = interpolateChannel(data, "move", frame);
     const scale = interpolateChannel(data, "scale", frame);
     const rotate = interpolateChannel(data, "rotate", frame);
+    const opacity = interpolateChannel(data, "opacity", frame);
     return {
       x:round3(num(move.x, data.base.x)),
       y:round3(num(move.y, data.base.y)),
       scale:round3(Math.max(.01, num(scale.scale, data.base.scale))),
-      rotation:round3(num(rotate.rotation, data.base.rotation))
+      rotation:round3(num(rotate.rotation, data.base.rotation)),
+      opacity:clamp(num(opacity.opacity, data.base.opacity), 0, 1)
     };
   }
 
   function channelFramesAt(data, frame){
     const found = [];
-    ["move","scale","rotate"].forEach(function(channel){
+    ["move","scale","rotate","opacity"].forEach(function(channel){
       if(data.channels[channel].keys[String(frame)]) found.push(channel);
     });
     return found;
@@ -486,7 +514,7 @@
 
   function allUserFrames(data){
     const set = new Set();
-    ["move","scale","rotate"].forEach(function(channel){
+    ["move","scale","rotate","opacity"].forEach(function(channel){
       sortedFrames(data.channels[channel]).forEach(function(frame){ set.add(frame); });
     });
     return Array.from(set).sort(function(a,b){ return a-b; });
@@ -502,6 +530,7 @@
         y:pose.y,
         scale:pose.scale,
         rotation:pose.rotation,
+        opacity:pose.opacity,
         [KEY_MARKER]:true,
         _stickRigSourceFrame:frame,
         _stickRigChannels:channelFramesAt(data, frame)
@@ -519,6 +548,37 @@
   }
 
   LukeAnimate.registerObjectEvaluator(PLUGIN_ID, evaluator);
+
+  function pivotDelta(dx, dy, scale, rotation){
+    const s = num(scale, 1);
+    const rad = num(rotation, 0) * Math.PI / 180;
+    const cos = Math.cos(rad), sin = Math.sin(rad);
+    return { x:(dx * cos - dy * sin) * s, y:(dx * sin + dy * cos) * s };
+  }
+
+  function compensateStickRigPivot(instance, change){
+    const data = instance && instance[DATA_KEY];
+    if(!data || !change) return;
+    ensureData(instance);
+    const frames = allUserFrames(data);
+    const snapshots = frames.map(function(frame){ return { frame:frame, pose:evaluateData(data, frame) }; });
+    const baseDelta = pivotDelta(change.dx, change.dy, data.base.scale, data.base.rotation);
+    data.base.x = round3(num(data.base.x, 0) + baseDelta.x);
+    data.base.y = round3(num(data.base.y, 0) + baseDelta.y);
+    snapshots.forEach(function(entry){
+      const delta = pivotDelta(change.dx, change.dy, entry.pose.scale, entry.pose.rotation);
+      data.channels.move.keys[String(entry.frame)] = {
+        x:round3(entry.pose.x + delta.x),
+        y:round3(entry.pose.y + delta.y)
+      };
+      if(!data.channels.move.easing[String(entry.frame)]) data.channels.move.easing[String(entry.frame)] = "linear";
+    });
+    compileKeys(instance, data);
+  }
+
+  if(typeof LukeAnimate.registerClipPivotCompensator === "function"){
+    LukeAnimate.registerClipPivotCompensator(PLUGIN_ID, compensateStickRigPivot);
+  }
 
   function syncExternalTimelineChanges(node){
     const obj = node.obj;
@@ -580,7 +640,8 @@
     const current = evaluateData(data, frame);
     if(channelName === "move") data.channels.move.keys[key] = { x:round3(num(values.x, current.x)), y:round3(num(values.y, current.y)) };
     else if(channelName === "scale") data.channels.scale.keys[key] = { scale:round3(Math.max(.01, num(values.scale, current.scale))) };
-    else data.channels.rotate.keys[key] = { rotation:round3(num(values.rotation, current.rotation)) };
+    else if(channelName === "rotate") data.channels.rotate.keys[key] = { rotation:round3(num(values.rotation, current.rotation)) };
+    else data.channels.opacity.keys[key] = { opacity:clamp(num(values.opacity, current.opacity * 100) / 100, 0, 1) };
     if(!data.channels[channelName].easing[key]) data.channels[channelName].easing[key] = "linear";
     compileKeys(node.obj, data);
     LukeAnimate.refreshUI();
@@ -611,6 +672,7 @@
     data.channels.move = emptyChannel();
     data.channels.scale = emptyChannel();
     data.channels.rotate = emptyChannel();
+    data.channels.opacity = emptyChannel();
     compileKeys(node.obj, data);
   }
 
@@ -635,7 +697,7 @@
       controls += inputControl("Y", channelName, pose.y, -rangeY, rangeY, .1, "y");
     }else if(channelName === "scale"){
       controls += inputControl("Scale", channelName, pose.scale, .01, 10, .01, "scale");
-    }else{
+    }else if(channelName === "rotate"){
       controls += inputControl("Rotate", channelName, pose.rotation, data.rotationMin, data.rotationMax, .1, "rotation");
       controls += `
         <div class="sr-control"><label>Min</label><span></span><input type="number" data-role="rotation-min" value="${data.rotationMin}" step="1"></div>
@@ -643,6 +705,8 @@
         <div class="sr-quick">
           ${[-180,-90,0,90,180].map(function(v){ return `<button type="button" data-role="quick-rotate" data-value="${v}">${v}°</button>`; }).join("")}
         </div>`;
+    }else{
+      controls += inputControl("Opacity", channelName, Math.round(pose.opacity * 100), 0, 100, 1, "opacity");
     }
     const easing = data.channels[channelName].easing[String(frame)] || "linear";
     controls += `
@@ -683,12 +747,12 @@
 
     if(!hasRoot){
       empty.style.display = "block";
-      empty.innerHTML = "Select a Luke Animate <b>Clip</b> instance, then click <b>Load</b>.<br>StickRig animates the clip instances nested inside it.";
+      empty.innerHTML = "Select a Luke Animate <b>Clip</b> instance, then click <b>Load</b>.<br>Its transform controls and any nested Clip parts will appear here.";
       return;
     }
     if(!state.nodes.length){
       empty.style.display = "block";
-      empty.innerHTML = "The selected Clip contains no nested Clip instances.<br>Create child Clips inside it, then click <b>Refresh</b>.";
+      empty.innerHTML = "No animatable Clip was found in the current selection.";
       return;
     }
     empty.style.display = "none";
@@ -715,6 +779,7 @@
           ${channelHtml(node,"move",pose,data)}
           ${channelHtml(node,"scale",pose,data)}
           ${channelHtml(node,"rotate",pose,data)}
+          ${channelHtml(node,"opacity",pose,data)}
         </div>`;
       cards.appendChild(card);
     });
@@ -816,7 +881,7 @@
       const channel = input.dataset.channel;
       if(!data.channels[channel].keys[String(frame)]){
         const pose = evaluateData(data, frame);
-        const values = channel === "move" ? {x:pose.x,y:pose.y} : channel === "scale" ? {scale:pose.scale} : {rotation:pose.rotation};
+        const values = channel === "move" ? {x:pose.x,y:pose.y} : channel === "scale" ? {scale:pose.scale} : channel === "rotate" ? {rotation:pose.rotation} : {opacity:pose.opacity * 100};
         setChannelKey(node, channel, values, true);
       }
       data.channels[channel].easing[String(frame)] = input.value;
@@ -854,7 +919,8 @@
     });
     LukeAnimate.refreshUI();
     renderCards();
-    setStatus("Loaded " + result.nodes.length + " nested Clip part" + (result.nodes.length===1?"":"s") + " from " + clipName(root, result.rootClip, "selected Clip") + ".", "good");
+    const nestedCount = Math.max(0, result.nodes.length - 1);
+    setStatus("Loaded the selected Clip" + (nestedCount ? " and " + nestedCount + " nested Clip part" + (nestedCount===1?"":"s") : "") + ". Its controls are now in this floating panel.", "good");
   }
 
   function refreshHierarchy(){
@@ -940,6 +1006,7 @@
   panel.querySelector("#sr-close").addEventListener("click", function(){
     panel.style.display = "none";
     setToolSelected(false);
+    suppressFixedInspector(false);
   });
 
   function selectionKey(){
@@ -971,5 +1038,6 @@
 
   renderCards();
   poll();
-  setStatus("StickRig " + VERSION + " loaded. Select a Clip instance and click Load.", "good");
+  if(selectedRoot()) loadSelection();
+  else setStatus("StickRig " + VERSION + " loaded. Select a Clip instance and click Load.", "good");
 })();
