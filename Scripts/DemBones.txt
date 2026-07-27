@@ -1,4 +1,4 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v5.0
+/* Luke Animate Dem Bones + MyCharacter GPT v6.0
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
    Rebuilds the supplied DemBones/MyCharacter workflow for Luke Animate:
@@ -10,12 +10,16 @@
    preserves the selected vector geometry, and caches the selection while the floating panel opens.
    v5 restores the reference ingest specification: Selected points, Uniform points,
    and the seven-point Limb layout are applied before the rig is built.
+   v6 rebuilds deformation from the reference envelope skinning model. Points are
+   weighted locally to bone envelopes, connected children keep local joint angles,
+   and changing a child bone bends only its region instead of moving the part rigidly.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
+  var TOOL_VERSION = "6.0";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -26,10 +30,21 @@
   if(!API || typeof API.getDrawObjects !== "function" || typeof API.getClips !== "function"){
     throw new Error("Dem Bones requires the Luke Animate plug-in API.");
   }
-  if(window[SINGLETON_KEY]){
-    window[SINGLETON_KEY].open();
-    return;
-  }
+  /* Replace older Dem Bones scripts cleanly when the .txt file is updated without
+     requiring a full Luke Animate page reload. Older listeners remain installed but
+     their close() state prevents them from handling stage input. */
+  var alreadyCurrent=false;
+  ["__LukeAnimateDemBonesPlugin",SINGLETON_KEY].forEach(function(key){
+    var previous=window[key];
+    if(!previous)return;
+    if(key===SINGLETON_KEY&&previous.version===TOOL_VERSION){previous.open();alreadyCurrent=true;return;}
+    try{if(typeof previous.close==="function")previous.close();}catch(eClose){}
+    try{if(previous.panel&&previous.panel.remove)previous.panel.remove();}catch(ePanel){}
+    try{delete window[key];}catch(eDelete){window[key]=null;}
+  });
+  if(alreadyCurrent)return;
+  try{API.unregisterObjectEvaluator("luke-animate-dem-bones-evaluator");}catch(eOldEval){}
+  try{API.unregisterStageOverlayRenderer("luke-animate-dem-bones-overlay");}catch(eOldOverlay){}
 
   var state = {
     panel:null,
@@ -43,7 +58,7 @@
     curvePointAddMode:false,
     addPreview:null,
     drag:null,
-    removeOriginals:false,
+    removeOriginals:true,
     pointMode:"selected",
     fileInputs:{},
     character:{
@@ -387,7 +402,7 @@
   }
 
   function createEmptyRig(name){
-    return {version:2,id:uid("db-rig"),name:name||"Dem Bones Part",targetIds:[],bones:[],pointKeys:{},expressions:{lip:{slots:{},keys:[]},wink:{slots:{},keys:[]},frame:{slots:{},keys:[]}},createdAt:new Date().toISOString()};
+    return {version:3,id:uid("db-rig"),name:name||"Dem Bones Part",targetIds:[],bones:[],pointKeys:{},expressions:{lip:{slots:{},keys:[]},wink:{slots:{},keys:[]},frame:{slots:{},keys:[]}},createdAt:new Date().toISOString()};
   }
 
   function rigObjects(rig){
@@ -412,7 +427,7 @@
       if(!o||!Array.isArray(o.points)||o.points.length<2)return;
       chosen.push(o);
       rig.targetIds.push(o.id);
-      o.demBones={version:2,rigId:rig.id,rig:rig,pointMode:o.demBonesPointMode||pointMode||"selected",restPoints:(o.points||[]).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};}),weights:[],closedPath:!!o.closedPath};
+      o.demBones={version:3,rigId:rig.id,rig:rig,pointMode:o.demBonesPointMode||pointMode||"selected",restPoints:(o.points||[]).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};}),weights:[],closedPath:!!o.closedPath};
     });
     if(!chosen.length){notify("The supplied vector shapes could not be ingested.",true);return null;}
     state.activeRig=rig;state.selectedBoneId="";state.selectedCurveId=chosen[0].id;state.selectedPointIndex=0;syncRigRefs(rig);return rig;
@@ -457,33 +472,90 @@
     API.addDrawObject(o,"animate");API.selectDrawObject(o);state.removeOriginals=true;useStageSelection();notify("Dummy Build Parts area created.",false);
   }
 
-  function distancePointToSegment(p,a,b){var dx=b.x-a.x,dy=b.y-a.y,l=dx*dx+dy*dy;if(l<.000001)return Math.hypot(p.x-a.x,p.y-a.y);var t=clamp(((p.x-a.x)*dx+(p.y-a.y)*dy)/l,0,1),x=a.x+dx*t,y=a.y+dy*t;return Math.hypot(p.x-x,p.y-y);}
+  function pointToSegmentInfo(p,a,b){
+    var dx=b.x-a.x,dy=b.y-a.y,l=dx*dx+dy*dy;
+    if(l<.000001)return{d:Math.hypot(p.x-a.x,p.y-a.y),t:0,x:a.x,y:a.y};
+    var t=clamp(((p.x-a.x)*dx+(p.y-a.y)*dy)/l,0,1),x=a.x+dx*t,y=a.y+dy*t;
+    return{d:Math.hypot(p.x-x,p.y-y),t:t,x:x,y:y};
+  }
+  function distancePointToSegment(p,a,b){return pointToSegmentInfo(p,a,b).d;}
   function angleOf(a,b){return Math.atan2(b.y-a.y,b.x-a.x);}
   function rotateVector(x,y,a){var c=Math.cos(a),s=Math.sin(a);return{x:x*c-y*s,y:x*s+y*c};}
   function inverseRotateVector(x,y,a){return rotateVector(x,y,-a);}
   function easingValue(v,e){var t=clamp(v,0,1);if(e==="ease-in")return t*t;if(e==="ease-out")return 1-Math.pow(1-t,2);if(e==="ease-in-out")return t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;if(e==="hold")return 0;return t;}
 
+  function rigTargetBounds(rig){
+    return combinedBounds(rigObjects(rig));
+  }
+
+  function defaultBoneEnvelope(rig,bone){
+    var b=rigTargetBounds(rig),w=Math.max(1,b.x2-b.x1),h=Math.max(1,b.y2-b.y1);
+    var cross=Math.min(w,h),len=Math.max(1,Math.hypot(bone.restTail.x-bone.restHead.x,bone.restTail.y-bone.restHead.y));
+    return clamp(Math.max(12,cross*.62,len*.12),12,140);
+  }
+
+  function normaliseRigBones(rig){
+    if(!rig)return;
+    var by={};
+    (rig.bones||[]).forEach(function(b){
+      b.restHead=b.restHead||clone(b.head)||{x:0,y:0};
+      b.restTail=b.restTail||clone(b.tail)||{x:b.restHead.x+40,y:b.restHead.y};
+      b.restLength=Math.max(.001,n(b.restLength,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y)));
+      b.restAngle=n(b.restAngle,angleOf(b.restHead,b.restTail));
+      var defaultEnv=defaultBoneEnvelope(rig,b);
+      b.envStart=n(b.envStart,0)>0?Math.max(2,n(b.envStart,defaultEnv)):defaultEnv;
+      b.envEnd=n(b.envEnd,0)>0?Math.max(2,n(b.envEnd,b.envStart)):b.envStart;
+      b.strength=Math.max(.001,n(b.strength,1));
+      b.basePose=b.basePose||{dx:0,dy:0,rotation:0,scale:1,easing:"linear"};
+      b.keys=Array.isArray(b.keys)?b.keys:[];
+      by[b.id]=b;
+    });
+    (rig.bones||[]).forEach(function(b){
+      if(b.parentId&&by[b.parentId]){
+        var parent=by[b.parentId];
+        b.localRestAngle=n(b.localRestAngle,b.restAngle-angleOf(parent.restHead,parent.restTail));
+      }else{
+        b.parentId="";
+        b.localRestAngle=b.restAngle;
+      }
+    });
+  }
+
+  function envelopeWeightForPoint(point,bone){
+    var info=pointToSegmentInfo(point,bone.restHead,bone.restTail);
+    var radius=Math.max(1,n(bone.envStart,30)+(n(bone.envEnd,bone.envStart)-n(bone.envStart,30))*info.t);
+    if(info.d>radius)return 0;
+    var w=1-info.d/radius;
+    return w*w*Math.max(.001,n(bone.strength,1));
+  }
+
+  function buildPointWeights(point,rig){
+    var list=[];
+    (rig.bones||[]).forEach(function(b){var w=envelopeWeightForPoint(point,b);if(w>.000001)list.push({boneId:b.id,weight:w});});
+    if(!list.length){
+      var nearest=null;
+      (rig.bones||[]).forEach(function(b){var d=distancePointToSegment(point,b.restHead,b.restTail);if(!nearest||d<nearest.d)nearest={boneId:b.id,d:d};});
+      if(nearest)list=[{boneId:nearest.boneId,weight:1}];
+    }
+    return normaliseWeightList(list);
+  }
+
   function bindRig(recordUndo){
     var rig=state.activeRig;
     if(!rig){notify("Build or load a part first.",true);return;}
     if(!rig.bones.length){notify("Add at least one bone before binding.",true);return;}
-    if(recordUndo!==false) API.pushUndo();
+    if(recordUndo!==false)API.pushUndo();
+    normaliseRigBones(rig);
     rigObjects(rig).forEach(function(o){
       var d=o.demBones;
+      d.version=3;
       d.restPoints=((o.points&&o.points.length)?o.points:(d.restPoints||[])).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};});
-      d.weights=d.restPoints.map(function(p){
-        var ds=rig.bones.map(function(b){
-          return{boneId:b.id,distance:distancePointToSegment(p,b.restHead,b.restTail)};
-        }).sort(function(a,b){return a.distance-b.distance;}).slice(0,Math.min(3,rig.bones.length));
-        var total=0;
-        ds.forEach(function(x){x.weight=1/Math.max(1,x.distance*x.distance);total+=x.weight;});
-        ds.forEach(function(x){x.weight=total?x.weight/total:1/ds.length;});
-        return ds;
-      });
+      d.weights=d.restPoints.map(function(p){return buildPointWeights(p,rig);});
+      d.weightModel="envelope-v1";
     });
     syncRigRefs(rig);
     API.refreshUI();
-    notify("Part bound to "+rig.bones.length+" bone"+(rig.bones.length===1?"":"s")+".",false);
+    notify("Part bound with local bone envelopes. Pose a child bone to bend the joint.",false);
   }
 
   function selectedBone(){
@@ -581,10 +653,18 @@
       parentId:connected.parentId||"",
       restHead:{x:round3(connected.head.x),y:round3(connected.head.y)},
       restTail:{x:round3(connected.tail.x),y:round3(connected.tail.y)},
+      restLength:Math.max(.001,Math.hypot(connected.tail.x-connected.head.x,connected.tail.y-connected.head.y)),
+      restAngle:angleOf(connected.head,connected.tail),
+      localRestAngle:0,
+      envStart:0,
+      envEnd:0,
+      strength:1,
       basePose:{dx:0,dy:0,rotation:0,scale:1,easing:"linear"},
       keys:[]
     };
     rig.bones.push(bone);
+    normaliseRigBones(rig);
+    if(bone.parentId){var parent=boneById(bone.parentId);if(parent)bone.localRestAngle=angleOf(bone.restHead,bone.restTail)-angleOf(parent.restHead,parent.restTail);}
     state.selectedBoneId=bone.id;
     state.mode="add-bone";
     enforceRestChains();
@@ -629,16 +709,60 @@
     return copyPose(base);
   }
 
-  function restTransformMap(rig){var map={};(rig.bones||[]).forEach(function(b){var a=angleOf(b.restHead,b.restTail),l=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));map[b.id]={head:{x:b.restHead.x,y:b.restHead.y},tail:{x:b.restTail.x,y:b.restTail.y},angle:a,length:l,scale:1};});return map;}
+  function restTransformMap(rig){
+    normaliseRigBones(rig);
+    var map={};
+    (rig.bones||[]).forEach(function(b){
+      var a=angleOf(b.restHead,b.restTail),l=Math.max(.001,n(b.restLength,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y)));
+      map[b.id]={head:clone(b.restHead),tail:clone(b.restTail),angle:a,length:l,scale:1};
+    });
+    return map;
+  }
+
   function posedTransformMap(rig,time){
-    var by={},rest=restTransformMap(rig),out={},resolving={};(rig.bones||[]).forEach(function(b){by[b.id]=b;});
-    function resolve(b){if(!b)return null;if(out[b.id])return out[b.id];if(resolving[b.id])return rest[b.id];resolving[b.id]=true;var r=rest[b.id],p=interpolatePose(b,time),head,angle,parentScale=1;
-      if(b.parentId&&by[b.parentId]){var pb=by[b.parentId],pr=rest[pb.id],pp=resolve(pb),lh=inverseRotateVector(r.head.x-pr.head.x,r.head.y-pr.head.y,pr.angle);lh.x*=pp.scale;lh.y*=pp.scale;var rh=rotateVector(lh.x,lh.y,pp.angle);head={x:pp.head.x+rh.x+n(p.dx,0),y:pp.head.y+rh.y+n(p.dy,0)};angle=pp.angle+(r.angle-pr.angle)+n(p.rotation,0)*Math.PI/180;parentScale=pp.scale;}else{head={x:r.head.x+n(p.dx,0),y:r.head.y+n(p.dy,0)};angle=r.angle+n(p.rotation,0)*Math.PI/180;}
-      var scale=parentScale*Math.max(.01,n(p.scale,1)),off=rotateVector(r.length*scale,0,angle),q={head:head,tail:{x:head.x+off.x,y:head.y+off.y},angle:angle,length:r.length*scale,scale:scale};out[b.id]=q;delete resolving[b.id];return q;}
+    normaliseRigBones(rig);
+    var by={},rest=restTransformMap(rig),out={},resolving={};
+    (rig.bones||[]).forEach(function(b){by[b.id]=b;});
+    function resolve(b){
+      if(!b)return null;if(out[b.id])return out[b.id];if(resolving[b.id])return rest[b.id];
+      resolving[b.id]=true;
+      var r=rest[b.id],pose=interpolatePose(b,time),head,angle;
+      var localScale=Math.max(.01,n(pose.scale,1));
+      if(b.parentId&&by[b.parentId]){
+        var parent=resolve(by[b.parentId]);
+        head=clone(parent.tail);
+        angle=parent.angle+n(b.localRestAngle,r.angle-rest[b.parentId].angle)+n(pose.rotation,0)*Math.PI/180;
+      }else{
+        head={x:r.head.x+n(pose.dx,0),y:r.head.y+n(pose.dy,0)};
+        angle=r.angle+n(pose.rotation,0)*Math.PI/180;
+      }
+      var length=r.length*localScale,off=rotateVector(length,0,angle);
+      var result={head:head,tail:{x:head.x+off.x,y:head.y+off.y},angle:angle,length:length,scale:localScale};
+      out[b.id]=result;delete resolving[b.id];return result;
+    }
     (rig.bones||[]).forEach(resolve);return out;
   }
 
-  function deformPoint(point,weights,rest,posed){if(!weights||!weights.length)return{x:point.x,y:point.y};var x=0,y=0,total=0;weights.forEach(function(w){var r=rest[w.boneId],p=posed[w.boneId];if(!r||!p)return;var local=inverseRotateVector(point.x-r.head.x,point.y-r.head.y,r.angle);local.x*=p.scale;local.y*=p.scale;var tr=rotateVector(local.x,local.y,p.angle),ww=n(w.weight,0);x+=(p.head.x+tr.x)*ww;y+=(p.head.y+tr.y)*ww;total+=ww;});return total?{x:x/total,y:y/total}:{x:point.x,y:point.y};}
+  function deformPoint(point,weights,rest,posed){
+    if(!weights||!weights.length)return{x:point.x,y:point.y};
+    var sumX=0,sumY=0,sumW=0;
+    weights.forEach(function(w){
+      var r=rest[w.boneId],p=posed[w.boneId],ww=Math.max(0,n(w.weight,0));
+      if(!r||!p||ww<=0)return;
+      var restDir={x:(r.tail.x-r.head.x)/r.length,y:(r.tail.y-r.head.y)/r.length};
+      var restPerp={x:-restDir.y,y:restDir.x};
+      var posedDir={x:(p.tail.x-p.head.x)/Math.max(.001,p.length),y:(p.tail.y-p.head.y)/Math.max(.001,p.length)};
+      var posedPerp={x:-posedDir.y,y:posedDir.x};
+      var rel={x:point.x-r.head.x,y:point.y-r.head.y};
+      var u=rel.x*restDir.x+rel.y*restDir.y;
+      var v=rel.x*restPerp.x+rel.y*restPerp.y;
+      var alongScale=p.length/Math.max(.001,r.length);
+      var tx=p.head.x+posedDir.x*u*alongScale+posedPerp.x*v;
+      var ty=p.head.y+posedDir.y*u*alongScale+posedPerp.y*v;
+      sumX+=tx*ww;sumY+=ty*ww;sumW+=ww;
+    });
+    return sumW>.000001?{x:sumX/sumW,y:sumY/sumW}:{x:point.x,y:point.y};
+  }
 
   function interpolatePointKey(rig,objectId,time,basePoints){
     var keys=((rig.pointKeys||{})[objectId]||[]).slice().sort(function(a,b){return a.time-b.time;});if(!keys.length)return basePoints;
@@ -661,8 +785,11 @@
     }
     if(object&&object.demBonesExpression&&object.demBonesExpression.rig){var ex=object.demBonesExpression,slot=activeExpressionSlot(ex.rig,ex.type,time),r=Object.assign({},effective);r.opacity=slot===ex.slot?n(ex.baseOpacity,1):0;return r;}
     if(!object||!object.demBones||!object.demBones.rig)return effective;
-    var data=object.demBones,rig=data.rig;if(!Array.isArray(data.restPoints)||!Array.isArray(data.weights)||!data.weights.length)return effective;
-    var rest=restTransformMap(rig),posed=posedTransformMap(rig,time),base=interpolatePointKey(rig,object.id,time,data.restPoints),pts=base.map(function(p,i){return deformPoint(p,data.weights[i],rest,posed);});var out=Object.assign({},effective);out.points=pts;out.closedPath=!!data.closedPath;return out;
+    var data=object.demBones,rig=data.rig;if(!Array.isArray(data.restPoints)||!data.restPoints.length)return effective;
+    normaliseRigBones(rig);
+    if(data.weightModel!=="envelope-v1"||!Array.isArray(data.weights)||data.weights.length!==data.restPoints.length){data.weights=data.restPoints.map(function(p){return buildPointWeights(p,rig);});data.weightModel="envelope-v1";}
+    var rest=restTransformMap(rig),posed=posedTransformMap(rig,time),base=interpolatePointKey(rig,object.id,time,data.restPoints),pts=base.map(function(p,i){return deformPoint(p,data.weights[i],rest,posed);});
+    var out=Object.assign({},effective);out.points=pts;out.closedPath=!!data.closedPath;return out;
   }
 
   function serializeRig(rig){
@@ -677,7 +804,7 @@
 
   function loadBuildPart(data,placeOnStage){
     if(!data||!data.rig||!Array.isArray(data.objects))throw new Error("Not a Dem Bones part file.");
-    var rig=clone(data.rig);rig.id=uid("db-rig");var idMap={};var objects=data.objects.map(function(raw){var o=clone(raw),old=o.id;o.id=uid("db-part-object");idMap[old]=o.id;if(o.demBones){o.demBones.rigId=rig.id;o.demBones.rig=rig;}ensureObjectId(o);return o;});
+    var rig=clone(data.rig);rig.id=uid("db-rig");normaliseRigBones(rig);var idMap={};var objects=data.objects.map(function(raw){var o=clone(raw),old=o.id;o.id=uid("db-part-object");idMap[old]=o.id;if(o.demBones){o.demBones.rigId=rig.id;o.demBones.rig=rig;}ensureObjectId(o);return o;});
     rig.targetIds=(rig.targetIds||[]).map(function(id){return idMap[id]||id;});
     if(rig.pointKeys){var pk={};Object.keys(rig.pointKeys).forEach(function(id){pk[idMap[id]||id]=rig.pointKeys[id];});rig.pointKeys=pk;}
     objects.forEach(function(o){if(o.demBones)o.demBones.rig=rig;});
@@ -1021,7 +1148,10 @@
         b.restHead={x:round3(state.drag.startHead.x+dx),y:round3(state.drag.startHead.y+dy)};
         b.restTail={x:round3(state.drag.startTail.x+dx),y:round3(state.drag.startTail.y+dy)};
       }
+      b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));
+      b.restAngle=angleOf(b.restHead,b.restTail);
       enforceRestChains();
+      normaliseRigBones(state.activeRig);
       API.refreshUI();
       return;
     }
@@ -1029,12 +1159,12 @@
     if(state.drag.kind==="animate-bone"){
       var key=state.drag.key;
       var startPose=state.drag.startPose;
-      if(state.drag.handle==="tail"){
+      if(state.drag.handle==="tail"||state.drag.bone.parentId){
         var desired=Math.atan2(p.y-state.drag.startTransform.head.y,p.x-state.drag.startTransform.head.x);
         var delta=(desired-state.drag.startTransform.angle)*180/Math.PI;
-        while(delta>180)delta-=360;
-        while(delta<-180)delta+=360;
+        while(delta>180)delta-=360;while(delta<-180)delta+=360;
         key.rotation=round3(n(startPose.rotation,0)+delta);
+        if(state.drag.bone.parentId){key.dx=0;key.dy=0;}
       }else{
         key.dx=round3(n(startPose.dx,0)+(p.x-state.drag.startPointer.x));
         key.dy=round3(n(startPose.dy,0)+(p.y-state.drag.startPointer.y));
@@ -1108,9 +1238,19 @@
     }
     return '<div class="db-page active"><div class="db-section"><h3>Project</h3><div class="db-grid2"><button class="db-btn primary" data-db-save-part>Save Part</button><button class="db-btn" data-db-load-part>Load Part</button></div></div><div class="db-section"><h3>Source</h3><div class="db-grid3"><button class="db-btn primary" data-db-use-selection>Use Stage Selection</button><button class="db-btn" data-db-load-svg>Load SVG</button><button class="db-btn" data-db-add-dummy>Add Dummy</button></div><label class="db-check" style="margin-top:8px"><input type="checkbox" data-db-remove-originals'+(state.removeOriginals?' checked':'')+'> Remove selected originals after conversion</label><div class="db-grid2" style="margin-top:8px"><button class="db-btn" data-db-export-svg>Export Selection SVG</button><button class="db-btn" data-db-release-stage>Return Shapes To Stage</button></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-add-character>Add To Character</button><button class="db-btn" data-db-cancel-edit>Cancel Part Edit</button></div></div><div class="db-section"><h3>Curve Points On Ingest</h3>'+pointMode('selected','Use selected curve points','Keep the curve’s existing editable points and rounded outline unchanged.')+pointMode('uniform','Use uniform','Keep every existing point and add evenly spaced deformation points between them.')+pointMode('limb','Limb','Create the reference seven-point limb layout: outer corners plus a joint pair at 55% along the long axis.')+'</div><div class="db-section"><h3>Build Status</h3><p class="db-help">Part: '+esc(rig?rig.name:'None')+'<br>Shapes: '+count+'<br>Bones: '+(rig&&rig.bones?rig.bones.length:0)+'<br>Ingest: '+esc(state.pointMode==='limb'?'Limb':(state.pointMode==='uniform'?'Uniform':'Selected points'))+'</p></div></div>';
   }
+  function boneListHtml(){
+    var rig=state.activeRig;
+    if(!rig||!rig.bones||!rig.bones.length)return '<div class="db-empty">No bones yet. Drag on the stage to create the first bone.</div>';
+    return '<div class="db-list">'+rig.bones.map(function(b){
+      var active=String(b.id)===String(state.selectedBoneId);
+      var parent=b.parentId?boneById(b.parentId):null;
+      return '<div class="db-card'+(active?' active':'')+'" data-db-bone-id="'+esc(b.id)+'"><div class="db-card-head"><span class="db-bone-dot" style="display:inline-block;width:12px;height:12px;border-radius:50%;background:'+(active?'#0e9c86':'#707985')+'"></span><strong style="flex:1">'+esc(b.name||'Bone')+'</strong><span class="db-pill">'+esc(b.type||'bone')+'</span></div><div class="db-help" style="margin-top:5px">'+(parent?'Child of '+esc(parent.name||'Bone'):'Root bone')+'</div></div>';
+    }).join('')+'</div>';
+  }
+
   function bonesPage(){return '<div class="db-page active"><div class="db-section"><h3>Bone Creation</h3><p class="db-help">The Bones tab stays in Add Bone mode. Drag to create the first bone. After it is finished, the next click-and-drag creates a child from the selected bone tail. Click an existing bone without dragging to select it.</p><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone">Bone</option><option value="lip">Lip_Bone</option><option value="frame">Frame_Bone</option></select></div><div class="db-grid3"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div></div><div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div></div>';}
 
-  function editBonePage(){var b=selectedBone(),rig=state.activeRig;var parents='<option value="">No parent</option>'+((rig&&rig.bones)||[]).filter(function(x){return!b||x.id!==b.id;}).map(function(x){return'<option value="'+esc(x.id)+'"'+(b&&b.parentId===x.id?' selected':'')+'>'+esc(x.name)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Edit Bone</h3>'+(b?'<div class="db-row"><label>Name</label><input value="'+esc(b.name)+'" data-db-edit-bone-name></div><div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div><div class="db-row three"><label>Head X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.x)+'" data-db-bone-head-x><input type="number" value="'+round3(b.restHead.x)+'" data-db-bone-head-x-num></div><div class="db-row three"><label>Head Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.y)+'" data-db-bone-head-y><input type="number" value="'+round3(b.restHead.y)+'" data-db-bone-head-y-num></div><div class="db-row three"><label>Tail X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x><input type="number" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x-num></div><div class="db-row three"><label>Tail Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y><input type="number" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y-num></div><div class="db-grid2"><button class="db-btn primary" data-db-apply-bone-edit>Apply</button><button class="db-btn danger" data-db-delete-bone>Delete Bone</button></div>':'<div class="db-empty">Select a bone in the Bones tab or on the stage.</div>')+'</div></div>';}
+  function editBonePage(){var b=selectedBone(),rig=state.activeRig;var parents='<option value="">No parent</option>'+((rig&&rig.bones)||[]).filter(function(x){return!b||x.id!==b.id;}).map(function(x){return'<option value="'+esc(x.id)+'"'+(b&&b.parentId===x.id?' selected':'')+'>'+esc(x.name)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Edit Bone</h3>'+(b?'<div class="db-row"><label>Name</label><input value="'+esc(b.name)+'" data-db-edit-bone-name></div><div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div><div class="db-row three"><label>Head X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.x)+'" data-db-bone-head-x><input type="number" value="'+round3(b.restHead.x)+'" data-db-bone-head-x-num></div><div class="db-row three"><label>Head Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.y)+'" data-db-bone-head-y><input type="number" value="'+round3(b.restHead.y)+'" data-db-bone-head-y-num></div><div class="db-row three"><label>Tail X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x><input type="number" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x-num></div><div class="db-row three"><label>Tail Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y><input type="number" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y-num></div><div class="db-row three"><label>Envelope Head</label><input type="range" min="2" max="300" value="'+round3(b.envStart||30)+'" data-db-bone-env-start><input type="number" min="2" max="300" value="'+round3(b.envStart||30)+'" data-db-bone-env-start-num></div><div class="db-row three"><label>Envelope Tail</label><input type="range" min="2" max="300" value="'+round3(b.envEnd||30)+'" data-db-bone-env-end><input type="number" min="2" max="300" value="'+round3(b.envEnd||30)+'" data-db-bone-env-end-num></div><div class="db-row three"><label>Strength</label><input type="range" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength><input type="number" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength-num></div><div class="db-grid2"><button class="db-btn primary" data-db-apply-bone-edit>Apply</button><button class="db-btn danger" data-db-delete-bone>Delete Bone</button></div>':'<div class="db-empty">Select a bone in the Bones tab or on the stage.</div>')+'</div></div>';}
 
   function animatePage(){var b=selectedBone(),p=b?interpolatePose(b,currentTime()):{dx:0,dy:0,rotation:0,scale:1,easing:'linear'};return '<div class="db-page active"><div class="db-section"><h3>Animate Selected Bone</h3>'+(b?'<p class="db-help">'+esc(b.name)+' · Frame '+currentFrame()+'</p><div class="db-row three"><label>Move X</label><input type="range" min="-1000" max="1000" value="'+round3(p.dx)+'" data-db-pose-dx><input type="number" value="'+round3(p.dx)+'" data-db-pose-dx-num></div><div class="db-row three"><label>Move Y</label><input type="range" min="-1000" max="1000" value="'+round3(p.dy)+'" data-db-pose-dy><input type="number" value="'+round3(p.dy)+'" data-db-pose-dy-num></div><div class="db-row three"><label>Rotation</label><input type="range" min="-360" max="360" value="'+round3(p.rotation)+'" data-db-pose-rotation><input type="number" value="'+round3(p.rotation)+'" data-db-pose-rotation-num></div><div class="db-row three"><label>Scale</label><input type="range" min="0.05" max="5" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale><input type="number" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale-num></div><div class="db-row"><label>Easing</label><select data-db-pose-easing><option value="linear"'+(p.easing==='linear'?' selected':'')+'>Linear</option><option value="ease-in"'+(p.easing==='ease-in'?' selected':'')+'>Ease In</option><option value="ease-out"'+(p.easing==='ease-out'?' selected':'')+'>Ease Out</option><option value="ease-in-out"'+(p.easing==='ease-in-out'?' selected':'')+'>Ease In/Out</option><option value="hold"'+(p.easing==='hold'?' selected':'')+'>Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-bone-key>Set Key</button><button class="db-btn danger" data-db-delete-bone-key>Delete Key</button></div>':'<div class="db-empty">Select a bone first.</div>')+'</div></div>';}
 
@@ -1119,7 +1259,7 @@
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. The child Clips remain editable, and Dem Bones animation remains driven by this external tool script.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div><div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Bind assigns each curve point to its nearest bones.</p><p class="db-help"><b>MyCharacter:</b> Add To Character stores an independent copy of the part rig. Parts can be reordered, transformed and pinned to a bone in another part.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character stores an independent copy of the part rig. Parts can be reordered, transformed and pinned to a bone in another part.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():state.tab==='commit'?commitPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   function renderAll(){if(!state.panel)return;state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});renderBody();}
@@ -1134,8 +1274,8 @@
     function partFieldChange(inp){var part=partById(inp.getAttribute('data-db-part-id')),field=inp.getAttribute('data-db-part-field')||inp.getAttribute('data-db-part-number');if(!part||!field)return;part.transform=part.transform||{x:0,y:0,scale:1,rotation:0,opacity:1};part.transform[field]=field==='scale'?Math.max(.01,n(inp.value,1)):n(inp.value,0);updateCharacterInstances();var pair=field==='x'||field==='y'||field==='scale'||field==='rotation'?p.querySelector((inp.hasAttribute('data-db-part-field')?'[data-db-part-number="'+field+'"]':'[data-db-part-field="'+field+'"]')+'[data-db-part-id="'+part.id+'"]'):null;if(pair)pair.value=inp.value;}
     p.querySelectorAll('[data-db-part-field],[data-db-part-number]').forEach(function(inp){inp.oninput=function(){partFieldChange(inp);};});p.querySelectorAll('[data-db-apply-pin]').forEach(function(b){b.onclick=function(){var id=n(b.getAttribute('data-db-apply-pin'),0),target=p.querySelector('[data-db-pin-target="'+id+'"]'),bone=p.querySelector('[data-db-pin-bone="'+id+'"]'),rot=p.querySelector('[data-db-pin-rotation="'+id+'"]');setPartPin(partById(id),n(target&&target.value,0),bone&&bone.value,rot&&rot.checked);};});p.querySelectorAll('[data-db-clear-pin]').forEach(function(b){b.onclick=function(){setPartPin(partById(b.getAttribute('data-db-clear-pin')),0,'',false);};});p.querySelectorAll('[data-db-pin-target]').forEach(function(sel){sel.onchange=function(){var part=partById(sel.getAttribute('data-db-pin-target'));if(part){part.pin=sel.value?{targetPartId:n(sel.value,0),boneId:'',offsetX:0,offsetY:0,inheritRotation:false,rotationOffset:0}:null;renderAll();}};});
     p.querySelectorAll('[data-db-bone-id]').forEach(function(row){row.onclick=function(){state.selectedBoneId=row.getAttribute('data-db-bone-id');if(state.tab==='bones')state.mode='add-bone';renderAll();};});p.querySelectorAll('[data-db-add-bone]').forEach(function(b){b.onclick=function(){if(!state.activeRig){notify('Build or load a part first.',true);return;}state.mode='add-bone';renderAll();notify('Drag on the stage to create a bone. Keep dragging again to extend the chain.',false);};});p.querySelectorAll('[data-db-bind-rig]').forEach(function(b){b.onclick=bindRig;});p.querySelectorAll('[data-db-clear-bones]').forEach(function(b){b.onclick=clearBones;});p.querySelectorAll('[data-db-delete-bone]').forEach(function(b){b.onclick=deleteBone;});
-    var applyBone=p.querySelector('[data-db-apply-bone-edit]');if(applyBone)applyBone.onclick=function(){var b=selectedBone();if(!b)return;b.name=p.querySelector('[data-db-edit-bone-name]').value||b.name;b.type=p.querySelector('[data-db-edit-bone-type]').value;b.parentId=p.querySelector('[data-db-edit-bone-parent]').value;b.restHead.x=n(p.querySelector('[data-db-bone-head-x-num]').value,b.restHead.x);b.restHead.y=n(p.querySelector('[data-db-bone-head-y-num]').value,b.restHead.y);b.restTail.x=n(p.querySelector('[data-db-bone-tail-x-num]').value,b.restTail.x);b.restTail.y=n(p.querySelector('[data-db-bone-tail-y-num]').value,b.restTail.y);bindRig();renderAll();};
-    bindPair('[data-db-bone-head-x]','[data-db-bone-head-x-num]');bindPair('[data-db-bone-head-y]','[data-db-bone-head-y-num]');bindPair('[data-db-bone-tail-x]','[data-db-bone-tail-x-num]');bindPair('[data-db-bone-tail-y]','[data-db-bone-tail-y-num]');
+    var applyBone=p.querySelector('[data-db-apply-bone-edit]');if(applyBone)applyBone.onclick=function(){var b=selectedBone();if(!b)return;b.name=p.querySelector('[data-db-edit-bone-name]').value||b.name;b.type=p.querySelector('[data-db-edit-bone-type]').value;b.parentId=p.querySelector('[data-db-edit-bone-parent]').value;b.restHead.x=n(p.querySelector('[data-db-bone-head-x-num]').value,b.restHead.x);b.restHead.y=n(p.querySelector('[data-db-bone-head-y-num]').value,b.restHead.y);b.restTail.x=n(p.querySelector('[data-db-bone-tail-x-num]').value,b.restTail.x);b.restTail.y=n(p.querySelector('[data-db-bone-tail-y-num]').value,b.restTail.y);b.envStart=Math.max(2,n(p.querySelector('[data-db-bone-env-start-num]').value,b.envStart));b.envEnd=Math.max(2,n(p.querySelector('[data-db-bone-env-end-num]').value,b.envEnd));b.strength=Math.max(.05,n(p.querySelector('[data-db-bone-strength-num]').value,b.strength));b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));b.restAngle=angleOf(b.restHead,b.restTail);normaliseRigBones(state.activeRig);enforceRestChains();bindRig();renderAll();};
+    bindPair('[data-db-bone-head-x]','[data-db-bone-head-x-num]');bindPair('[data-db-bone-head-y]','[data-db-bone-head-y-num]');bindPair('[data-db-bone-tail-x]','[data-db-bone-tail-x-num]');bindPair('[data-db-bone-tail-y]','[data-db-bone-tail-y-num]');bindPair('[data-db-bone-env-start]','[data-db-bone-env-start-num]');bindPair('[data-db-bone-env-end]','[data-db-bone-env-end-num]');bindPair('[data-db-bone-strength]','[data-db-bone-strength-num]');
     bindPair('[data-db-pose-dx]','[data-db-pose-dx-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-dy]','[data-db-pose-dy-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-rotation]','[data-db-pose-rotation-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-scale]','[data-db-pose-scale-num]',previewBonePoseFromInputs);p.querySelectorAll('[data-db-set-bone-key]').forEach(function(b){b.onclick=setBoneKey;});p.querySelectorAll('[data-db-delete-bone-key]').forEach(function(b){b.onclick=deleteBoneKey;});
     var curveSel=p.querySelector('[data-db-curve-select]');if(curveSel)curveSel.onchange=function(){state.selectedCurveId=curveSel.value;state.selectedPointIndex=0;state.curvePointAddMode=false;renderAll();};p.querySelectorAll('[data-db-point-row]').forEach(function(row){row.onclick=function(e){if(e.target.tagName==='INPUT')return;state.selectedPointIndex=n(row.getAttribute('data-db-point-index'),0);renderAll();};});p.querySelectorAll('[data-db-point-x],[data-db-point-y]').forEach(function(inp){inp.onchange=function(){var o=findObjectById(state.selectedCurveId),i=n(inp.getAttribute('data-db-point-x')||inp.getAttribute('data-db-point-y'),0);if(!o||!o.points||!o.points[i])return;API.pushUndo();var x=o.points[i].x,y=o.points[i].y;if(inp.hasAttribute('data-db-point-x'))x=n(inp.value,x);else y=n(inp.value,y);setCurvePointSourcePosition(o,i,x,y);renderAll();};});p.querySelectorAll('[data-db-add-curve-point]').forEach(function(b){b.onclick=function(){state.curvePointAddMode=!state.curvePointAddMode;state.mode=state.curvePointAddMode?'add-curve-point':'select';renderAll();notify(state.curvePointAddMode?'Click a curve segment to insert a point. Ctrl+click also works.':'Add Point cancelled.',false);};});p.querySelectorAll('[data-db-subdivide-curve]').forEach(function(b){b.onclick=subdivideSelectedCurve;});p.querySelectorAll('[data-db-delete-source-point]').forEach(function(b){b.onclick=deleteSelectedCurvePoint;});p.querySelectorAll('[data-db-set-point-key]').forEach(function(b){b.onclick=setCurvePointKey;});p.querySelectorAll('[data-db-delete-point-key]').forEach(function(b){b.onclick=deleteCurvePointKey;});
     p.querySelectorAll('[data-db-expression-type]').forEach(function(b){b.onclick=function(){state.expressionType=b.getAttribute('data-db-expression-type');renderAll();};});var esn=p.querySelector('[data-db-expression-slot-name]');if(esn)esn.oninput=function(){state.expressionSlot=esn.value||'Default';};var ess=p.querySelector('[data-db-expression-slot]');if(ess)ess.onchange=function(){state.expressionSlot=ess.value||state.expressionSlot;};p.querySelectorAll('[data-db-import-expression]').forEach(function(b){b.onclick=function(){state.expressionSlot=(p.querySelector('[data-db-expression-slot-name]').value||'Default').trim();state.fileInputs.expression.click();};});p.querySelectorAll('[data-db-set-expression-key]').forEach(function(b){b.onclick=function(){setExpressionKey(state.expressionType,state.expressionSlot);};});p.querySelectorAll('[data-db-clear-expression-key]').forEach(function(b){b.onclick=function(){clearExpressionKey(state.expressionType);};});
@@ -1160,7 +1300,7 @@
   }
   function close(){state.open=false;state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;if(state.panel)state.panel.classList.remove('open');API.setSelectionInspectorSuppressed(TOOL_ID,false);API.setConfiguredToolActive(GROUP_ID,ITEM_ID,false);}
 
-  var plugin={open:open,close:close,get panel(){return state.panel;},get state(){return state;},refresh:function(){syncRigRefs(state.activeRig);renderAll();API.refreshUI();}};
+  var plugin={version:TOOL_VERSION,open:open,close:close,get panel(){return state.panel;},get state(){return state;},refresh:function(){syncRigRefs(state.activeRig);renderAll();API.refreshUI();}};
   window[SINGLETON_KEY]=plugin;
   API.registerObjectEvaluator(EVALUATOR_ID,evaluator);
   API.registerStageOverlayRenderer(OVERLAY_ID,overlayRenderer);
