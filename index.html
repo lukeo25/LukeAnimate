@@ -1,9 +1,8 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v76</title>
+<title>Luke Animate v77</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -846,6 +845,7 @@
     <div class="brand">LUKE <b>ANIMATE</b></div>
     <div style="display:flex;gap:6px;pointer-events:auto;margin-left:14px;flex:0 0 auto;">
       <button class="btn small" id="btn-stage-settings" style="flex:0 0 auto;" title="Open stage settings">⚙ Stage</button>
+      <button class="btn small primary" id="btn-export-webm-top" style="flex:0 0 auto;" title="Export the current animation as a WebM file">Export WebM</button>
       <button class="btn small" id="btn-undo" style="flex:0 0 auto;" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
       <button class="btn small" id="btn-redo" style="flex:0 0 auto;" disabled title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
     </div>
@@ -1377,13 +1377,13 @@
       <input type="number" id="inp-duration" value="6" min="1" max="120" step="1">
     </div>
     <div class="btn-row" style="margin-top:4px;">
-      <button class="btn primary" id="btn-record">● Save</button>
+      <button class="btn primary" id="btn-record">Export WebM</button>
       <button class="btn danger" id="btn-stop" disabled>Stop</button>
     </div>
     <a id="download-link" download="luke-animate.webm">Download will appear here</a>
     <div id="status">Format: <b id="status-format">—</b></div>
     <div class="hint">
-      Set the duration here (it stays in sync with the Timeline below — changing either one updates both). Stage size, frame rate and background are controlled from the floating <b>Stage Settings</b> panel. Transparent export requires a browser that records canvas alpha in WebM; a coloured background can also use MP4 when the browser supports it.
+      Set the duration here (it stays in sync with the Timeline below — changing either one updates both). Stage size, frame rate and background are controlled from the floating <b>Stage Settings</b> panel. Export is always WebM. Transparent export requires a browser that records canvas alpha in WebM.
     </div>
   </div>
 </div><!-- /sidebar-main-content -->
@@ -7353,6 +7353,7 @@ ctx.fill();</textarea>
   let mediaRecorder = null;
   let chunks = [];
   const btnRecord = document.getElementById('btn-record');
+  const btnExportWebMTop = document.getElementById('btn-export-webm-top');
   const btnStop = document.getElementById('btn-stop');
   const recIndicator = document.getElementById('rec-indicator');
   const recTime = document.getElementById('rec-time');
@@ -7360,25 +7361,23 @@ ctx.fill();</textarea>
   const statusFormat = document.getElementById('status-format');
 
   function pickMimeType(){
-    const candidatesTransparent = [
+    const candidates = [
       'video/webm;codecs=vp9',
       'video/webm;codecs=vp8',
       'video/webm'
     ];
-    const candidatesOpaque = [
-      'video/mp4;codecs=avc1',
-      'video/mp4',
-      'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8',
-      'video/webm'
-    ];
-    const list = bgMode === 'color' ? candidatesOpaque : candidatesTransparent;
-    for(const type of list){
+    for(const type of candidates){
       if(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(type)){
         return type;
       }
     }
     return '';
+  }
+
+  if(btnExportWebMTop){
+    btnExportWebMTop.addEventListener('click', ()=>{
+      if(btnRecord && !btnRecord.disabled) btnRecord.click();
+    });
   }
 
   btnRecord.addEventListener('click', ()=>{
@@ -7420,14 +7419,16 @@ ctx.fill();</textarea>
     mediaRecorder.onstop = ()=>{
       const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
       const url = URL.createObjectURL(blob);
-      const ext = mimeType.indexOf('mp4') >= 0 ? 'mp4' : 'webm';
+      const ext = 'webm';
       downloadLink.href = url;
       downloadLink.download = `luke-animate.${ext}`;
       downloadLink.textContent = `Download luke-animate.${ext} (${(blob.size/1024/1024).toFixed(2)} MB)` + (usingAudio ? ' — with audio' : '');
       downloadLink.classList.add('show');
       recIndicator.classList.remove('on');
       btnRecord.disabled = false;
+      if(btnExportWebMTop){ btnExportWebMTop.disabled = false; btnExportWebMTop.textContent = 'Export WebM'; }
       btnStop.disabled = true;
+      try { downloadLink.click(); } catch(error) {}
       if(usingAudio) stopAudioIfLoaded();
     };
 
@@ -7436,6 +7437,7 @@ ctx.fill();</textarea>
     mediaRecorder.start();
     if(usingAudio) playAudioIfLoaded();
     btnRecord.disabled = true;
+    if(btnExportWebMTop){ btnExportWebMTop.disabled = true; btnExportWebMTop.textContent = 'Exporting…'; }
     btnStop.disabled = false;
     recIndicator.classList.add('on');
     downloadLink.classList.remove('show');
