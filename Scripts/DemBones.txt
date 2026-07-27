@@ -1,1088 +1,1096 @@
-/* Luke Animate Dem Bones GPT v1.0
-   Direct Luke Animate plug-in. No Wick Editor and no LukeToolsBridge.
-   Loaded by Config.json as an Animate tool.
+/* Luke Animate Dem Bones + MyCharacter GPT v4.0
+   Native Luke Animate floating tool.
+   Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
+   Rebuilds the supplied DemBones/MyCharacter workflow for Luke Animate:
+   Build Character, Build Parts, Bones, Edit Bone, Animate, Curves,
+   Expression, Commit and Help.
+   v2 restores continuous chain creation and stage-driven bone deformation.
+   v3 preserves native rounded geometry and adds source-curve point insertion.
+   v4 ingests the actual Luke Animate stage selection through the public API,
+   preserves the selected vector geometry, and caches the selection while the floating panel opens.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var EVALUATOR_ID = "luke-animate-dem-bones-evaluator";
-  var OVERLAY_ID = "luke-animate-dem-bones-overlay";
-  var SINGLETON_KEY = "__LukeAnimateDemBonesPlugin";
+  var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
+  var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
+  var OVERLAY_ID = "luke-animate-dembones-full-overlay";
   var ICON_URL = (item && item.iconUrl) || "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Bone.svg";
+  var GROUP_ID = group && group.id ? group.id : "animate";
+  var ITEM_ID = item && (item.id || item.label) ? (item.id || item.label) : TOOL_ID;
 
-  if (!API || typeof API.getDrawObjects !== "function") {
-    throw new Error("Dem Bones requires the Luke Animate v74 plug-in API.");
+  if(!API || typeof API.getDrawObjects !== "function" || typeof API.getClips !== "function"){
+    throw new Error("Dem Bones requires the Luke Animate plug-in API.");
   }
-
-  if (window[SINGLETON_KEY]) {
+  if(window[SINGLETON_KEY]){
     window[SINGLETON_KEY].open();
     return;
   }
 
   var state = {
-    panel: null,
-    style: null,
-    open: false,
-    activeRig: null,
-    selectedBoneId: "",
-    mode: "select",
-    addPreview: null,
-    drag: null,
-    currentSceneKey: "",
-    statusTimer: null,
-    listenersBound: false,
-    fileInput: null,
-    lastFrame: -1
+    panel:null,
+    open:false,
+    tab:"character",
+    mode:"select",
+    activeRig:null,
+    selectedBoneId:"",
+    selectedCurveId:"",
+    selectedPointIndex:0,
+    curvePointAddMode:false,
+    addPreview:null,
+    drag:null,
+    removeOriginals:false,
+    fileInputs:{},
+    character:{
+      version:1,
+      name:"MyCharacter",
+      id:"",
+      rootClipId:"",
+      rootInstanceId:"",
+      nextPartId:1,
+      selectedPartId:null,
+      parts:[]
+    },
+    editingPartId:null,
+    expressionType:"lip",
+    expressionSlot:"Default",
+    status:"Ready.",
+    statusType:"",
+    listenersBound:false,
+    lastStageSelectionIds:[]
   };
 
-  function n(value, fallback){
-    var number = Number(value);
-    return isFinite(number) ? number : fallback;
-  }
-
-  function clamp(value, min, max){
-    return Math.max(min, Math.min(max, value));
-  }
-
-  function round3(value){
-    return Math.round(n(value, 0) * 1000) / 1000;
-  }
-
-  function clone(value){
-    return JSON.parse(JSON.stringify(value));
-  }
-
-  function uid(prefix){
-    return String(prefix || "id") + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9);
-  }
-
-  function escapeHtml(value){
-    return String(value === undefined || value === null ? "" : value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/\"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
-
-  function sceneKey(){
-    return API.getEditingClipId() || "__main_scene__";
-  }
-
-  function currentTime(){
-    return n(API.time, 0);
-  }
-
-  function currentFrame(){
-    return typeof API.getCurrentFrame === "function" ? API.getCurrentFrame() : Math.max(1, Math.round(currentTime() * n(API.fps, 30)) + 1);
-  }
-
-  function sceneObjects(){
-    var objects = API.getDrawObjects();
-    return Array.isArray(objects) ? objects : [];
-  }
-
-  function selectedObjects(){
-    var objects = API.getSelectedDrawObjects();
-    return Array.isArray(objects) ? objects : [];
-  }
-
-  function selectedBone(){
-    if (!state.activeRig) return null;
-    for (var i = 0; i < state.activeRig.bones.length; i += 1) {
-      if (state.activeRig.bones[i].id === state.selectedBoneId) return state.activeRig.bones[i];
+  function n(value,fallback){ var x=Number(value); return isFinite(x)?x:fallback; }
+  function clamp(value,min,max){ return Math.max(min,Math.min(max,value)); }
+  function round3(value){ return Math.round(n(value,0)*1000)/1000; }
+  function uid(prefix){ return String(prefix||"id")+"-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,9); }
+  function clone(value){ return value===undefined ? undefined : JSON.parse(JSON.stringify(value)); }
+  function esc(value){ return String(value==null?"":value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;"); }
+  function currentTime(){ return n(API.time,0); }
+  function currentFrame(){ return typeof API.getCurrentFrame==="function"?API.getCurrentFrame():Math.max(1,Math.round(currentTime()*n(API.fps,30))+1); }
+  function frameTime(frame){ return typeof API.frameToTime==="function"?API.frameToTime(frame):Math.max(0,(Math.max(1,frame)-1)/n(API.fps,30)); }
+  function sceneObjects(){ var a=API.getDrawObjects(); return Array.isArray(a)?a:[]; }
+  function clips(){ return API.getClips()||{}; }
+  function selectedObjects(cacheSelection){
+    var selected=[];
+    try{
+      var direct=API.getSelectedDrawObjects();
+      if(Array.isArray(direct)) selected=direct.filter(Boolean);
+    }catch(eDirect){}
+    if(selected.length){
+      state.lastStageSelectionIds=selected.map(function(o){ensureObjectId(o);return o.id;});
+      return selected;
     }
-    return null;
-  }
-
-  function setStatus(message, type){
-    if (!state.panel) return;
-    var box = state.panel.querySelector("[data-db-status]");
-    if (!box) return;
-    box.textContent = String(message || "");
-    box.className = "db-status " + (type || "");
-  }
-
-  function notify(message, bad){
-    setStatus(message, bad ? "bad" : "good");
-    try {
-      if (bad) API.warn(message);
-      else API.log(message);
-    } catch (error) {}
-  }
-
-  function ensureStyle(){
-    if (document.getElementById("la-dem-bones-style")) return;
-    var style = document.createElement("style");
-    style.id = "la-dem-bones-style";
-    style.textContent = [
-      ".la-dem-bones-panel{position:fixed;left:36px;top:74px;width:430px;max-width:calc(100vw - 20px);max-height:calc(100vh - 20px);display:none;flex-direction:column;background:#f4f5f7;border:1px solid #bfc5cc;border-radius:12px;box-shadow:0 18px 54px rgba(0,0,0,.28);overflow:hidden;color:#26303b;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;z-index:10000}",
-      ".la-dem-bones-panel.open{display:flex}",
-      ".db-head{display:flex;align-items:center;gap:9px;padding:9px 10px;background:#ffffff;border-bottom:1px solid #d6dbe1;cursor:move;user-select:none}",
-      ".db-head img{width:26px;height:26px;object-fit:contain;filter:grayscale(1) brightness(.78)}",
-      ".db-title{flex:1;min-width:0}.db-title strong{display:block;font-size:14px;color:#29434a}.db-title span{display:block;font-size:9px;letter-spacing:.11em;color:#798391;text-transform:uppercase;margin-top:2px}",
-      ".db-frame{border:1px solid #b7c0cb;border-radius:999px;background:#fff;padding:5px 10px;font-size:10px;white-space:nowrap}.db-frame b{color:#0e9c86}",
-      ".db-close{width:32px;height:32px;border:1px solid #b7c0cb;border-radius:8px;background:#fff;color:#596575;font-size:20px;line-height:1;cursor:pointer}",
-      ".db-toolbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;padding:9px;background:#fff;border-bottom:1px solid #d6dbe1}",
-      ".db-btn{min-width:0;border:1px solid #b9c1cb;border-radius:8px;background:#eef0f3;color:#4c5867;padding:8px 6px;font-size:11px;cursor:pointer}.db-btn:hover{border-color:#0e9c86}.db-btn.primary,.db-btn.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}.db-btn.danger{color:#b35a5a;border-color:#dfc0c0}.db-btn:disabled{opacity:.4;cursor:default}",
-      ".db-body{min-height:0;overflow:auto;padding:10px 10px 78px}",
-      ".db-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:10px;margin-bottom:9px}.db-section h3{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#647080;margin:0 0 9px}",
-      ".db-help{font-size:11px;line-height:1.45;color:#687383;margin:0}",
-      ".db-row{display:grid;grid-template-columns:88px minmax(0,1fr) 66px;gap:7px;align-items:center;margin-bottom:8px}.db-row:last-child{margin-bottom:0}.db-row label{font-size:11px;color:#627080}.db-row input[type=range]{width:100%;accent-color:#0e9c86}.db-row input[type=number],.db-row input[type=text],.db-row select{width:100%;min-width:0;border:1px solid #cbd1d9;border-radius:7px;background:#f4f5f7;color:#26303b;padding:7px;font-size:11px}",
-      ".db-inline{display:flex;gap:7px;align-items:center}.db-inline>*{flex:1;min-width:0}",
-      ".db-bone-list{display:flex;flex-direction:column;gap:5px;max-height:180px;overflow:auto}.db-bone{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:7px;align-items:center;border:1px solid #d1d7de;border-radius:8px;background:#f4f5f7;padding:7px;cursor:pointer}.db-bone.active{border-color:#0e9c86;background:#e3f7f3}.db-bone .dot{width:12px;height:12px;border-radius:50%;background:#687483;margin:auto}.db-bone.active .dot{background:#0e9c86}.db-bone-name{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.db-bone-parent{font-size:9px;color:#7e8895}",
-      ".db-key-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.db-key-grid .db-btn{width:100%}",
-      ".db-status{position:absolute;left:10px;right:10px;bottom:10px;min-height:38px;max-height:58px;overflow:auto;border:1px solid #cfd5dc;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596575}.db-status.good{border-color:#0e9c86;color:#177e6f}.db-status.bad{border-color:#c76b6b;color:#a04444}",
-      ".db-file{display:none}",
-      "@media(max-width:560px){.la-dem-bones-panel{left:8px;top:58px;width:calc(100vw - 16px)}.db-toolbar{grid-template-columns:repeat(3,minmax(0,1fr))}.db-row{grid-template-columns:76px minmax(0,1fr) 58px}}"
-    ].join("\n");
-    document.head.appendChild(style);
-    state.style = style;
-  }
-
-  function panelHtml(){
-    return '' +
-      '<div class="db-head" data-db-drag>' +
-        '<img src="' + escapeHtml(ICON_URL) + '" alt="">' +
-        '<div class="db-title"><strong>Dem Bones</strong><span>Luke Animate · Vector Bone Warp</span></div>' +
-        '<div class="db-frame">Frame <b data-db-frame>1</b></div>' +
-        '<button class="db-close" type="button" data-db-close title="Close">×</button>' +
-      '</div>' +
-      '<div class="db-toolbar">' +
-        '<button class="db-btn primary" type="button" data-db-use>Use Selection</button>' +
-        '<button class="db-btn" type="button" data-db-add>Add Bone</button>' +
-        '<button class="db-btn" type="button" data-db-bind>Bind</button>' +
-        '<button class="db-btn" type="button" data-db-export>Rig JSON</button>' +
-        '<button class="db-btn" type="button" data-db-import>Import</button>' +
-      '</div>' +
-      '<div class="db-body">' +
-        '<div class="db-section">' +
-          '<h3>Rig Target</h3>' +
-          '<p class="db-help" data-db-target-info>Select one or more shapes, then click Use Selection. Rectangles and ellipses are converted to editable vector paths so their points can bend.</p>' +
-        '</div>' +
-        '<div class="db-section">' +
-          '<h3>Bones</h3>' +
-          '<div class="db-inline" style="margin-bottom:8px">' +
-            '<input type="text" data-db-bone-name placeholder="Selected bone name">' +
-            '<button class="db-btn" type="button" data-db-rename>Rename</button>' +
-            '<button class="db-btn danger" type="button" data-db-delete-bone>Delete</button>' +
-          '</div>' +
-          '<div class="db-bone-list" data-db-bone-list></div>' +
-          '<p class="db-help" style="margin-top:8px">Select a parent bone, choose Add Bone, then drag from head to tail on the stage. Drag a displayed head or tail to edit the rest rig.</p>' +
-        '</div>' +
-        '<div class="db-section">' +
-          '<h3>Animate Selected Bone</h3>' +
-          '<div class="db-row"><label>Move X</label><input type="range" min="-800" max="800" step="1" value="0" data-db-dx><input type="number" step="1" value="0" data-db-dx-num></div>' +
-          '<div class="db-row"><label>Move Y</label><input type="range" min="-800" max="800" step="1" value="0" data-db-dy><input type="number" step="1" value="0" data-db-dy-num></div>' +
-          '<div class="db-row"><label>Rotation</label><input type="range" min="-360" max="360" step="1" value="0" data-db-rotation><input type="number" step="1" value="0" data-db-rotation-num></div>' +
-          '<div class="db-row"><label>Easing</label><select data-db-easing><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="ease-in-out">Ease In/Out</option><option value="hold">Hold</option></select><span></span></div>' +
-          '<div class="db-key-grid">' +
-            '<button class="db-btn primary" type="button" data-db-set-key>Set Key</button>' +
-            '<button class="db-btn" type="button" data-db-delete-key>Delete Key</button>' +
-            '<button class="db-btn" type="button" data-db-reset-pose>Reset Pose</button>' +
-          '</div>' +
-        '</div>' +
-        '<div class="db-section">' +
-          '<h3>Rig Actions</h3>' +
-          '<div class="db-key-grid">' +
-            '<button class="db-btn" type="button" data-db-rebind>Rebind</button>' +
-            '<button class="db-btn" type="button" data-db-refresh>Refresh</button>' +
-            '<button class="db-btn danger" type="button" data-db-clear>Clear Rig</button>' +
-          '</div>' +
-        '</div>' +
-      '</div>' +
-      '<input class="db-file" type="file" accept="application/json,.json,.dembones" data-db-file>' +
-      '<div class="db-status" data-db-status>Ready. Select shapes and click Use Selection.</div>';
-  }
-
-  function createPanel(){
-    ensureStyle();
-    var panel = document.createElement("div");
-    panel.className = "la-dem-bones-panel open";
-    panel.dataset.lukeAnimateFloatingPanel = "true";
-    panel.innerHTML = panelHtml();
-    document.body.appendChild(panel);
-    state.panel = panel;
-    state.fileInput = panel.querySelector("[data-db-file]");
-    API.registerFloatingPanel(panel);
-    bindPanelEvents();
-    makePanelDraggable(panel, panel.querySelector("[data-db-drag]"));
-    requestAnimationFrame(function(){
-      API.bringFloatingPanelToFront(panel);
-      API.clampFloatingPanelToViewport(panel);
-    });
-  }
-
-  function makePanelDraggable(panel, handle){
-    if (!panel || !handle) return;
-    handle.addEventListener("pointerdown", function(event){
-      if (event.target.closest("button")) return;
-      event.preventDefault();
-      API.bringFloatingPanelToFront(panel);
-      var rect = panel.getBoundingClientRect();
-      var offsetX = event.clientX - rect.left;
-      var offsetY = event.clientY - rect.top;
-      function move(moveEvent){
-        panel.style.left = (moveEvent.clientX - offsetX) + "px";
-        panel.style.top = (moveEvent.clientY - offsetY) + "px";
-        panel.style.right = "auto";
-        panel.style.bottom = "auto";
-      }
-      function up(){
-        window.removeEventListener("pointermove", move, true);
-        window.removeEventListener("pointerup", up, true);
-        API.clampFloatingPanelToViewport(panel);
-      }
-      window.addEventListener("pointermove", move, true);
-      window.addEventListener("pointerup", up, true);
-    });
-  }
-
-  function supportedObject(object){
-    return object && ["freehand", "line", "rect", "ellipse"].indexOf(object.type) !== -1;
-  }
-
-  function ellipsePoints(object, count){
-    var points = [];
-    var cx = (n(object.x1, 0) + n(object.x2, 0)) / 2;
-    var cy = (n(object.y1, 0) + n(object.y2, 0)) / 2;
-    var rx = Math.abs(n(object.x2, 0) - n(object.x1, 0)) / 2;
-    var ry = Math.abs(n(object.y2, 0) - n(object.y1, 0)) / 2;
-    for (var i = 0; i < count; i += 1) {
-      var angle = (i / count) * Math.PI * 2;
-      points.push({ x: cx + Math.cos(angle) * rx, y: cy + Math.sin(angle) * ry });
+    if(cacheSelection!==false && state.lastStageSelectionIds.length){
+      var current=sceneObjects();
+      var ids={};state.lastStageSelectionIds.forEach(function(id){ids[id]=true;});
+      selected=current.filter(function(o){return o&&ids[o.id];});
+      if(selected.length)return selected;
     }
+    return [];
+  }
+  function supportedObject(o){
+    return !!(o && (["freehand","line","rect","ellipse","text","path","curve","polyline","polygon"].indexOf(o.type)!==-1 || (Array.isArray(o.points)&&o.points.length>1)));
+  }
+  function supportedWarpObject(o){
+    return !!(o && (["freehand","line","rect","ellipse","path","curve","polyline","polygon"].indexOf(o.type)!==-1 || (Array.isArray(o.points)&&o.points.length>1)));
+  }
+  function setStatus(message,type){ state.status=String(message||""); state.statusType=type||""; if(state.panel){ var el=state.panel.querySelector("[data-db-status]"); if(el){ el.textContent=state.status; el.className="db-status "+state.statusType; } } }
+  function notify(message,bad){ setStatus(message,bad?"bad":"good"); try{ bad?API.warn(message):API.log(message); }catch(e){} }
+
+  function ensureObjectId(o){
+    if(!o.id) o.id=uid("db-object");
+    if(!Array.isArray(o.keyframes)) o.keyframes=[];
+    return o;
+  }
+
+  function allObjectArrays(){
+    var out=[sceneObjects()];
+    Object.keys(clips()).forEach(function(id){ var c=clips()[id]; if(c&&Array.isArray(c.drawObjects)) out.push(c.drawObjects); });
+    return out;
+  }
+
+  function findObjectById(id){
+    var found=null;
+    allObjectArrays().some(function(list){
+      return list.some(function(o){ if(o&&o.id===id){ found=o; return true; } return false; });
+    });
+    return found;
+  }
+
+  function removeObjectsFromCurrentScene(objects){
+    var list=sceneObjects();
+    objects.forEach(function(o){ var i=list.indexOf(o); if(i>=0) list.splice(i,1); });
+  }
+
+  function objectBounds(o){
+    if(!o) return {x1:0,y1:0,x2:0,y2:0};
+    if(o.type==="freehand" && Array.isArray(o.points) && o.points.length){
+      var xs=o.points.map(function(p){return n(p.x,0);});
+      var ys=o.points.map(function(p){return n(p.y,0);});
+      return {x1:Math.min.apply(null,xs),y1:Math.min.apply(null,ys),x2:Math.max.apply(null,xs),y2:Math.max.apply(null,ys)};
+    }
+    if(o.type==="line"||o.type==="rect"||o.type==="ellipse") return {x1:Math.min(n(o.x1,0),n(o.x2,0)),y1:Math.min(n(o.y1,0),n(o.y2,0)),x2:Math.max(n(o.x1,0),n(o.x2,0)),y2:Math.max(n(o.y1,0),n(o.y2,0))};
+    if(o.type==="text"){
+      var fs=Math.max(1,n(o.fontSize,32));
+      var lines=String(o.text||"").split(/\r?\n/);
+      var longest=lines.reduce(function(m,s){return Math.max(m,s.length);},0);
+      var w=Math.max(20,longest*fs*.58), h=Math.max(fs*1.2,lines.length*fs*1.2);
+      return {x1:n(o.x,0),y1:n(o.y,0),x2:n(o.x,0)+w,y2:n(o.y,0)+h};
+    }
+    return {x1:0,y1:0,x2:0,y2:0};
+  }
+
+  function combinedBounds(objects){
+    var b={x1:Infinity,y1:Infinity,x2:-Infinity,y2:-Infinity};
+    (objects||[]).forEach(function(o){ var q=objectBounds(o); b.x1=Math.min(b.x1,q.x1);b.y1=Math.min(b.y1,q.y1);b.x2=Math.max(b.x2,q.x2);b.y2=Math.max(b.y2,q.y2); });
+    if(!isFinite(b.x1)) return {x1:0,y1:0,x2:0,y2:0,cx:0,cy:0};
+    b.cx=(b.x1+b.x2)/2;b.cy=(b.y1+b.y2)/2; return b;
+  }
+
+  function shiftObject(o,dx,dy){
+    if(o.type==="freehand" && Array.isArray(o.points)) o.points.forEach(function(p){p.x=n(p.x,0)+dx;p.y=n(p.y,0)+dy;});
+    else if(o.type==="line"||o.type==="rect"||o.type==="ellipse"){o.x1=n(o.x1,0)+dx;o.y1=n(o.y1,0)+dy;o.x2=n(o.x2,0)+dx;o.y2=n(o.y2,0)+dy;}
+    else if(o.type==="text"||o.type==="clipinstance"){o.x=n(o.x,0)+dx;o.y=n(o.y,0)+dy;}
+    if(o.demBones && Array.isArray(o.demBones.restPoints)) o.demBones.restPoints.forEach(function(p){p.x+=dx;p.y+=dy;});
+    return o;
+  }
+
+  function styleOfElement(el){
+    var cs=window.getComputedStyle(el);
+    var fill=el.getAttribute("fill")||cs.fill||"none";
+    var stroke=el.getAttribute("stroke")||cs.stroke||"#1b1f24";
+    var sw=n(el.getAttribute("stroke-width")||cs.strokeWidth,2);
+    var opacity=n(el.getAttribute("opacity")||cs.opacity,1);
+    return {
+      fillColor:fill&&fill!=="none"?fill:"#4fe0c4",
+      strokeColor:stroke&&stroke!=="none"?stroke:"#1b1f24",
+      strokeWidth:sw,
+      fillEnabled:!!fill&&fill!=="none",
+      strokeEnabled:!!stroke&&stroke!=="none",
+      opacity:opacity
+    };
+  }
+
+  function sampleSvgPath(el,count){
+    var points=[];
+    try{
+      var len=el.getTotalLength();
+      var steps=Math.max(8,Math.min(240,Math.ceil(len/8),count||160));
+      var ctm=el.getCTM();
+      for(var i=0;i<=steps;i++){
+        var p=el.getPointAtLength(len*i/steps);
+        if(ctm){ var x=p.x*ctm.a+p.y*ctm.c+ctm.e; var y=p.x*ctm.b+p.y*ctm.d+ctm.f; points.push({x:x,y:y}); }
+        else points.push({x:p.x,y:p.y});
+      }
+    }catch(e){}
     return points;
   }
 
-  function convertToWarpPath(object){
-    if (!object || !supportedObject(object)) return null;
-    var points = [];
-    var closedPath = false;
-    var fillEnabled = false;
-    if (object.type === "freehand") {
-      points = (object.points || []).map(function(point){ return { x:n(point.x,0), y:n(point.y,0) }; });
-      closedPath = !!object.closedPath;
-      fillEnabled = !!object.fillEnabled;
-    } else if (object.type === "line") {
-      points = [
-        { x:n(object.x1,0), y:n(object.y1,0) },
-        { x:n(object.x2,0), y:n(object.y2,0) }
-      ];
-    } else if (object.type === "rect") {
-      var x1 = Math.min(n(object.x1,0), n(object.x2,0));
-      var y1 = Math.min(n(object.y1,0), n(object.y2,0));
-      var x2 = Math.max(n(object.x1,0), n(object.x2,0));
-      var y2 = Math.max(n(object.y1,0), n(object.y2,0));
-      points = [{x:x1,y:y1},{x:x2,y:y1},{x:x2,y:y2},{x:x1,y:y2}];
-      closedPath = true;
-      fillEnabled = true;
-    } else if (object.type === "ellipse") {
-      points = ellipsePoints(object, 40);
-      closedPath = true;
-      fillEnabled = true;
+  function svgTextToObjects(text){
+    var parser=new DOMParser();
+    var doc=parser.parseFromString(String(text||""),"image/svg+xml");
+    if(doc.querySelector("parsererror")) throw new Error("The SVG could not be parsed.");
+    var svg=doc.documentElement;
+    var host=document.createElement("div");
+    host.style.cssText="position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none";
+    var imported=document.importNode(svg,true);
+    host.appendChild(imported); document.body.appendChild(host);
+    var objects=[];
+    Array.prototype.forEach.call(imported.querySelectorAll("path,polyline,polygon,line,rect,circle,ellipse,text"),function(el){
+      var tag=el.tagName.toLowerCase(), st=styleOfElement(el), o=null;
+      if(tag==="path"){
+        var pts=sampleSvgPath(el,180); if(pts.length>1) o=Object.assign({type:"freehand",points:pts,closedPath:/z\s*$/i.test(el.getAttribute("d")||""),keyframes:[]},st);
+      }else if(tag==="polyline"||tag==="polygon"){
+        var raw=(el.getAttribute("points")||"").trim().split(/[\s,]+/).map(Number); var pts2=[];
+        for(var i=0;i+1<raw.length;i+=2) pts2.push({x:raw[i],y:raw[i+1]});
+        if(pts2.length>1) o=Object.assign({type:"freehand",points:pts2,closedPath:tag==="polygon",keyframes:[]},st);
+      }else if(tag==="line") o=Object.assign({type:"line",x1:n(el.getAttribute("x1"),0),y1:n(el.getAttribute("y1"),0),x2:n(el.getAttribute("x2"),0),y2:n(el.getAttribute("y2"),0),keyframes:[]},st);
+      else if(tag==="rect") o=Object.assign({type:"rect",x1:n(el.getAttribute("x"),0),y1:n(el.getAttribute("y"),0),x2:n(el.getAttribute("x"),0)+n(el.getAttribute("width"),0),y2:n(el.getAttribute("y"),0)+n(el.getAttribute("height"),0),cornerRadius:n(el.getAttribute("rx"),0),keyframes:[]},st);
+      else if(tag==="circle"){
+        var cx=n(el.getAttribute("cx"),0),cy=n(el.getAttribute("cy"),0),r=n(el.getAttribute("r"),0); o=Object.assign({type:"ellipse",x1:cx-r,y1:cy-r,x2:cx+r,y2:cy+r,keyframes:[]},st);
+      }else if(tag==="ellipse"){
+        var ecx=n(el.getAttribute("cx"),0),ecy=n(el.getAttribute("cy"),0),rx=n(el.getAttribute("rx"),0),ry=n(el.getAttribute("ry"),0); o=Object.assign({type:"ellipse",x1:ecx-rx,y1:ecy-ry,x2:ecx+rx,y2:ecy+ry,keyframes:[]},st);
+      }else if(tag==="text") o=Object.assign({type:"text",x:n(el.getAttribute("x"),0),y:n(el.getAttribute("y"),0),text:el.textContent||"",fontSize:n(el.getAttribute("font-size"),32),fontFamily:el.getAttribute("font-family")||"Arial",textAlign:"left",keyframes:[]},st);
+      if(o){ensureObjectId(o);objects.push(o);}
+    });
+    host.remove();
+    return objects;
+  }
+
+  function objectToSvg(o){
+    var fill=(o.fillEnabled===false||o.type==="line")?"none":(o.fillColor||o.color||"#4fe0c4");
+    var stroke=o.strokeEnabled===false?"none":(o.strokeColor||o.color||"#1b1f24");
+    var common=' fill="'+esc(fill)+'" stroke="'+esc(stroke)+'" stroke-width="'+n(o.strokeWidth,2)+'" opacity="'+n(o.opacity,1)+'"';
+    if(o.type==="freehand") return '<'+(o.closedPath?'polygon':'polyline')+' points="'+(o.points||[]).map(function(p){return round3(p.x)+','+round3(p.y);}).join(' ')+'"'+common+' />';
+    if(o.type==="line") return '<line x1="'+n(o.x1,0)+'" y1="'+n(o.y1,0)+'" x2="'+n(o.x2,0)+'" y2="'+n(o.y2,0)+'"'+common+' />';
+    if(o.type==="rect") return '<rect x="'+Math.min(n(o.x1,0),n(o.x2,0))+'" y="'+Math.min(n(o.y1,0),n(o.y2,0))+'" width="'+Math.abs(n(o.x2,0)-n(o.x1,0))+'" height="'+Math.abs(n(o.y2,0)-n(o.y1,0))+'" rx="'+n(o.cornerRadius,0)+'"'+common+' />';
+    if(o.type==="ellipse") return '<ellipse cx="'+((n(o.x1,0)+n(o.x2,0))/2)+'" cy="'+((n(o.y1,0)+n(o.y2,0))/2)+'" rx="'+Math.abs(n(o.x2,0)-n(o.x1,0))/2+'" ry="'+Math.abs(n(o.y2,0)-n(o.y1,0))/2+'"'+common+' />';
+    if(o.type==="text") return '<text x="'+n(o.x,0)+'" y="'+n(o.y,0)+'" font-size="'+n(o.fontSize,32)+'" font-family="'+esc(o.fontFamily||"Arial")+'"'+common+'>'+esc(o.text||"")+'</text>';
+    return "";
+  }
+
+  function objectsToSvg(objects){
+    var b=combinedBounds(objects), pad=10;
+    var x=b.x1-pad,y=b.y1-pad,w=Math.max(1,b.x2-b.x1+pad*2),h=Math.max(1,b.y2-b.y1+pad*2);
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="'+[round3(x),round3(y),round3(w),round3(h)].join(' ')+'">\n'+(objects||[]).map(objectToSvg).filter(Boolean).join('\n')+'\n</svg>';
+  }
+
+  function downloadText(name,text,mime){
+    var blob=new Blob([text],{type:mime||"text/plain"});
+    var url=URL.createObjectURL(blob); var a=document.createElement("a"); a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(url);},1000);
+  }
+
+  function ellipsePoints(o,count){
+    var pts=[],cx=(n(o.x1,0)+n(o.x2,0))/2,cy=(n(o.y1,0)+n(o.y2,0))/2,rx=Math.abs(n(o.x2,0)-n(o.x1,0))/2,ry=Math.abs(n(o.y2,0)-n(o.y1,0))/2;
+    for(var i=0;i<count;i++){var a=i/count*Math.PI*2;pts.push({x:cx+Math.cos(a)*rx,y:cy+Math.sin(a)*ry});} return pts;
+  }
+
+  function roundedRectPoints(o){
+    var x1=Math.min(n(o.x1,0),n(o.x2,0)),y1=Math.min(n(o.y1,0),n(o.y2,0));
+    var x2=Math.max(n(o.x1,0),n(o.x2,0)),y2=Math.max(n(o.y1,0),n(o.y2,0));
+    var w=x2-x1,h=y2-y1,r=clamp(n(o.cornerRadius,0),0,Math.min(w,h)/2);
+    if(r<=.001)return[{x:x1,y:y1},{x:x2,y:y1},{x:x2,y:y2},{x:x1,y:y2}];
+    var segments=clamp(Math.ceil(r/4),4,18),pts=[];
+    function arc(cx,cy,start,end,includeStart){
+      for(var i=includeStart?0:1;i<=segments;i++){
+        var a=start+(end-start)*(i/segments);
+        pts.push({x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r});
+      }
     }
-    if (points.length < 2) return null;
-    object.demBonesOriginalType = object.demBonesOriginalType || object.type;
-    object.type = "freehand";
-    object.points = points;
-    object.closedPath = closedPath;
-    object.fillEnabled = fillEnabled;
-    if (object.strokeEnabled === undefined) object.strokeEnabled = true;
-    if (object.strokeWidth === undefined) object.strokeWidth = 4;
-    return object;
+    arc(x2-r,y1+r,-Math.PI/2,0,true);
+    arc(x2-r,y2-r,0,Math.PI/2,false);
+    arc(x1+r,y2-r,Math.PI/2,Math.PI,false);
+    arc(x1+r,y1+r,Math.PI,Math.PI*1.5,false);
+    return pts;
   }
 
-  function rigTargets(rig){
-    if (!rig) return [];
-    var ids = {};
-    (rig.targetIds || []).forEach(function(id){ ids[id] = true; });
-    return sceneObjects().filter(function(object){
-      return object && ids[object.id] && object.demBones && object.demBones.rigId === rig.id;
+  function bakeTransformIntoPoints(o,eff,pts){
+    var base=objectBounds(o),px=(base.x1+base.x2)/2,py=(base.y1+base.y2)/2;
+    var tx=n(eff&&eff.tx,n(o.tx,0)),ty=n(eff&&eff.ty,n(o.ty,0));
+    var scale=n(eff&&eff.tscale,n(o.tscale,1));
+    var angle=n(eff&&eff.trotation,n(o.trotation,0))*Math.PI/180;
+    var c=Math.cos(angle),si=Math.sin(angle);
+    return (pts||[]).map(function(p){
+      var dx=(n(p.x,0)-px)*scale,dy=(n(p.y,0)-py)*scale;
+      return{x:round3(px+tx+dx*c-dy*si),y:round3(py+ty+dx*si+dy*c)};
     });
   }
 
-  function syncRigReferences(rig){
-    if (!rig) return;
-    rigTargets(rig).forEach(function(object){
-      object.demBones.rig = rig;
-    });
+  function convertToWarpPath(o){
+    if(!supportedWarpObject(o)) return null;
+    var originalType=o.type;
+    ensureObjectId(o);
+
+    /* Use Luke Animate's own permanent vector conversion first. This is the
+       authoritative path for rounded rectangles, ellipses, current transforms
+       and native editable points. It prevents Dem Bones from replacing the
+       selected artwork with a crude bounding-box polygon. */
+    try{
+      if(typeof API.convertDrawObjectToEditablePath==="function"){
+        var converted=API.convertDrawObjectToEditablePath(o);
+        if(converted && Array.isArray(converted.points) && converted.points.length>1){
+          converted.demBonesOriginalType=converted.demBonesOriginalType||originalType;
+          converted.keyframes=[];
+          ensureObjectId(converted);
+          return converted;
+        }
+      }
+    }catch(eNative){}
+
+    var eff=typeof API.getEffectiveObject==="function"?API.getEffectiveObject(o,currentTime()):o;
+    var pts=[],closed=false,fill=false;
+    if(Array.isArray((eff&&eff.points)||o.points)){
+      pts=((eff&&eff.points)||o.points||[]).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};});
+      closed=eff&&eff.closedPath!==undefined?!!eff.closedPath:!!o.closedPath;
+      fill=eff&&eff.fillEnabled!==undefined?!!eff.fillEnabled:!!o.fillEnabled;
+    }else if(originalType==="line") pts=[{x:n(eff.x1,o.x1),y:n(eff.y1,o.y1)},{x:n(eff.x2,o.x2),y:n(eff.y2,o.y2)}];
+    else if(originalType==="rect"){pts=roundedRectPoints({x1:n(eff.x1,o.x1),y1:n(eff.y1,o.y1),x2:n(eff.x2,o.x2),y2:n(eff.y2,o.y2),cornerRadius:n(eff.cornerRadius,o.cornerRadius)});closed=true;fill=eff.fillEnabled!==undefined?!!eff.fillEnabled:true;}
+    else if(originalType==="ellipse"){pts=ellipsePoints({x1:n(eff.x1,o.x1),y1:n(eff.y1,o.y1),x2:n(eff.x2,o.x2),y2:n(eff.y2,o.y2)},64);closed=true;fill=eff.fillEnabled!==undefined?!!eff.fillEnabled:true;}
+    if(pts.length<2) return null;
+    pts=bakeTransformIntoPoints(o,eff,pts);
+    o.demBonesOriginalType=o.demBonesOriginalType||originalType;
+    if(originalType==="rect")o.demBonesOriginalCornerRadius=n(eff.cornerRadius,o.cornerRadius||0);
+    o.type="freehand";o.points=pts;o.closedPath=closed;o.fillEnabled=fill;
+    ["fillColor","strokeColor","strokeWidth","opacity","strokeEnabled"].forEach(function(key){if(eff&&eff[key]!==undefined)o[key]=eff[key];});
+    o.tx=0;o.ty=0;o.tscale=1;o.trotation=0;o.keyframes=[];
+    if(o.strokeEnabled===undefined)o.strokeEnabled=true;if(o.strokeWidth===undefined)o.strokeWidth=3;
+    ensureObjectId(o);return o;
   }
 
-  function findRigsInScene(){
-    var rigs = {};
-    sceneObjects().forEach(function(object){
-      if (!object || !object.demBones || !object.demBones.rigId) return;
-      var rig = object.demBones.rig;
-      if (rig && rig.id) rigs[rig.id] = rigs[rig.id] || rig;
-    });
-    Object.keys(rigs).forEach(function(rigId){
-      var rig = rigs[rigId];
-      sceneObjects().forEach(function(object){
-        if (object && object.demBones && object.demBones.rigId === rigId) object.demBones.rig = rig;
-      });
-    });
-    return Object.keys(rigs).map(function(id){ return rigs[id]; });
+  function createEmptyRig(name){
+    return {version:2,id:uid("db-rig"),name:name||"Dem Bones Part",targetIds:[],bones:[],pointKeys:{},expressions:{lip:{slots:{},keys:[]},wink:{slots:{},keys:[]},frame:{slots:{},keys:[]}},createdAt:new Date().toISOString()};
   }
 
-  function createRigFromSelection(){
-    var chosen = selectedObjects().filter(supportedObject);
-    if (!chosen.length) {
-      notify("Select one or more line, rectangle, ellipse or freehand shapes first.", true);
+  function rigObjects(rig){
+    if(!rig) return [];
+    var ids={};(rig.targetIds||[]).forEach(function(id){ids[id]=true;});
+    var out=[];
+    allObjectArrays().forEach(function(list){list.forEach(function(o){if(o&&ids[o.id]&&o.demBones&&o.demBones.rigId===rig.id&&out.indexOf(o)<0)out.push(o);});});
+    return out;
+  }
+
+  function syncRigRefs(rig){
+    rigObjects(rig).forEach(function(o){o.demBones.rig=rig;});
+    allObjectArrays().forEach(function(list){list.forEach(function(o){if(o&&o.demBonesExpression&&o.demBonesExpression.rigId===rig.id)o.demBonesExpression.rig=rig;});});
+  }
+
+  function createRigFromObjects(objects,name){
+    var chosen=(objects||[]).filter(supportedWarpObject);
+    if(!chosen.length){notify("No usable vector shapes were supplied.",true);return null;}
+    var rig=createEmptyRig(name);
+    chosen.forEach(function(o){convertToWarpPath(o);rig.targetIds.push(o.id);o.demBones={version:2,rigId:rig.id,rig:rig,restPoints:(o.points||[]).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};}),weights:[],closedPath:!!o.closedPath};});
+    state.activeRig=rig;state.selectedBoneId="";state.selectedCurveId=chosen[0].id;state.selectedPointIndex=0;syncRigRefs(rig);return rig;
+  }
+
+  function useStageSelection(){
+    /* Read the real Luke Animate selection at the moment the button is pressed.
+       If opening the floating panel temporarily changed focus, fall back to the
+       object ids captured immediately before the panel suppressed the inspector. */
+    var chosen=selectedObjects(true).filter(supportedWarpObject);
+    if(!chosen.length){
+      notify("No selected Luke Animate vector was found. Use the Select tool, click the stage shape, then click Use Stage Selection.",true);
       return;
     }
     API.pushUndo();
-    var rig = {
-      version: 1,
-      id: uid("dem-bones-rig"),
-      name: "Dem Bones Rig",
-      sceneKey: sceneKey(),
-      targetIds: [],
-      bones: [],
-      createdAt: new Date().toISOString()
-    };
-    chosen.forEach(function(object){
-      convertToWarpPath(object);
-      rig.targetIds.push(object.id);
-      object.demBones = {
-        version: 1,
-        rigId: rig.id,
-        rig: rig,
-        restPoints: (object.points || []).map(function(point){ return {x:n(point.x,0),y:n(point.y,0)}; }),
-        weights: [],
-        closedPath: !!object.closedPath
-      };
-    });
-    state.activeRig = rig;
-    state.currentSceneKey = sceneKey();
-    state.selectedBoneId = "";
-    state.mode = "select";
-    renderPanel();
-    API.refreshUI();
-    notify("Loaded " + chosen.length + " shape" + (chosen.length === 1 ? "" : "s") + ". Add bones, then Bind.", false);
-  }
-
-  function selectExistingRig(){
-    var selected = selectedObjects();
-    for (var i = 0; i < selected.length; i += 1) {
-      if (selected[i].demBones && selected[i].demBones.rig) {
-        state.activeRig = selected[i].demBones.rig;
-        state.currentSceneKey = sceneKey();
-        state.selectedBoneId = state.activeRig.bones.length ? state.activeRig.bones[0].id : "";
-        syncRigReferences(state.activeRig);
-        renderPanel();
-        notify("Existing Dem Bones rig loaded.", false);
-        return true;
+    var working=[];
+    chosen.forEach(function(source){
+      var target=source;
+      if(!state.removeOriginals){
+        target=clone(source);
+        target.id=uid("db-copy");
+        target.keyframes=[];
+        API.addDrawObject(target,"animate");
       }
+      target=convertToWarpPath(target);
+      if(target)working.push(target);
+    });
+    if(!working.length){
+      notify("The selected object could not be converted into editable Dem Bones curve data.",true);
+      return;
     }
-    var rigs = findRigsInScene();
-    if (rigs.length) {
-      state.activeRig = rigs[0];
-      state.currentSceneKey = sceneKey();
-      state.selectedBoneId = state.activeRig.bones.length ? state.activeRig.bones[0].id : "";
-      syncRigReferences(state.activeRig);
-      renderPanel();
-      notify("Existing Dem Bones rig found in this scene.", false);
-      return true;
+    var rig=createRigFromObjects(working,"Stage Part");
+    if(rig){
+      state.lastStageSelectionIds=working.map(function(o){return o.id;});
+      try{API.selectDrawObject(working[0]);}catch(eSelect){}
+      state.tab="bones";state.mode="add-bone";renderAll();
+      API.refreshUI();
+      notify("Ingested "+working.length+" selected vector"+(working.length===1?"":"s")+" into Dem Bones. Drag to create the first bone; keep dragging to extend the chain.",false);
     }
-    return false;
   }
 
-  function distancePointToSegment(point, a, b){
-    var dx = b.x - a.x;
-    var dy = b.y - a.y;
-    var lengthSq = dx * dx + dy * dy;
-    if (lengthSq <= 0.000001) return Math.hypot(point.x - a.x, point.y - a.y);
-    var t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq;
-    t = clamp(t, 0, 1);
-    var px = a.x + dx * t;
-    var py = a.y + dy * t;
-    return Math.hypot(point.x - px, point.y - py);
+  function addDummy(){
+    API.pushUndo();
+    var cx=API.width/2,cy=API.height/2;
+    var o={type:"rect",x1:cx-50,y1:cy-50,x2:cx+50,y2:cy+50,fillColor:"#ffffff",strokeColor:"#6b7280",strokeWidth:2,opacity:.2,keyframes:[],name:"Dummy Area"};
+    API.addDrawObject(o,"animate");API.selectDrawObject(o);state.removeOriginals=true;useStageSelection();notify("Dummy Build Parts area created.",false);
   }
+
+  function distancePointToSegment(p,a,b){var dx=b.x-a.x,dy=b.y-a.y,l=dx*dx+dy*dy;if(l<.000001)return Math.hypot(p.x-a.x,p.y-a.y);var t=clamp(((p.x-a.x)*dx+(p.y-a.y)*dy)/l,0,1),x=a.x+dx*t,y=a.y+dy*t;return Math.hypot(p.x-x,p.y-y);}
+  function angleOf(a,b){return Math.atan2(b.y-a.y,b.x-a.x);}
+  function rotateVector(x,y,a){var c=Math.cos(a),s=Math.sin(a);return{x:x*c-y*s,y:x*s+y*c};}
+  function inverseRotateVector(x,y,a){return rotateVector(x,y,-a);}
+  function easingValue(v,e){var t=clamp(v,0,1);if(e==="ease-in")return t*t;if(e==="ease-out")return 1-Math.pow(1-t,2);if(e==="ease-in-out")return t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;if(e==="hold")return 0;return t;}
 
   function bindRig(recordUndo){
-    if (recordUndo === undefined) recordUndo = true;
-    var rig = state.activeRig;
-    if (!rig) {
-      notify("Use Selection or load an existing rig first.", true);
-      return;
-    }
-    if (!rig.bones.length) {
-      notify("Add at least one bone before binding.", true);
-      return;
-    }
-    if (recordUndo) API.pushUndo();
-    var targets = rigTargets(rig);
-    targets.forEach(function(object){
-      var data = object.demBones;
-      data.restPoints = (object.points || data.restPoints || []).map(function(point){ return {x:n(point.x,0),y:n(point.y,0)}; });
-      data.weights = data.restPoints.map(function(point){
-        var distances = rig.bones.map(function(bone){
-          return { boneId:bone.id, distance:distancePointToSegment(point, bone.restHead, bone.restTail) };
-        }).sort(function(a,b){ return a.distance - b.distance; }).slice(0, Math.min(2, rig.bones.length));
-        var total = 0;
-        distances.forEach(function(entry){
-          entry.weight = 1 / Math.max(1, entry.distance * entry.distance);
-          total += entry.weight;
-        });
-        distances.forEach(function(entry){ entry.weight = total > 0 ? entry.weight / total : 1 / distances.length; });
-        return distances;
+    var rig=state.activeRig;
+    if(!rig){notify("Build or load a part first.",true);return;}
+    if(!rig.bones.length){notify("Add at least one bone before binding.",true);return;}
+    if(recordUndo!==false) API.pushUndo();
+    rigObjects(rig).forEach(function(o){
+      var d=o.demBones;
+      d.restPoints=((o.points&&o.points.length)?o.points:(d.restPoints||[])).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};});
+      d.weights=d.restPoints.map(function(p){
+        var ds=rig.bones.map(function(b){
+          return{boneId:b.id,distance:distancePointToSegment(p,b.restHead,b.restTail)};
+        }).sort(function(a,b){return a.distance-b.distance;}).slice(0,Math.min(3,rig.bones.length));
+        var total=0;
+        ds.forEach(function(x){x.weight=1/Math.max(1,x.distance*x.distance);total+=x.weight;});
+        ds.forEach(function(x){x.weight=total?x.weight/total:1/ds.length;});
+        return ds;
       });
     });
-    syncRigReferences(rig);
+    syncRigRefs(rig);
     API.refreshUI();
-    notify("Bound " + targets.length + " shape" + (targets.length === 1 ? "" : "s") + " to " + rig.bones.length + " bone" + (rig.bones.length === 1 ? "" : "s") + ".", false);
+    notify("Part bound to "+rig.bones.length+" bone"+(rig.bones.length===1?"":"s")+".",false);
   }
 
-  function angleOf(a, b){
-    return Math.atan2(b.y - a.y, b.x - a.x);
+  function selectedBone(){
+    if(!state.activeRig)return null;
+    return(state.activeRig.bones||[]).filter(function(b){return b.id===state.selectedBoneId;})[0]||null;
   }
 
-  function rotateVector(x, y, angle){
-    var c = Math.cos(angle);
-    var s = Math.sin(angle);
-    return { x:x*c - y*s, y:x*s + y*c };
+  function boneById(id){
+    if(!state.activeRig)return null;
+    return(state.activeRig.bones||[]).filter(function(b){return String(b.id)===String(id);})[0]||null;
   }
 
-  function inverseRotateVector(x, y, angle){
-    return rotateVector(x, y, -angle);
+  function scenePixels(pixels){
+    var a=API.stageToScenePoint({x:0,y:0});
+    var b=API.stageToScenePoint({x:pixels,y:0});
+    return Math.max(.001,Math.hypot(b.x-a.x,b.y-a.y));
   }
 
-  function easingValue(value, easing){
-    var t = clamp(value, 0, 1);
-    if (easing === "ease-in") return t * t;
-    if (easing === "ease-out") return 1 - Math.pow(1 - t, 2);
-    if (easing === "ease-in-out") return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2;
-    if (easing === "hold") return 0;
-    return t;
-  }
-
-  function interpolatePose(bone, time){
-    var base = bone.basePose || {dx:0,dy:0,rotation:0,easing:"linear"};
-    var keys = (bone.keys || []).slice().sort(function(a,b){ return a.time - b.time; });
-    if (!keys.length) return {dx:n(base.dx,0),dy:n(base.dy,0),rotation:n(base.rotation,0),easing:base.easing || "linear"};
-    if (time <= keys[0].time) {
-      if (keys[0].time <= 0.0001) return clone(keys[0]);
-      var firstRatio = easingValue(time / Math.max(0.0001, keys[0].time), base.easing || "linear");
-      return {
-        dx:n(base.dx,0) + (n(keys[0].dx,0)-n(base.dx,0))*firstRatio,
-        dy:n(base.dy,0) + (n(keys[0].dy,0)-n(base.dy,0))*firstRatio,
-        rotation:n(base.rotation,0) + (n(keys[0].rotation,0)-n(base.rotation,0))*firstRatio,
-        easing:keys[0].easing || "linear"
-      };
-    }
-    if (time >= keys[keys.length-1].time) return clone(keys[keys.length-1]);
-    for (var i = 0; i < keys.length - 1; i += 1) {
-      var a = keys[i];
-      var b = keys[i+1];
-      if (time >= a.time && time <= b.time) {
-        var ratio = easingValue((time-a.time)/Math.max(0.0001,b.time-a.time), a.easing || "linear");
-        return {
-          dx:n(a.dx,0)+(n(b.dx,0)-n(a.dx,0))*ratio,
-          dy:n(a.dy,0)+(n(b.dy,0)-n(a.dy,0))*ratio,
-          rotation:n(a.rotation,0)+(n(b.rotation,0)-n(a.rotation,0))*ratio,
-          easing:a.easing || "linear"
-        };
-      }
-    }
-    return clone(base);
-  }
-
-  function restTransformMap(rig){
-    var map = {};
-    function resolve(bone){
-      if (!bone) return null;
-      if (map[bone.id]) return map[bone.id];
-      var angle = angleOf(bone.restHead, bone.restTail);
-      var length = Math.max(0.001, Math.hypot(bone.restTail.x-bone.restHead.x,bone.restTail.y-bone.restHead.y));
-      var result = {head:{x:bone.restHead.x,y:bone.restHead.y},tail:{x:bone.restTail.x,y:bone.restTail.y},angle:angle,length:length};
-      map[bone.id] = result;
-      return result;
-    }
-    rig.bones.forEach(resolve);
-    return map;
-  }
-
-  function posedTransformMap(rig, time){
-    var byId = {};
-    rig.bones.forEach(function(bone){ byId[bone.id] = bone; });
-    var restMap = restTransformMap(rig);
-    var posed = {};
-    var resolving = {};
-    function resolve(bone){
-      if (!bone) return null;
-      if (posed[bone.id]) return posed[bone.id];
-      if (resolving[bone.id]) return restMap[bone.id];
-      resolving[bone.id] = true;
-      var rest = restMap[bone.id];
-      var pose = interpolatePose(bone, time);
-      var head;
-      var angle;
-      if (bone.parentId && byId[bone.parentId]) {
-        var parent = byId[bone.parentId];
-        var parentRest = restMap[parent.id];
-        var parentPose = resolve(parent);
-        var localHead = inverseRotateVector(rest.head.x-parentRest.head.x, rest.head.y-parentRest.head.y, parentRest.angle);
-        var rotatedHead = rotateVector(localHead.x, localHead.y, parentPose.angle);
-        head = {x:parentPose.head.x+rotatedHead.x+n(pose.dx,0),y:parentPose.head.y+rotatedHead.y+n(pose.dy,0)};
-        angle = parentPose.angle + (rest.angle-parentRest.angle) + n(pose.rotation,0)*Math.PI/180;
-      } else {
-        head = {x:rest.head.x+n(pose.dx,0),y:rest.head.y+n(pose.dy,0)};
-        angle = rest.angle + n(pose.rotation,0)*Math.PI/180;
-      }
-      var tailOffset = rotateVector(rest.length, 0, angle);
-      var result = {head:head,tail:{x:head.x+tailOffset.x,y:head.y+tailOffset.y},angle:angle,length:rest.length};
-      posed[bone.id] = result;
-      delete resolving[bone.id];
-      return result;
-    }
-    rig.bones.forEach(resolve);
-    return posed;
-  }
-
-  function deformPoint(point, weights, restMap, posedMap){
-    if (!weights || !weights.length) return {x:point.x,y:point.y};
-    var x = 0;
-    var y = 0;
-    var total = 0;
-    weights.forEach(function(weight){
-      var rest = restMap[weight.boneId];
-      var posed = posedMap[weight.boneId];
-      if (!rest || !posed) return;
-      var local = inverseRotateVector(point.x-rest.head.x, point.y-rest.head.y, rest.angle);
-      var transformed = rotateVector(local.x, local.y, posed.angle);
-      var w = n(weight.weight, 0);
-      x += (posed.head.x + transformed.x) * w;
-      y += (posed.head.y + transformed.y) * w;
-      total += w;
-    });
-    if (total <= 0.0001) return {x:point.x,y:point.y};
-    return {x:x/total,y:y/total};
-  }
-
-  function evaluator(object, time, effective){
-    if (!object || !object.demBones || !object.demBones.rig) return effective;
-    var data = object.demBones;
-    var rig = data.rig;
-    if (!rig || !Array.isArray(data.restPoints) || !Array.isArray(data.weights) || !data.weights.length) return effective;
-    var restMap = restTransformMap(rig);
-    var posedMap = posedTransformMap(rig, time);
-    var points = data.restPoints.map(function(point,index){
-      return deformPoint(point, data.weights[index], restMap, posedMap);
-    });
-    var result = Object.assign({}, effective);
-    result.points = points;
-    result.closedPath = !!data.closedPath;
-    return result;
-  }
-
-  function addBone(head, tail){
-    var rig = state.activeRig;
-    if (!rig) {
-      notify("Use Selection before adding bones.", true);
-      return;
-    }
-    var length = Math.hypot(tail.x-head.x,tail.y-head.y);
-    if (length < 4) {
-      notify("Drag a longer bone.", true);
-      return;
-    }
-    API.pushUndo();
-    var parent = selectedBone();
-    var bone = {
-      id:uid("bone"),
-      name:"Bone " + (rig.bones.length+1),
-      parentId:parent ? parent.id : "",
-      restHead:{x:round3(head.x),y:round3(head.y)},
-      restTail:{x:round3(tail.x),y:round3(tail.y)},
-      basePose:{dx:0,dy:0,rotation:0,easing:"linear"},
-      keys:[]
-    };
-    rig.bones.push(bone);
-    state.selectedBoneId = bone.id;
-    state.mode = "select";
-    bindRig(false);
-    renderPanel();
-    notify(bone.name + " added.", false);
-  }
-
-  function removeSelectedBone(){
-    var rig = state.activeRig;
-    var bone = selectedBone();
-    if (!rig || !bone) return;
-    API.pushUndo();
-    rig.bones = rig.bones.filter(function(entry){ return entry.id !== bone.id; });
-    rig.bones.forEach(function(entry){ if (entry.parentId === bone.id) entry.parentId = bone.parentId || ""; });
-    state.selectedBoneId = rig.bones.length ? rig.bones[0].id : "";
-    if (rig.bones.length) bindRig();
-    else rigTargets(rig).forEach(function(object){ object.demBones.weights = []; });
-    renderPanel();
-    API.refreshUI();
-    notify("Bone deleted.", false);
-  }
-
-  function renameSelectedBone(){
-    var bone = selectedBone();
-    if (!bone || !state.panel) return;
-    var input = state.panel.querySelector("[data-db-bone-name]");
-    var name = input ? input.value.trim() : "";
-    if (!name) return;
-    bone.name = name;
-    renderPanel();
-    API.refreshUI();
-  }
-
-  function exactKey(bone, time){
-    if (!bone) return null;
-    var tolerance = 0.5 / Math.max(1, n(API.fps, 30));
-    for (var i = 0; i < (bone.keys || []).length; i += 1) {
-      if (Math.abs(n(bone.keys[i].time,0)-time) <= tolerance) return bone.keys[i];
-    }
-    return null;
-  }
-
-  function poseForUi(bone){
-    if (!bone) return {dx:0,dy:0,rotation:0,easing:"linear"};
-    var key = exactKey(bone,currentTime());
-    return key || interpolatePose(bone,currentTime());
-  }
-
-  function readPoseControls(){
-    if (!state.panel) return {dx:0,dy:0,rotation:0,easing:"linear"};
-    return {
-      dx:n(state.panel.querySelector("[data-db-dx-num]").value,0),
-      dy:n(state.panel.querySelector("[data-db-dy-num]").value,0),
-      rotation:n(state.panel.querySelector("[data-db-rotation-num]").value,0),
-      easing:state.panel.querySelector("[data-db-easing]").value || "linear"
-    };
-  }
-
-  function writePoseControls(pose){
-    if (!state.panel) return;
-    pose = pose || {dx:0,dy:0,rotation:0,easing:"linear"};
-    [["[data-db-dx]","[data-db-dx-num]",pose.dx],["[data-db-dy]","[data-db-dy-num]",pose.dy],["[data-db-rotation]","[data-db-rotation-num]",pose.rotation]].forEach(function(entry){
-      var range = state.panel.querySelector(entry[0]);
-      var number = state.panel.querySelector(entry[1]);
-      if (range) range.value = String(round3(entry[2]));
-      if (number) number.value = String(round3(entry[2]));
-    });
-    var easing = state.panel.querySelector("[data-db-easing]");
-    if (easing) easing.value = pose.easing || "linear";
-  }
-
-  function setKeyFromControls(){
-    var bone = selectedBone();
-    if (!bone) {
-      notify("Select a bone first.", true);
-      return;
-    }
-    API.pushUndo();
-    var pose = readPoseControls();
-    var time = currentTime();
-    var key = exactKey(bone,time);
-    if (key) Object.assign(key,pose,{time:time});
-    else bone.keys.push(Object.assign({time:time},pose));
-    bone.keys.sort(function(a,b){return a.time-b.time;});
-    API.refreshUI();
-    renderPanel();
-    notify("Key set for " + bone.name + " on frame " + currentFrame() + ".", false);
-  }
-
-  function livePoseChanged(){
-    var bone = selectedBone();
-    if (!bone) return;
-    var pose = readPoseControls();
-    var time = currentTime();
-    var key = exactKey(bone,time);
-    if (key) Object.assign(key,pose);
-    else if (time <= 0.0001 && !(bone.keys || []).length) bone.basePose = Object.assign({},pose);
-    API.refreshUI();
-  }
-
-  function deleteCurrentKey(){
-    var bone = selectedBone();
-    if (!bone) return;
-    var before = bone.keys.length;
-    var time = currentTime();
-    var tolerance = 0.5 / Math.max(1,n(API.fps,30));
-    bone.keys = bone.keys.filter(function(key){ return Math.abs(n(key.time,0)-time) > tolerance; });
-    if (bone.keys.length !== before) {
-      API.pushUndo();
-      renderPanel();
-      API.refreshUI();
-      notify("Current key deleted.", false);
-    } else notify("There is no key on this frame.", true);
-  }
-
-  function resetPose(){
-    var bone = selectedBone();
-    if (!bone) return;
-    writePoseControls({dx:0,dy:0,rotation:0,easing:"linear"});
-    livePoseChanged();
-  }
-
-  function clearRig(){
-    var rig = state.activeRig;
-    if (!rig) return;
-    API.pushUndo();
-    rigTargets(rig).forEach(function(object){
-      if (object.demBones && Array.isArray(object.demBones.restPoints)) object.points = clone(object.demBones.restPoints);
-      delete object.demBones;
-    });
-    state.activeRig = null;
-    state.selectedBoneId = "";
-    state.mode = "select";
-    renderPanel();
-    API.refreshUI();
-    notify("Dem Bones rig removed. The original rest geometry was restored.", false);
-  }
-
-  function exportRig(){
-    var rig = state.activeRig;
-    if (!rig) {
-      notify("There is no active rig to export.", true);
-      return;
-    }
-    var targets = rigTargets(rig).map(function(object){
-      return {
-        objectId:object.id,
-        objectName:object.name || "",
-        restPoints:clone(object.demBones.restPoints || []),
-        weights:clone(object.demBones.weights || []),
-        closedPath:!!object.demBones.closedPath
-      };
-    });
-    var data = {format:"LukeAnimateDemBones",version:1,rig:clone(rig),targets:targets};
-    var blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
-    var url = URL.createObjectURL(blob);
-    var link = document.createElement("a");
-    link.href = url;
-    link.download = (rig.name || "DemBonesRig").replace(/[^a-z0-9_-]+/gi,"_") + ".dembones.json";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(function(){URL.revokeObjectURL(url);},1000);
-    notify("Exported Dem Bones rig JSON.", false);
-  }
-
-  function importRigFile(file){
-    if (!file) return;
-    var reader = new FileReader();
-    reader.onload = function(){
-      try {
-        var data = JSON.parse(String(reader.result || ""));
-        if (!data || data.format !== "LukeAnimateDemBones" || !data.rig) throw new Error("Not a Luke Animate Dem Bones file.");
-        var rig = data.rig;
-        rig.id = rig.id || uid("dem-bones-rig");
-        rig.sceneKey = sceneKey();
-        var objects = sceneObjects();
-        var selected = selectedObjects().filter(supportedObject);
-        var targetRecords = Array.isArray(data.targets) ? data.targets : [];
-        var resolved = [];
-        targetRecords.forEach(function(record,index){
-          var object = objects.find(function(entry){ return entry.id === record.objectId; }) || selected[index];
-          if (!object) return;
-          convertToWarpPath(object);
-          object.demBones = {
-            version:1,
-            rigId:rig.id,
-            rig:rig,
-            restPoints:clone(record.restPoints || object.points || []),
-            weights:clone(record.weights || []),
-            closedPath:!!record.closedPath
-          };
-          object.points = clone(object.demBones.restPoints);
-          resolved.push(object);
-        });
-        if (!resolved.length) throw new Error("No matching shapes were found. Select the target shapes before importing.");
-        rig.targetIds = resolved.map(function(object){return object.id;});
-        state.activeRig = rig;
-        state.currentSceneKey = sceneKey();
-        state.selectedBoneId = rig.bones && rig.bones.length ? rig.bones[0].id : "";
-        syncRigReferences(rig);
-        renderPanel();
-        API.refreshUI();
-        notify("Imported Dem Bones rig for " + resolved.length + " shape" + (resolved.length===1?"":"s") + ".", false);
-      } catch (error) {
-        notify("Import failed: " + (error.message || error), true);
-      }
-    };
-    reader.readAsText(file);
-  }
-
-  function renderBoneList(){
-    if (!state.panel) return;
-    var host = state.panel.querySelector("[data-db-bone-list]");
-    if (!host) return;
-    host.innerHTML = "";
-    var rig = state.activeRig;
-    if (!rig || !rig.bones.length) {
-      host.innerHTML = '<div class="db-help">No bones yet.</div>';
-      return;
-    }
-    var byId = {};
-    rig.bones.forEach(function(bone){byId[bone.id]=bone;});
-    rig.bones.forEach(function(bone){
-      var row = document.createElement("div");
-      row.className = "db-bone" + (bone.id === state.selectedBoneId ? " active" : "");
-      row.innerHTML = '<span class="dot"></span><span class="db-bone-name">' + escapeHtml(bone.name) + '</span><span class="db-bone-parent">' + escapeHtml(bone.parentId && byId[bone.parentId] ? "↳ " + byId[bone.parentId].name : "Root") + '</span>';
-      row.addEventListener("click",function(){
-        state.selectedBoneId = bone.id;
-        state.mode = "select";
-        renderPanel();
+  function nearestBoneEndpoint(point,ignoreId){
+    var rig=state.activeRig,best=null;
+    if(!rig)return null;
+    (rig.bones||[]).forEach(function(b){
+      if(ignoreId&&String(b.id)===String(ignoreId))return;
+      [["head",b.restHead],["tail",b.restTail]].forEach(function(entry){
+        var d=Math.hypot(point.x-entry[1].x,point.y-entry[1].y);
+        if(!best||d<best.distance)best={bone:b,type:entry[0],point:entry[1],distance:d};
       });
-      host.appendChild(row);
-    });
-  }
-
-  function renderPanel(){
-    if (!state.panel) return;
-    var frame = state.panel.querySelector("[data-db-frame]");
-    if (frame) frame.textContent = String(currentFrame());
-    var rig = state.activeRig;
-    var info = state.panel.querySelector("[data-db-target-info]");
-    if (info) {
-      if (!rig) info.textContent = "Select one or more shapes, then click Use Selection. Rectangles and ellipses are converted to editable vector paths so their points can bend.";
-      else info.textContent = rigTargets(rig).length + " target shape" + (rigTargets(rig).length===1?"":"s") + " · " + rig.bones.length + " bone" + (rig.bones.length===1?"":"s") + " · " + (API.getEditingClipId() ? "inside Clip" : "main scene");
-    }
-    var addButton = state.panel.querySelector("[data-db-add]");
-    if (addButton) addButton.classList.toggle("active",state.mode === "add");
-    var bone = selectedBone();
-    var nameInput = state.panel.querySelector("[data-db-bone-name]");
-    if (nameInput) nameInput.value = bone ? bone.name : "";
-    writePoseControls(poseForUi(bone));
-    renderBoneList();
-    var disabled = !bone;
-    ["[data-db-rename]","[data-db-delete-bone]","[data-db-set-key]","[data-db-delete-key]","[data-db-reset-pose]"].forEach(function(selector){
-      var element = state.panel.querySelector(selector);
-      if (element) element.disabled = disabled;
-    });
-  }
-
-  function toScenePoint(event){
-    var rect = API.canvas.getBoundingClientRect();
-    var stagePoint = {
-      x:(event.clientX-rect.left) * API.width / Math.max(1,rect.width),
-      y:(event.clientY-rect.top) * API.height / Math.max(1,rect.height)
-    };
-    return API.stageToScenePoint(stagePoint);
-  }
-
-  function stageDistance(eventPoint, scenePoint){
-    var stagePoint = API.sceneToStagePoint(scenePoint);
-    return Math.hypot(eventPoint.x-stagePoint.x,eventPoint.y-stagePoint.y);
-  }
-
-  function eventStagePoint(event){
-    var rect = API.canvas.getBoundingClientRect();
-    return {
-      x:(event.clientX-rect.left) * API.width / Math.max(1,rect.width),
-      y:(event.clientY-rect.top) * API.height / Math.max(1,rect.height)
-    };
-  }
-
-  function closestBoneHit(event){
-    var rig = state.activeRig;
-    if (!rig) return null;
-    var stagePoint = eventStagePoint(event);
-    var best = null;
-    rig.bones.forEach(function(bone){
-      var headDistance = stageDistance(stagePoint,bone.restHead);
-      var tailDistance = stageDistance(stagePoint,bone.restTail);
-      if (headDistance <= 12 && (!best || headDistance < best.distance)) best={bone:bone,part:"head",distance:headDistance};
-      if (tailDistance <= 12 && (!best || tailDistance < best.distance)) best={bone:bone,part:"tail",distance:tailDistance};
-      var a = API.sceneToStagePoint(bone.restHead);
-      var b = API.sceneToStagePoint(bone.restTail);
-      var lineDistance = distancePointToSegment(stagePoint,a,b);
-      if (lineDistance <= 8 && (!best || lineDistance < best.distance)) best={bone:bone,part:"line",distance:lineDistance};
     });
     return best;
   }
 
-  function onCanvasPointerDown(event){
-    if (!state.open || !state.activeRig) return;
-    if (state.currentSceneKey !== sceneKey()) return;
-    if (state.mode === "add") {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      var start = toScenePoint(event);
-      state.addPreview = {head:start,tail:start};
-      var surface = API.overlay || API.canvas;
-      try { if (surface.setPointerCapture) surface.setPointerCapture(event.pointerId); } catch (captureError) {}
-      state.drag = {type:"add",pointerId:event.pointerId};
+  function autoConnectNewBone(a,b){
+    var out={head:clone(a),tail:clone(b),parentId:"",connected:false};
+    var rig=state.activeRig;
+    if(!rig||!rig.bones.length)return out;
+    var threshold=scenePixels(18);
+    var headHit=nearestBoneEndpoint(a,null);
+    var tailHit=nearestBoneEndpoint(b,null);
+    var parent=null;
+    if(headHit&&headHit.type==="tail"&&headHit.distance<=threshold){
+      parent=headHit.bone;
+      var dx=headHit.point.x-out.head.x,dy=headHit.point.y-out.head.y;
+      out.head={x:headHit.point.x,y:headHit.point.y};
+      out.tail={x:out.tail.x+dx,y:out.tail.y+dy};
+    }else if(tailHit&&tailHit.type==="tail"&&tailHit.distance<=threshold){
+      parent=tailHit.bone;
+      out.head={x:tailHit.point.x,y:tailHit.point.y};
+      out.tail=clone(a);
+    }else{
+      parent=selectedBone();
+      if(parent){
+        var sx=parent.restTail.x-out.head.x,sy=parent.restTail.y-out.head.y;
+        out.head={x:parent.restTail.x,y:parent.restTail.y};
+        out.tail={x:out.tail.x+sx,y:out.tail.y+sy};
+      }
+    }
+    if(parent){out.parentId=parent.id;out.connected=true;}
+    if(Math.hypot(out.tail.x-out.head.x,out.tail.y-out.head.y)<5){
+      out.tail={x:out.head.x+20,y:out.head.y};
+    }
+    return out;
+  }
+
+  function enforceRestChains(){
+    var rig=state.activeRig;
+    if(!rig)return;
+    var by={};
+    (rig.bones||[]).forEach(function(b){by[b.id]=b;});
+    var visiting={};
+    function solve(parent){
+      if(!parent||visiting[parent.id])return;
+      visiting[parent.id]=true;
+      (rig.bones||[]).forEach(function(child){
+        if(!child||String(child.parentId)!==String(parent.id))return;
+        var dx=parent.restTail.x-child.restHead.x,dy=parent.restTail.y-child.restHead.y;
+        child.restHead={x:child.restHead.x+dx,y:child.restHead.y+dy};
+        child.restTail={x:child.restTail.x+dx,y:child.restTail.y+dy};
+        solve(child);
+      });
+      delete visiting[parent.id];
+    }
+    (rig.bones||[]).forEach(function(b){if(!b.parentId||!by[b.parentId])solve(b);});
+  }
+
+  function addBone(head,tail,type){
+    var rig=state.activeRig;
+    if(!rig){notify("Build or load a part first.",true);return;}
+    if(Math.hypot(tail.x-head.x,tail.y-head.y)<4){notify("Drag a longer bone.",true);return;}
+    API.pushUndo();
+    var connected=autoConnectNewBone(head,tail);
+    var bone={
+      id:uid("bone"),
+      name:(type||"Bone")+" "+(rig.bones.length+1),
+      type:type||"bone",
+      parentId:connected.parentId||"",
+      restHead:{x:round3(connected.head.x),y:round3(connected.head.y)},
+      restTail:{x:round3(connected.tail.x),y:round3(connected.tail.y)},
+      basePose:{dx:0,dy:0,rotation:0,scale:1,easing:"linear"},
+      keys:[]
+    };
+    rig.bones.push(bone);
+    state.selectedBoneId=bone.id;
+    state.mode="add-bone";
+    enforceRestChains();
+    bindRig(false);
+    renderAll();
+    notify(bone.name+" added"+(bone.parentId?" to the chain":"")+". Drag again to continue.",false);
+  }
+
+  function deleteBone(){
+    var rig=state.activeRig,b=selectedBone();
+    if(!rig||!b)return;
+    API.pushUndo();
+    rig.bones=rig.bones.filter(function(x){return x.id!==b.id;});
+    rig.bones.forEach(function(x){if(x.parentId===b.id)x.parentId=b.parentId||"";});
+    state.selectedBoneId=rig.bones.length?rig.bones[rig.bones.length-1].id:"";
+    state.mode=state.tab==="bones"?"add-bone":"select";
+    enforceRestChains();
+    if(rig.bones.length)bindRig(false);else rigObjects(rig).forEach(function(o){o.demBones.weights=[];});
+    renderAll();
+    API.refreshUI();
+  }
+
+  function clearBones(){
+    var rig=state.activeRig;
+    if(!rig)return;
+    API.pushUndo();
+    rig.bones=[];
+    state.selectedBoneId="";
+    state.mode=state.tab==="bones"?"add-bone":"select";
+    rigObjects(rig).forEach(function(o){o.demBones.weights=[];});
+    renderAll();
+    API.refreshUI();
+  }
+
+  function interpolatePose(bone,time){
+    var base=bone.basePose||{dx:0,dy:0,rotation:0,scale:1,easing:"linear"},keys=(bone.keys||[]).slice().sort(function(a,b){return a.time-b.time;});
+    function copyPose(p){return{dx:n(p.dx,0),dy:n(p.dy,0),rotation:n(p.rotation,0),scale:Math.max(.01,n(p.scale,1)),easing:p.easing||"linear"};}
+    if(!keys.length)return copyPose(base);
+    if(time<=keys[0].time){if(keys[0].time<=.0001)return copyPose(keys[0]);var r=easingValue(time/Math.max(.0001,keys[0].time),base.easing||"linear");return{dx:n(base.dx,0)+(n(keys[0].dx,0)-n(base.dx,0))*r,dy:n(base.dy,0)+(n(keys[0].dy,0)-n(base.dy,0))*r,rotation:n(base.rotation,0)+(n(keys[0].rotation,0)-n(base.rotation,0))*r,scale:n(base.scale,1)+(n(keys[0].scale,1)-n(base.scale,1))*r,easing:keys[0].easing||"linear"};}
+    if(time>=keys[keys.length-1].time)return copyPose(keys[keys.length-1]);
+    for(var i=0;i<keys.length-1;i++){var a=keys[i],b=keys[i+1];if(time>=a.time&&time<=b.time){var q=easingValue((time-a.time)/Math.max(.0001,b.time-a.time),a.easing||"linear");return{dx:n(a.dx,0)+(n(b.dx,0)-n(a.dx,0))*q,dy:n(a.dy,0)+(n(b.dy,0)-n(a.dy,0))*q,rotation:n(a.rotation,0)+(n(b.rotation,0)-n(a.rotation,0))*q,scale:n(a.scale,1)+(n(b.scale,1)-n(a.scale,1))*q,easing:a.easing||"linear"};}}
+    return copyPose(base);
+  }
+
+  function restTransformMap(rig){var map={};(rig.bones||[]).forEach(function(b){var a=angleOf(b.restHead,b.restTail),l=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));map[b.id]={head:{x:b.restHead.x,y:b.restHead.y},tail:{x:b.restTail.x,y:b.restTail.y},angle:a,length:l,scale:1};});return map;}
+  function posedTransformMap(rig,time){
+    var by={},rest=restTransformMap(rig),out={},resolving={};(rig.bones||[]).forEach(function(b){by[b.id]=b;});
+    function resolve(b){if(!b)return null;if(out[b.id])return out[b.id];if(resolving[b.id])return rest[b.id];resolving[b.id]=true;var r=rest[b.id],p=interpolatePose(b,time),head,angle,parentScale=1;
+      if(b.parentId&&by[b.parentId]){var pb=by[b.parentId],pr=rest[pb.id],pp=resolve(pb),lh=inverseRotateVector(r.head.x-pr.head.x,r.head.y-pr.head.y,pr.angle);lh.x*=pp.scale;lh.y*=pp.scale;var rh=rotateVector(lh.x,lh.y,pp.angle);head={x:pp.head.x+rh.x+n(p.dx,0),y:pp.head.y+rh.y+n(p.dy,0)};angle=pp.angle+(r.angle-pr.angle)+n(p.rotation,0)*Math.PI/180;parentScale=pp.scale;}else{head={x:r.head.x+n(p.dx,0),y:r.head.y+n(p.dy,0)};angle=r.angle+n(p.rotation,0)*Math.PI/180;}
+      var scale=parentScale*Math.max(.01,n(p.scale,1)),off=rotateVector(r.length*scale,0,angle),q={head:head,tail:{x:head.x+off.x,y:head.y+off.y},angle:angle,length:r.length*scale,scale:scale};out[b.id]=q;delete resolving[b.id];return q;}
+    (rig.bones||[]).forEach(resolve);return out;
+  }
+
+  function deformPoint(point,weights,rest,posed){if(!weights||!weights.length)return{x:point.x,y:point.y};var x=0,y=0,total=0;weights.forEach(function(w){var r=rest[w.boneId],p=posed[w.boneId];if(!r||!p)return;var local=inverseRotateVector(point.x-r.head.x,point.y-r.head.y,r.angle);local.x*=p.scale;local.y*=p.scale;var tr=rotateVector(local.x,local.y,p.angle),ww=n(w.weight,0);x+=(p.head.x+tr.x)*ww;y+=(p.head.y+tr.y)*ww;total+=ww;});return total?{x:x/total,y:y/total}:{x:point.x,y:point.y};}
+
+  function interpolatePointKey(rig,objectId,time,basePoints){
+    var keys=((rig.pointKeys||{})[objectId]||[]).slice().sort(function(a,b){return a.time-b.time;});if(!keys.length)return basePoints;
+    if(time<=keys[0].time)return clone(keys[0].points);if(time>=keys[keys.length-1].time)return clone(keys[keys.length-1].points);
+    for(var i=0;i<keys.length-1;i++){var a=keys[i],b=keys[i+1];if(time>=a.time&&time<=b.time){var r=easingValue((time-a.time)/Math.max(.0001,b.time-a.time),a.easing||"linear");return a.points.map(function(p,j){var q=b.points[j]||p;return{x:n(p.x,0)+(n(q.x,0)-n(p.x,0))*r,y:n(p.y,0)+(n(q.y,0)-n(p.y,0))*r};});}}
+    return basePoints;
+  }
+
+  function activeExpressionSlot(rig,type,time){var bucket=rig&&rig.expressions&&rig.expressions[type];if(!bucket)return"";var keys=(bucket.keys||[]).slice().sort(function(a,b){return a.time-b.time;}),slot="";keys.forEach(function(k){if(k.time<=time+.0001)slot=k.slot;});return slot;}
+
+  function partById(id){return state.character.parts.filter(function(p){return p.id===Number(id);})[0]||null;}
+  function partInstance(part){if(!part||!state.character.rootClipId)return null;var root=clips()[state.character.rootClipId];if(!root)return null;return(root.drawObjects||[]).filter(function(o){return o&&o.__dbPartId===part.id;})[0]||null;}
+
+  function evaluator(object,time,effective){
+    if(object&&object.__dbPartId){
+      var part=partById(object.__dbPartId);if(!part)return effective;var result=Object.assign({},effective),base=part.transform||{};result.x=n(base.x,0);result.y=n(base.y,0);result.scale=Math.max(.01,n(base.scale,1));result.rotation=n(base.rotation,0);result.opacity=n(base.opacity,1);
+      if(part.pin&&part.pin.targetPartId&&part.pin.boneId){var target=partById(part.pin.targetPartId),ti=partInstance(target);if(target&&ti&&target.rig){var map=posedTransformMap(target.rig,time),bone=map[part.pin.boneId];if(bone){var tx=n(target.transform.x,0),ty=n(target.transform.y,0),ts=Math.max(.01,n(target.transform.scale,1)),tr=n(target.transform.rotation,0)*Math.PI/180;var loc=rotateVector(bone.tail.x*ts,bone.tail.y*ts,tr);result.x=tx+loc.x+n(part.pin.offsetX,0);result.y=ty+loc.y+n(part.pin.offsetY,0);if(part.pin.inheritRotation)result.rotation=n(target.transform.rotation,0)+bone.angle*180/Math.PI+n(part.pin.rotationOffset,0);}}
+      }
+      return result;
+    }
+    if(object&&object.demBonesExpression&&object.demBonesExpression.rig){var ex=object.demBonesExpression,slot=activeExpressionSlot(ex.rig,ex.type,time),r=Object.assign({},effective);r.opacity=slot===ex.slot?n(ex.baseOpacity,1):0;return r;}
+    if(!object||!object.demBones||!object.demBones.rig)return effective;
+    var data=object.demBones,rig=data.rig;if(!Array.isArray(data.restPoints)||!Array.isArray(data.weights)||!data.weights.length)return effective;
+    var rest=restTransformMap(rig),posed=posedTransformMap(rig,time),base=interpolatePointKey(rig,object.id,time,data.restPoints),pts=base.map(function(p,i){return deformPoint(p,data.weights[i],rest,posed);});var out=Object.assign({},effective);out.points=pts;out.closedPath=!!data.closedPath;return out;
+  }
+
+  function serializeRig(rig){
+    if(!rig)return null;var data=clone(rig);return data;
+  }
+
+  function serializeBuildPart(){
+    var rig=state.activeRig;if(!rig)return null;var targets=rigObjects(rig).map(function(o){var c=clone(o);if(c.demBones){delete c.demBones.rig;}return c;});
+    var expressions=[];allObjectArrays().forEach(function(list){list.forEach(function(o){if(o&&o.demBonesExpression&&o.demBonesExpression.rigId===rig.id){var c=clone(o);delete c.demBonesExpression.rig;expressions.push(c);}});});
+    return{app:"LukeAnimateDemBonesPart",version:2,name:rig.name||"Part",rig:serializeRig(rig),objects:targets,expressionObjects:expressions};
+  }
+
+  function loadBuildPart(data,placeOnStage){
+    if(!data||!data.rig||!Array.isArray(data.objects))throw new Error("Not a Dem Bones part file.");
+    var rig=clone(data.rig);rig.id=uid("db-rig");var idMap={};var objects=data.objects.map(function(raw){var o=clone(raw),old=o.id;o.id=uid("db-part-object");idMap[old]=o.id;if(o.demBones){o.demBones.rigId=rig.id;o.demBones.rig=rig;}ensureObjectId(o);return o;});
+    rig.targetIds=(rig.targetIds||[]).map(function(id){return idMap[id]||id;});
+    if(rig.pointKeys){var pk={};Object.keys(rig.pointKeys).forEach(function(id){pk[idMap[id]||id]=rig.pointKeys[id];});rig.pointKeys=pk;}
+    objects.forEach(function(o){if(o.demBones)o.demBones.rig=rig;});
+    var expressionObjects=(data.expressionObjects||[]).map(function(raw){var o=clone(raw);o.id=uid("db-expression-object");if(o.demBonesExpression){o.demBonesExpression.rigId=rig.id;o.demBonesExpression.rig=rig;}return o;});
+    if(placeOnStage!==false){API.pushUndo();objects.concat(expressionObjects).forEach(function(o){API.addDrawObject(o,"animate");});}
+    state.activeRig=rig;state.selectedBoneId=rig.bones&&rig.bones[0]?rig.bones[0].id:"";state.selectedCurveId=objects[0]?objects[0].id:"";state.selectedPointIndex=0;syncRigRefs(rig);renderAll();API.refreshUI();return{rig:rig,objects:objects,expressionObjects:expressionObjects};
+  }
+
+  function shiftRig(rig,dx,dy){
+    (rig.bones||[]).forEach(function(b){b.restHead.x+=dx;b.restHead.y+=dy;b.restTail.x+=dx;b.restTail.y+=dy;});
+    return rig;
+  }
+
+  function ensureCharacterRoot(){
+    var map=clips();
+    if(state.character.rootClipId&&map[state.character.rootClipId])return map[state.character.rootClipId];
+    var id=uid("db-character-clip"),root={id:id,name:state.character.name||"MyCharacter",points:[],closed:false,targetPoints:[],layers:[],drawObjects:[],pivotX:0,pivotY:0,timelineDuration:Math.max(3,n(API.getTimelineDuration(),6)),loopTimeline:true,__demBonesCharacter:true};map[id]=root;state.character.rootClipId=id;state.character.id=state.character.id||uid("character");
+    var instance={type:"clipinstance",clipId:id,name:root.name,x:0,y:0,scale:1,rotation:0,timeOffset:0,opacity:1,keyframes:[],id:uid("db-character-instance"),__demBonesCharacterInstance:true,__dbCharacterId:state.character.id};API.addDrawObject(instance,"animate");state.character.rootInstanceId=instance.id;return root;
+  }
+
+  function createPartClip(part,build){
+    var map=clips(),b=combinedBounds(build.objects),cx=b.cx,cy=b.cy,rig=clone(build.rig);rig.id=uid("db-part-rig");shiftRig(rig,-cx,-cy);
+    var idMap={};var objects=build.objects.map(function(raw){var o=clone(raw),old=o.id;o.id=uid("db-child-object");idMap[old]=o.id;shiftObject(o,-cx,-cy);if(o.demBones){o.demBones.rigId=rig.id;o.demBones.rig=rig;o.demBones.restPoints=(o.demBones.restPoints||[]).map(function(p){return{x:p.x-cx,y:p.y-cy};});}return o;});
+    rig.targetIds=(rig.targetIds||[]).map(function(id){return idMap[id]||id;});if(rig.pointKeys){var pk={};Object.keys(rig.pointKeys).forEach(function(id){var arr=clone(rig.pointKeys[id]);arr.forEach(function(k){k.points=(k.points||[]).map(function(p){return{x:p.x-cx,y:p.y-cy};});});pk[idMap[id]||id]=arr;});rig.pointKeys=pk;}
+    var expressionObjects=(build.expressionObjects||[]).map(function(raw){var o=clone(raw);o.id=uid("db-child-expression");shiftObject(o,-cx,-cy);if(o.demBonesExpression){o.demBonesExpression.rigId=rig.id;o.demBonesExpression.rig=rig;}return o;});
+    var clipId=uid("db-part-clip"),clip={id:clipId,name:part.name,points:[],closed:false,targetPoints:[],layers:[],drawObjects:objects.concat(expressionObjects),pivotX:0,pivotY:0,timelineDuration:Math.max(3,n(API.getTimelineDuration(),6)),loopTimeline:true,__demBonesPart:true,__dbPartId:part.id};map[clipId]=clip;part.clipId=clipId;part.rig=rig;part.source=clone(build);part.transform=part.transform||{x:cx,y:cy,scale:1,rotation:0,opacity:1};part.transform.x=n(part.transform.x,cx);part.transform.y=n(part.transform.y,cy);return clip;
+  }
+
+  function updateCharacterInstances(){
+    var root=ensureCharacterRoot();root.name=state.character.name||"MyCharacter";root.drawObjects=[];
+    state.character.parts.forEach(function(part){if(!clips()[part.clipId]&&part.source)createPartClip(part,part.source);var inst={type:"clipinstance",clipId:part.clipId,name:part.name,x:n(part.transform&&part.transform.x,0),y:n(part.transform&&part.transform.y,0),scale:Math.max(.01,n(part.transform&&part.transform.scale,1)),rotation:n(part.transform&&part.transform.rotation,0),timeOffset:0,opacity:n(part.transform&&part.transform.opacity,1),keyframes:[],id:uid("db-part-instance"),__dbPartId:part.id,__dbCharacterId:state.character.id};root.drawObjects.push(inst);});API.refreshUI();
+  }
+
+  function addBuildToCharacter(){
+    var build=serializeBuildPart();if(!build){notify("Build a part first.",true);return;}
+    var part=state.editingPartId?partById(state.editingPartId):null;
+    if(!part){part={id:state.character.nextPartId++,name:(state.activeRig&&state.activeRig.name)||("Part "+state.character.nextPartId),clipId:"",source:null,rig:null,transform:null,pin:null,collapsed:false};state.character.parts.push(part);}
+    else{if(part.clipId&&clips()[part.clipId])delete clips()[part.clipId];}
+    createPartClip(part,build);state.character.selectedPartId=part.id;state.editingPartId=null;ensureCharacterRoot();updateCharacterInstances();state.tab="character";renderAll();notify('Added "'+part.name+'" to MyCharacter.',false);
+  }
+
+  function editCharacterPart(part){
+    if(!part||!part.source)return;state.editingPartId=part.id;loadBuildPart(part.source,true);state.tab="source";renderAll();notify('Editing "'+part.name+'" in Build Parts. Add To Character updates this part.',false);
+  }
+
+  function deleteCharacterPart(part){if(!part)return;if(part.clipId&&clips()[part.clipId])delete clips()[part.clipId];state.character.parts=state.character.parts.filter(function(p){return p.id!==part.id;});if(state.character.selectedPartId===part.id)state.character.selectedPartId=state.character.parts[0]?state.character.parts[0].id:null;updateCharacterInstances();renderAll();}
+  function movePart(part,dir){var i=state.character.parts.indexOf(part),j=i+dir;if(i<0||j<0||j>=state.character.parts.length)return;var t=state.character.parts[i];state.character.parts[i]=state.character.parts[j];state.character.parts[j]=t;updateCharacterInstances();renderAll();}
+
+  function saveCharacter(){
+    var data={app:"LukeAnimateMyCharacter",version:2,savedAt:new Date().toISOString(),character:{name:state.character.name,id:state.character.id,nextPartId:state.character.nextPartId,selectedPartId:state.character.selectedPartId,parts:state.character.parts.map(function(p){return{id:p.id,name:p.name,source:p.source,transform:p.transform,pin:p.pin,collapsed:p.collapsed};})}};downloadText((state.character.name||"MyCharacter")+".mycharacter.json",JSON.stringify(data,null,2),"application/json");notify("Saved MyCharacter.",false);
+  }
+
+  function loadCharacterData(data){
+    if(!data||data.app!=="LukeAnimateMyCharacter"||!data.character||!Array.isArray(data.character.parts))throw new Error("Not a Luke Animate MyCharacter file.");
+    if(state.character.rootClipId&&clips()[state.character.rootClipId])delete clips()[state.character.rootClipId];state.character={version:2,name:data.character.name||"MyCharacter",id:data.character.id||uid("character"),rootClipId:"",rootInstanceId:"",nextPartId:n(data.character.nextPartId,1),selectedPartId:data.character.selectedPartId||null,parts:data.character.parts.map(function(raw){return{id:n(raw.id,0),name:raw.name||"Part",source:raw.source,rig:null,clipId:"",transform:raw.transform||{x:0,y:0,scale:1,rotation:0,opacity:1},pin:raw.pin||null,collapsed:!!raw.collapsed};})};ensureCharacterRoot();state.character.parts.forEach(function(p){if(p.source)createPartClip(p,p.source);});updateCharacterInstances();renderAll();notify("Loaded MyCharacter.",false);
+  }
+
+  function commitCharacter(){
+    if(!state.character.parts.length){notify("Add at least one part to MyCharacter first.",true);return;}ensureCharacterRoot();updateCharacterInstances();var root=clips()[state.character.rootClipId];root.name=state.character.name||"MyCharacter";notify('MyCharacter is live on the stage as Clip "'+root.name+'".',false);API.refreshUI();
+  }
+
+  function setPartPin(part,targetPartId,boneId,inheritRotation){
+    if(!part)return;if(!targetPartId||!boneId){part.pin=null;updateCharacterInstances();renderAll();return;}var target=partById(targetPartId),bone=target&&target.rig&&(target.rig.bones||[]).filter(function(b){return b.id===boneId;})[0];if(!target||!bone){notify("Choose a valid target part and bone.",true);return;}part.pin={targetPartId:target.id,boneId:bone.id,offsetX:0,offsetY:0,inheritRotation:!!inheritRotation,rotationOffset:0};updateCharacterInstances();renderAll();notify(part.name+" pinned to "+target.name+" / "+bone.name+".",false);
+  }
+
+  function exactBoneKey(bone,time){return(bone.keys||[]).filter(function(k){return Math.abs(k.time-time)<.0005;})[0]||null;}
+  function readPoseInputs(){if(!state.panel)return{dx:0,dy:0,rotation:0,scale:1,easing:"linear"};return{dx:n(state.panel.querySelector("[data-db-pose-dx]").value,0),dy:n(state.panel.querySelector("[data-db-pose-dy]").value,0),rotation:n(state.panel.querySelector("[data-db-pose-rotation]").value,0),scale:Math.max(.01,n(state.panel.querySelector("[data-db-pose-scale]").value,1)),easing:state.panel.querySelector("[data-db-pose-easing]").value||"linear"};}
+  function previewBonePoseFromInputs(){
+    var b=selectedBone();
+    if(!b||state.tab!=="animate")return;
+    var time=currentTime(),key=exactBoneKey(b,time);
+    if(!key){API.pushUndo();key=ensureBoneKeyForDrag(b,time);}
+    Object.assign(key,readPoseInputs());
+    API.refreshUI();
+  }
+  function setBoneKey(){var b=selectedBone();if(!b){notify("Select a bone first.",true);return;}API.pushUndo();var pose=readPoseInputs(),time=currentTime(),key=exactBoneKey(b,time);if(key)Object.assign(key,pose);else b.keys.push(Object.assign({time:time},pose));b.keys.sort(function(a,b){return a.time-b.time;});API.refreshUI();renderAll();notify("Bone key set on frame "+currentFrame()+".",false);}
+  function deleteBoneKey(){var b=selectedBone();if(!b)return;var t=currentTime(),before=b.keys.length;b.keys=b.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});API.refreshUI();renderAll();notify(before!==b.keys.length?"Bone key deleted.":"No bone key on this frame.",false);}
+
+  function normaliseWeightList(list){
+    var total=0;(list||[]).forEach(function(w){total+=Math.max(0,n(w.weight,0));});
+    if(total<=.000001)return list||[];
+    return(list||[]).map(function(w){return{boneId:w.boneId,weight:n(w.weight,0)/total};});
+  }
+
+  function blendWeightLists(a,b,ratio){
+    var map={},t=clamp(n(ratio,.5),0,1);
+    (a||[]).forEach(function(w){map[w.boneId]=(map[w.boneId]||0)+n(w.weight,0)*(1-t);});
+    (b||[]).forEach(function(w){map[w.boneId]=(map[w.boneId]||0)+n(w.weight,0)*t;});
+    return normaliseWeightList(Object.keys(map).map(function(id){return{boneId:id,weight:map[id]};}).filter(function(w){return w.weight>.00001;}));
+  }
+
+  function segmentProjection(point,a,b){
+    var dx=b.x-a.x,dy=b.y-a.y,len2=dx*dx+dy*dy;
+    var t=len2>.000001?clamp(((point.x-a.x)*dx+(point.y-a.y)*dy)/len2,0,1):0;
+    var q={x:a.x+dx*t,y:a.y+dy*t};
+    return{point:q,ratio:t,distance:Math.hypot(point.x-q.x,point.y-q.y)};
+  }
+
+  function closestCurveSegment(o,scenePoint){
+    if(!o||!Array.isArray(o.points)||o.points.length<2)return null;
+    var eff=typeof API.getEffectiveObject==="function"?API.getEffectiveObject(o,currentTime()):o;
+    var shown=Array.isArray(eff.points)&&eff.points.length===o.points.length?eff.points:o.points;
+    var count=o.closedPath?shown.length:shown.length-1,best=null;
+    for(var i=0;i<count;i++){
+      var j=(i+1)%shown.length,hit=segmentProjection(scenePoint,shown[i],shown[j]);
+      if(!best||hit.distance<best.distance)best={startIndex:i,endIndex:j,insertIndex:i+1,ratio:hit.ratio,displayPoint:hit.point,distance:hit.distance};
+    }
+    return best;
+  }
+
+  function insertPointInCurveObject(o,segment,recordUndo){
+    if(!o||!segment||!Array.isArray(o.points)||o.points.length<2)return false;
+    if(recordUndo!==false)API.pushUndo();
+    var oldLength=o.points.length,i=segment.startIndex,j=segment.endIndex,t=segment.ratio;
+    var rawA=o.points[i],rawB=o.points[j],rawPoint={x:round3(rawA.x+(rawB.x-rawA.x)*t),y:round3(rawA.y+(rawB.y-rawA.y)*t)};
+    var insertIndex=segment.insertIndex;
+    if(o.closedPath&&i===oldLength-1)insertIndex=oldLength;
+    o.points.splice(insertIndex,0,rawPoint);
+    var d=o.demBones;
+    if(d){
+      d.restPoints=d.restPoints||clone(o.points);
+      if(d.restPoints.length===oldLength){
+        var ra=d.restPoints[i],rb=d.restPoints[j];
+        d.restPoints.splice(insertIndex,0,{x:round3(ra.x+(rb.x-ra.x)*t),y:round3(ra.y+(rb.y-ra.y)*t)});
+      }else d.restPoints=clone(o.points);
+      if(Array.isArray(d.weights)&&d.weights.length===oldLength)d.weights.splice(insertIndex,0,blendWeightLists(d.weights[i],d.weights[j],t));
+      else d.weights=[];
+    }
+    var rig=state.activeRig;
+    if(rig&&rig.pointKeys&&Array.isArray(rig.pointKeys[o.id])){
+      rig.pointKeys[o.id].forEach(function(key){
+        if(!Array.isArray(key.points)||key.points.length!==oldLength)return;
+        var a=key.points[i],b=key.points[j];
+        key.points.splice(insertIndex,0,{x:round3(a.x+(b.x-a.x)*t),y:round3(a.y+(b.y-a.y)*t)});
+      });
+    }
+    state.selectedPointIndex=insertIndex;
+    if(d&&(!d.weights||d.weights.length!==o.points.length))bindRig(false);
+    API.refreshUI();
+    return true;
+  }
+
+  function deleteSelectedCurvePoint(){
+    var o=findObjectById(state.selectedCurveId),rig=state.activeRig;
+    if(!o||!Array.isArray(o.points))return;
+    var minimum=o.closedPath?3:2;
+    if(o.points.length<=minimum){notify('This curve needs at least '+minimum+' points.',true);return;}
+    API.pushUndo();
+    var index=clamp(state.selectedPointIndex,0,o.points.length-1);
+    o.points.splice(index,1);
+    if(o.demBones){if(Array.isArray(o.demBones.restPoints))o.demBones.restPoints.splice(index,1);if(Array.isArray(o.demBones.weights))o.demBones.weights.splice(index,1);}
+    if(rig&&rig.pointKeys&&Array.isArray(rig.pointKeys[o.id]))rig.pointKeys[o.id].forEach(function(key){if(Array.isArray(key.points)&&key.points.length>index)key.points.splice(index,1);});
+    state.selectedPointIndex=clamp(index,0,o.points.length-1);API.refreshUI();renderAll();notify('Curve point deleted.',false);
+  }
+
+  function subdivideSelectedCurve(){
+    var o=findObjectById(state.selectedCurveId);if(!o||!Array.isArray(o.points)||o.points.length<2)return;
+    var eff=typeof API.getEffectiveObject==="function"?API.getEffectiveObject(o,currentTime()):o;
+    var shown=Array.isArray(eff.points)&&eff.points.length===o.points.length?eff.points:o.points;
+    var count=o.closedPath?shown.length:shown.length-1,segments=[];
+    for(var i=0;i<count;i++)segments.push({startIndex:i,endIndex:(i+1)%shown.length,insertIndex:i+1,ratio:.5});
+    API.pushUndo();
+    for(var k=segments.length-1;k>=0;k--)insertPointInCurveObject(o,segments[k],false);
+    renderAll();notify('Added '+segments.length+' curve points without changing the outline.',false);
+  }
+
+  function setCurvePointSourcePosition(o,index,x,y){
+    if(!o||!Array.isArray(o.points)||!o.points[index])return;
+    o.points[index]={x:round3(x),y:round3(y)};
+    if(o.demBones&&Array.isArray(o.demBones.restPoints)&&o.demBones.restPoints[index])o.demBones.restPoints[index]={x:round3(x),y:round3(y)};
+    if(o.demBones&&state.activeRig)bindRig(false);
+    API.refreshUI();
+  }
+
+  function setCurvePointKey(){var rig=state.activeRig,o=findObjectById(state.selectedCurveId);if(!rig||!o||!o.demBones)return;rig.pointKeys=rig.pointKeys||{};var list=rig.pointKeys[o.id]||(rig.pointKeys[o.id]=[]),t=currentTime(),pts=(o.points||o.demBones.restPoints||[]).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};}),key=list.filter(function(k){return Math.abs(k.time-t)<.0005;})[0];if(key){key.points=pts;key.easing=state.panel.querySelector("[data-db-point-easing]").value||"linear";}else list.push({time:t,points:pts,easing:state.panel.querySelector("[data-db-point-easing]").value||"linear"});list.sort(function(a,b){return a.time-b.time;});API.refreshUI();notify("Curve points keyed on frame "+currentFrame()+".",false);renderAll();}
+  function deleteCurvePointKey(){var rig=state.activeRig,o=findObjectById(state.selectedCurveId);if(!rig||!o)return;var list=(rig.pointKeys&&rig.pointKeys[o.id])||[],t=currentTime(),before=list.length;rig.pointKeys[o.id]=list.filter(function(k){return Math.abs(k.time-t)>=.0005;});notify(before!==rig.pointKeys[o.id].length?"Curve key deleted.":"No curve key on this frame.",false);renderAll();}
+
+  function importExpressionSvg(text,type,slot){
+    var rig=state.activeRig;if(!rig){notify("Build or load a part first.",true);return;}var objects=svgTextToObjects(text);if(!objects.length){notify("No supported SVG shapes were found.",true);return;}var b=combinedBounds(objects),anchor=selectedBone();var tx=anchor?anchor.restHead.x-b.cx:0,ty=anchor?anchor.restHead.y-b.cy:0;objects.forEach(function(o){shiftObject(o,tx,ty);o.demBonesExpression={rigId:rig.id,rig:rig,type:type,slot:slot,baseOpacity:n(o.opacity,1)};API.addDrawObject(o,"animate");});rig.expressions[type].slots[slot]={name:slot,objectIds:objects.map(function(o){return o.id;})};syncRigRefs(rig);API.refreshUI();renderAll();notify(type+" expression slot "+slot+" imported.",false);
+  }
+  function setExpressionKey(type,slot){var rig=state.activeRig;if(!rig)return;var bucket=rig.expressions[type],t=currentTime(),key=(bucket.keys||[]).filter(function(k){return Math.abs(k.time-t)<.0005;})[0];if(key)key.slot=slot;else bucket.keys.push({time:t,slot:slot});bucket.keys.sort(function(a,b){return a.time-b.time;});API.refreshUI();renderAll();notify("Expression key set on frame "+currentFrame()+".",false);}
+  function clearExpressionKey(type){var rig=state.activeRig;if(!rig)return;var bucket=rig.expressions[type],t=currentTime();bucket.keys=bucket.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});API.refreshUI();renderAll();}
+
+  function loadSvgFile(file,asExpression){
+    if(!file)return;var reader=new FileReader();reader.onload=function(){try{if(asExpression)importExpressionSvg(reader.result,state.expressionType,state.expressionSlot||"Default");else{var objects=svgTextToObjects(reader.result);if(!objects.length)throw new Error("No supported vector shapes were found.");API.pushUndo();objects.forEach(function(o){API.addDrawObject(o,"animate");});createRigFromObjects(objects,file.name.replace(/\.[^.]+$/,"")||"SVG Part");state.tab="bones";state.mode="add-bone";renderAll();API.refreshUI();notify("SVG loaded into Build Parts.",false);}}catch(e){notify("SVG load failed: "+(e.message||e),true);}};reader.readAsText(file);
+  }
+
+  function savePart(){var data=serializeBuildPart();if(!data){notify("Build or load a part first.",true);return;}downloadText((data.name||"DemBonesPart")+".dembones.json",JSON.stringify(data,null,2),"application/json");notify("Saved part.",false);}
+  function loadJsonFile(file,kind){if(!file)return;var reader=new FileReader();reader.onload=function(){try{var data=JSON.parse(reader.result);if(kind==="part")loadBuildPart(data,true);else if(kind==="character")loadCharacterData(data);else if(kind==="rig")loadBuildPart(data,true);}catch(e){notify("Load failed: "+(e.message||e),true);}};reader.readAsText(file);}
+
+  function releaseRigToStage(){var rig=state.activeRig;if(!rig)return;rigObjects(rig).forEach(function(o){delete o.demBones;});allObjectArrays().forEach(function(list){for(var i=list.length-1;i>=0;i--){var o=list[i];if(o&&o.demBonesExpression&&o.demBonesExpression.rigId===rig.id)delete o.demBonesExpression;}});state.activeRig=null;state.selectedBoneId="";state.selectedCurveId="";API.refreshUI();renderAll();notify("Build Parts shapes returned to the stage as ordinary editable vectors.",false);}
+
+  function selectedScenePoint(event){var rect=API.canvas.getBoundingClientRect(),sx=(event.clientX-rect.left)*(API.width/rect.width),sy=(event.clientY-rect.top)*(API.height/rect.height);return API.stageToScenePoint({x:sx,y:sy});}
+  function stagePointFromScene(p){return API.sceneToStagePoint(p);}
+  function boneHit(event){
+    var rig=state.activeRig;
+    if(!rig)return null;
+    var p=selectedScenePoint(event);
+    var map=state.tab==="animate"?posedTransformMap(rig,currentTime()):restTransformMap(rig);
+    var best=null,bestD=scenePixels(14),lineD=scenePixels(9);
+    (rig.bones||[]).forEach(function(b){
+      var q=map[b.id];
+      if(!q)return;
+      [["head",q.head],["tail",q.tail]].forEach(function(pair){
+        var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);
+        if(d<bestD&&(!best||d<best.distance)){best={bone:b,handle:pair[0],point:p,distance:d};}
+      });
+      var ld=distancePointToSegment(p,q.head,q.tail);
+      if(ld<lineD&&(!best||ld<best.distance-scenePixels(2))){best={bone:b,handle:"line",point:p,distance:ld};}
+    });
+    return best;
+  }
+
+  function ensureBoneKeyForDrag(bone,time){
+    var key=exactBoneKey(bone,time);
+    if(key)return key;
+    key=Object.assign({time:time},interpolatePose(bone,time));
+    bone.keys=bone.keys||[];
+    bone.keys.push(key);
+    bone.keys.sort(function(a,b){return a.time-b.time;});
+    return key;
+  }
+
+  function onPointerDown(event){
+    if(!state.open||!["bones","editbone","animate","curves","expression"].includes(state.tab))return;
+    if(event.target&&event.target.closest&&event.target.closest(".la-dembones-full"))return;
+    var point=selectedScenePoint(event);
+
+    if(state.tab==="curves"){
+      var curve=findObjectById(state.selectedCurveId);
+      if(!curve&&state.activeRig){var curveObjects=rigObjects(state.activeRig);curve=curveObjects[0]||null;if(curve)state.selectedCurveId=curve.id;}
+      if(!curve)return;
+      var effCurve=typeof API.getEffectiveObject==="function"?API.getEffectiveObject(curve,currentTime()):curve;
+      var shownPoints=Array.isArray(effCurve.points)?effCurve.points:curve.points;
+      var pointThreshold=scenePixels(10),bestPoint=-1,bestDistance=Infinity;
+      (shownPoints||[]).forEach(function(q,i){var d=Math.hypot(point.x-q.x,point.y-q.y);if(d<bestDistance){bestDistance=d;bestPoint=i;}});
+      if(state.curvePointAddMode){
+        var addSegment=closestCurveSegment(curve,point);
+        if(addSegment&&addSegment.distance<=scenePixels(18)){
+          insertPointInCurveObject(curve,addSegment,true);state.curvePointAddMode=false;state.mode="select";renderAll();notify('Curve point inserted without changing the outline.',false);
+        }else notify('Click closer to a curve segment.',true);
+        event.preventDefault();event.stopImmediatePropagation();return;
+      }
+      if(bestPoint>=0&&bestDistance<=pointThreshold){state.selectedPointIndex=bestPoint;state.curvePointAddMode=false;state.mode="select";renderAll();event.preventDefault();event.stopImmediatePropagation();return;}
+      if(event.ctrlKey){
+        var segment=closestCurveSegment(curve,point);
+        if(segment&&segment.distance<=scenePixels(18)){
+          insertPointInCurveObject(curve,segment,true);state.curvePointAddMode=false;state.mode="select";renderAll();notify('Curve point inserted without changing the outline.',false);
+        }else notify('Click closer to a curve segment.',true);
+        event.preventDefault();event.stopImmediatePropagation();return;
+      }
       return;
     }
-    var hit = closestBoneHit(event);
-    if (!hit) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    state.selectedBoneId = hit.bone.id;
-    renderPanel();
-    if (hit.part === "head" || hit.part === "tail") {
+
+    var hit=boneHit(event);
+
+    if(state.tab==="bones"){
+      if(hit){
+        event.preventDefault();event.stopImmediatePropagation();
+        state.selectedBoneId=hit.bone.id;
+        state.mode="add-bone";
+        state.drag={kind:"maybe-add",pointerId:event.pointerId,start:point,current:point};
+        renderAll();
+        return;
+      }
+      if(state.mode!=="add-bone")return;
+      event.preventDefault();event.stopImmediatePropagation();
+      state.addPreview={head:point,tail:point};
+      state.drag={kind:"add",pointerId:event.pointerId,start:point,current:point};
+      return;
+    }
+
+    if(!hit)return;
+    event.preventDefault();event.stopImmediatePropagation();
+    state.selectedBoneId=hit.bone.id;
+
+    if(state.tab==="editbone"){
       API.pushUndo();
-      state.drag = {type:"edit",bone:hit.bone,part:hit.part,pointerId:event.pointerId};
-      var surface = API.overlay || API.canvas;
-      try { if (surface.setPointerCapture) surface.setPointerCapture(event.pointerId); } catch (captureError) {}
+      state.drag={
+        kind:"edit-rest",
+        pointerId:event.pointerId,
+        bone:hit.bone,
+        handle:hit.handle,
+        startPointer:point,
+        startHead:clone(hit.bone.restHead),
+        startTail:clone(hit.bone.restTail)
+      };
+      renderAll();
+      return;
+    }
+
+    if(state.tab==="animate"){
+      API.pushUndo();
+      var map=posedTransformMap(state.activeRig,currentTime());
+      state.drag={
+        kind:"animate-bone",
+        pointerId:event.pointerId,
+        bone:hit.bone,
+        handle:hit.handle,
+        startPointer:point,
+        startPose:clone(interpolatePose(hit.bone,currentTime())),
+        startTransform:clone(map[hit.bone.id]),
+        key:ensureBoneKeyForDrag(hit.bone,currentTime())
+      };
+      renderAll();
+      return;
+    }
+
+    renderAll();
+  }
+
+  function onPointerMove(event){
+    if(!state.open||!state.drag)return;
+    if(state.drag.pointerId!==undefined&&event.pointerId!==state.drag.pointerId)return;
+    var p=selectedScenePoint(event);
+    event.preventDefault();event.stopImmediatePropagation();
+
+    if(state.drag.kind==="maybe-add"){
+      state.drag.current=p;
+      if(Math.hypot(p.x-state.drag.start.x,p.y-state.drag.start.y)>=scenePixels(8)){
+        state.drag.kind="add";
+        state.addPreview={head:clone(state.drag.start),tail:clone(p)};
+      }
+      API.refreshUI();
+      return;
+    }
+
+    if(state.drag.kind==="add"){
+      state.drag.current=p;
+      if(state.addPreview)state.addPreview.tail=clone(p);
+      API.refreshUI();
+      return;
+    }
+
+    if(state.drag.kind==="edit-rest"){
+      var b=state.drag.bone;
+      var dx=p.x-state.drag.startPointer.x,dy=p.y-state.drag.startPointer.y;
+      if(state.drag.handle==="tail"){
+        b.restTail={x:round3(p.x),y:round3(p.y)};
+      }else{
+        b.restHead={x:round3(state.drag.startHead.x+dx),y:round3(state.drag.startHead.y+dy)};
+        b.restTail={x:round3(state.drag.startTail.x+dx),y:round3(state.drag.startTail.y+dy)};
+      }
+      enforceRestChains();
+      API.refreshUI();
+      return;
+    }
+
+    if(state.drag.kind==="animate-bone"){
+      var key=state.drag.key;
+      var startPose=state.drag.startPose;
+      if(state.drag.handle==="tail"){
+        var desired=Math.atan2(p.y-state.drag.startTransform.head.y,p.x-state.drag.startTransform.head.x);
+        var delta=(desired-state.drag.startTransform.angle)*180/Math.PI;
+        while(delta>180)delta-=360;
+        while(delta<-180)delta+=360;
+        key.rotation=round3(n(startPose.rotation,0)+delta);
+      }else{
+        key.dx=round3(n(startPose.dx,0)+(p.x-state.drag.startPointer.x));
+        key.dy=round3(n(startPose.dy,0)+(p.y-state.drag.startPointer.y));
+      }
+      API.refreshUI();
+      return;
     }
   }
 
-  function onCanvasPointerMove(event){
-    if (!state.drag) return;
-    if (state.drag.pointerId !== undefined && event.pointerId !== state.drag.pointerId) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    var point = toScenePoint(event);
-    if (state.drag.type === "add" && state.addPreview) state.addPreview.tail = point;
-    if (state.drag.type === "edit") {
-      if (state.drag.part === "head") state.drag.bone.restHead = {x:round3(point.x),y:round3(point.y)};
-      else state.drag.bone.restTail = {x:round3(point.x),y:round3(point.y)};
+  function onPointerUp(event){
+    if(!state.drag)return;
+    if(state.drag.pointerId!==undefined&&event.pointerId!==state.drag.pointerId)return;
+    event.preventDefault();event.stopImmediatePropagation();
+    var finished=state.drag;
+    if(finished.kind==="add"&&state.addPreview){
+      var type=state.panel.querySelector("[data-db-bone-type]")?state.panel.querySelector("[data-db-bone-type]").value:"bone";
+      addBone(state.addPreview.head,state.addPreview.tail,type);
+    }else if(finished.kind==="edit-rest"){
       bindRig(false);
+      notify("Rest bone edited. Child joints remain connected.",false);
+    }else if(finished.kind==="animate-bone"){
+      API.refreshUI();
+      notify("Bone pose keyed on frame "+currentFrame()+".",false);
     }
+    state.drag=null;
+    state.addPreview=null;
+    state.mode=state.tab==="bones"?"add-bone":"select";
+    renderAll();
   }
 
-  function onCanvasPointerUp(event){
-    if (!state.drag) return;
-    if (state.drag.pointerId !== undefined && event.pointerId !== state.drag.pointerId) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (state.drag.type === "add" && state.addPreview) addBone(state.addPreview.head,state.addPreview.tail);
-    state.addPreview = null;
-    state.drag = null;
+  function drawBone(ctx,bone,q,selected){var h=stagePointFromScene(q.head),t=stagePointFromScene(q.tail);ctx.save();ctx.lineWidth=selected?5:3;ctx.strokeStyle=selected?"#0e9c86":"#626a74";ctx.fillStyle=selected?"#0e9c86":"#ffffff";ctx.beginPath();ctx.moveTo(h.x,h.y);ctx.lineTo(t.x,t.y);ctx.stroke();ctx.beginPath();ctx.arc(h.x,h.y,selected?7:5,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.beginPath();ctx.arc(t.x,t.y,selected?8:6,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle="#26303b";ctx.font="11px Arial";ctx.fillText(bone.name||"Bone",(h.x+t.x)/2+6,(h.y+t.y)/2-6);ctx.restore();}
+  function overlayRenderer(ctx){if(!state.open||!state.activeRig)return;var map=posedTransformMap(state.activeRig,currentTime());(state.activeRig.bones||[]).forEach(function(b){if(map[b.id])drawBone(ctx,b,map[b.id],b.id===state.selectedBoneId);});if(state.addPreview){drawBone(ctx,{name:"New Bone"},{head:state.addPreview.head,tail:state.addPreview.tail},true);}if(state.tab==="curves"){var o=findObjectById(state.selectedCurveId)||(rigObjects(state.activeRig)[0]||null);if(o){var eff=typeof API.getEffectiveObject==="function"?API.getEffectiveObject(o,currentTime()):o;var pts=Array.isArray(eff.points)?eff.points:o.points||[];ctx.save();pts.forEach(function(p,i){var q=stagePointFromScene(p);ctx.beginPath();ctx.arc(q.x,q.y,i===state.selectedPointIndex?6:4,0,Math.PI*2);ctx.fillStyle=i===state.selectedPointIndex?"#0e9c86":"#ffffff";ctx.strokeStyle="#18212b";ctx.lineWidth=2;ctx.fill();ctx.stroke();});ctx.restore();}}}
+
+  function ensureStyle(){
+    if(document.getElementById("la-dembones-full-style"))return;var s=document.createElement("style");s.id="la-dembones-full-style";s.textContent=[
+      ".la-dembones-full{position:fixed;left:28px;top:18px;width:470px;max-width:calc(100vw - 16px);height:min(760px,calc(100vh - 36px));display:none;flex-direction:column;background:#f1f3f6;border:1px solid #bfc6cf;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden;color:#27313d;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;z-index:10000}",
+      ".la-dembones-full.open{display:flex}.db-head{display:flex;align-items:center;gap:9px;padding:8px 10px;background:#fff;border-bottom:1px solid #d3d8df;cursor:move;user-select:none}.db-head img{width:27px;height:27px;filter:grayscale(1) brightness(.72)}.db-title{flex:1}.db-title strong{display:block;font-size:14px;color:#29434a}.db-title span{font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:#7b8491}.db-frame{border:1px solid #bbc3cd;border-radius:999px;padding:5px 9px;background:#fff;font-size:10px}.db-frame b{color:#0e9c86}.db-close{width:32px;height:32px;border:1px solid #bbc3cd;border-radius:8px;background:#fff;font-size:20px;color:#566270;cursor:pointer}",
+      ".db-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;padding:7px;background:#e4e7eb;border-bottom:1px solid #cbd1d8}.db-tab{height:31px;border:1px solid #aeb7c2;border-radius:7px;background:#626a74;color:#fff;font-size:10px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.db-tab.active{background:#3fae9b;border-color:#0e9c86;font-weight:700}",
+      ".db-body{flex:1;min-height:0;overflow:auto;padding:10px 10px 76px}.db-page{display:none}.db-page.active{display:block}.db-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:10px;margin-bottom:9px}.db-section h3{margin:0 0 8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#66717e}.db-help{font-size:11px;line-height:1.45;color:#6b7582;margin:0 0 8px}.db-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.db-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.db-btn{border:1px solid #b8c0ca;border-radius:8px;background:#eceff2;color:#4b5766;padding:8px 6px;font-size:11px;cursor:pointer}.db-btn:hover{border-color:#0e9c86}.db-btn.primary,.db-btn.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}.db-btn.danger{color:#ad4d4d;border-color:#ddbcbc}.db-btn:disabled{opacity:.45}.db-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:7px;align-items:center;margin-bottom:7px}.db-row.three{grid-template-columns:92px minmax(0,1fr) 70px}.db-row label{font-size:11px;color:#63707e}.db-row input,.db-row select,.db-row textarea{width:100%;min-width:0;border:1px solid #c7ced7;border-radius:7px;background:#f4f5f7;color:#27313d;padding:7px;font-size:11px}.db-row input[type=range]{padding:0;accent-color:#0e9c86}.db-check{display:flex;align-items:center;gap:7px;font-size:11px;color:#63707e}.db-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto}.db-card{border:1px solid #ccd2da;border-radius:9px;background:#f7f8fa;padding:8px}.db-card.active{border-color:#0e9c86;background:#e8f6f3}.db-card-head{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;gap:6px;align-items:center}.db-card-head input{width:100%;min-width:0;border:1px solid #c6cdd6;border-radius:6px;padding:6px}.db-mini{width:28px;height:28px;border:1px solid #b9c1cb;border-radius:6px;background:#fff;cursor:pointer}.db-card-body{margin-top:7px}.db-bone-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:6px;align-items:center;border:1px solid #cfd5dc;border-radius:7px;padding:7px;background:#f5f6f8;cursor:pointer}.db-bone-row.active{border-color:#0e9c86;background:#e5f6f2}.db-dot{width:11px;height:11px;border-radius:50%;background:#6f7781}.db-bone-row.active .db-dot{background:#0e9c86}.db-status{position:absolute;left:10px;right:10px;bottom:10px;min-height:38px;max-height:58px;overflow:auto;border:1px solid #cbd2da;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596573}.db-status.good{border-color:#0e9c86;color:#117d6d}.db-status.bad{border-color:#c66a6a;color:#a33d3d}.db-hidden{display:none}.db-pill{display:inline-block;border:1px solid #c7ced7;border-radius:999px;padding:3px 7px;font-size:9px;color:#64707e;background:#fff}.db-empty{border:1px dashed #bbc3cd;border-radius:9px;padding:14px;text-align:center;color:#78828e;font-size:11px}.db-point-list{max-height:190px;overflow:auto;border:1px solid #d0d6dd;border-radius:8px;background:#fafbfc}.db-point-row{display:grid;grid-template-columns:34px 1fr 1fr;gap:6px;padding:5px;border-bottom:1px solid #e1e4e8}.db-point-row:last-child{border-bottom:0}.db-point-row.active{background:#e4f5f1}.db-point-row input{width:100%;min-width:0;border:1px solid #c9d0d8;border-radius:5px;padding:5px}.db-subtabs{display:flex;gap:6px;margin-bottom:8px}.db-subtab{flex:1;border:1px solid #b9c1cb;border-radius:7px;background:#e9ecef;padding:7px;font-size:10px}.db-subtab.active{background:#3fae9b;color:#fff;border-color:#0e9c86}",
+      "@media(max-width:560px){.la-dembones-full{left:8px;top:8px;width:calc(100vw - 16px);height:calc(100vh - 16px)}.db-row,.db-row.three{grid-template-columns:78px minmax(0,1fr)}.db-row.three>*:last-child{grid-column:2}.db-grid3{grid-template-columns:repeat(2,minmax(0,1fr))}}"
+    ].join("\n");document.head.appendChild(s);
   }
 
-  function drawBone(ctx,bone,transform,selected){
-    var head = API.sceneToStagePoint(transform.head);
-    var tail = API.sceneToStagePoint(transform.tail);
-    ctx.save();
-    ctx.lineWidth = selected ? 5 : 3;
-    ctx.strokeStyle = selected ? "#0e9c86" : "#626d79";
-    ctx.fillStyle = selected ? "#0e9c86" : "#f8f9fa";
-    ctx.beginPath();
-    ctx.moveTo(head.x,head.y);
-    ctx.lineTo(tail.x,tail.y);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(head.x,head.y,selected?7:6,0,Math.PI*2);
-    ctx.fill();
-    ctx.strokeStyle = "#26303b";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillRect(tail.x-6,tail.y-6,12,12);
-    ctx.strokeRect(tail.x-6,tail.y-6,12,12);
-    ctx.restore();
+  function tabButton(id,label){return'<button class="db-tab'+(state.tab===id?' active':'')+'" data-db-tab="'+id+'" type="button">'+label+'</button>';}
+
+  function panelHtml(){
+    return '<div class="db-head" data-db-drag><img src="'+esc(ICON_URL)+'" alt=""><div class="db-title"><strong>Dem Bones</strong><span>MyCharacter · Build Parts · Bone Animation</span></div><div class="db-frame">Frame <b data-db-frame>'+currentFrame()+'</b></div><button class="db-close" data-db-close type="button">×</button></div>'+ 
+      '<div class="db-tabs">'+tabButton('character','Build Character')+tabButton('source','Build Parts')+tabButton('bones','Bones')+tabButton('editbone','Edit Bn')+tabButton('animate','Animate')+tabButton('curves','Curves')+tabButton('expression','Expression')+tabButton('commit','Commit')+tabButton('help','Help')+'</div>'+ 
+      '<div class="db-body" data-db-body></div>'+ 
+      '<input class="db-hidden" type="file" accept=".svg,image/svg+xml" data-db-svg>'+ 
+      '<input class="db-hidden" type="file" accept="application/json,.json,.dembones" data-db-part-file>'+ 
+      '<input class="db-hidden" type="file" accept="application/json,.json,.mycharacter" data-db-character-file>'+ 
+      '<input class="db-hidden" type="file" accept=".svg,image/svg+xml" data-db-expression-file>'+ 
+      '<div class="db-status" data-db-status>'+esc(state.status)+'</div>';
   }
 
-  function overlayRenderer(ctx){
-    if (!state.open || !state.activeRig || state.currentSceneKey !== sceneKey()) return;
-    var rig = state.activeRig;
-    var transforms = posedTransformMap(rig,currentTime());
-    rig.bones.forEach(function(bone){ drawBone(ctx,bone,transforms[bone.id],bone.id===state.selectedBoneId); });
-    if (state.addPreview) {
-      drawBone(ctx,{id:"preview"},{head:state.addPreview.head,tail:state.addPreview.tail},true);
-    }
-    var frame = currentFrame();
-    if (frame !== state.lastFrame) {
-      state.lastFrame = frame;
-      if (state.panel) {
-        var frameNode = state.panel.querySelector("[data-db-frame]");
-        if (frameNode) frameNode.textContent = String(frame);
-      }
-    }
+  function characterPage(){
+    var cards=state.character.parts.length?state.character.parts.map(function(p){
+      var active=state.character.selectedPartId===p.id,targets=state.character.parts.filter(function(t){return t.id!==p.id;});
+      var targetOptions='<option value="">Not pinned</option>'+targets.map(function(t){return'<option value="'+t.id+'"'+(p.pin&&p.pin.targetPartId===t.id?' selected':'')+'>'+esc(t.name)+'</option>';}).join('');
+      var target= p.pin?partById(p.pin.targetPartId):null;var boneOptions='<option value="">Choose bone</option>'+((target&&target.rig&&target.rig.bones)||[]).map(function(b){return'<option value="'+esc(b.id)+'"'+(p.pin&&p.pin.boneId===b.id?' selected':'')+'>'+esc(b.name)+'</option>';}).join('');
+      return '<div class="db-card'+(active?' active':'')+'" data-db-part-card="'+p.id+'"><div class="db-card-head"><button class="db-mini" data-db-part-toggle="'+p.id+'">'+(p.collapsed?'▸':'▾')+'</button><input value="'+esc(p.name)+'" data-db-part-name="'+p.id+'"><button class="db-mini" data-db-part-delete="'+p.id+'">×</button></div>'+(!p.collapsed?'<div class="db-card-body"><div class="db-grid3"><button class="db-btn" data-db-part-edit="'+p.id+'">Edit Part</button><button class="db-btn" data-db-part-up="'+p.id+'">Move Up</button><button class="db-btn" data-db-part-down="'+p.id+'">Move Down</button></div><div class="db-row three"><label>Position X</label><input type="range" min="-2000" max="2000" step="1" value="'+n(p.transform&&p.transform.x,0)+'" data-db-part-field="x" data-db-part-id="'+p.id+'"><input type="number" value="'+n(p.transform&&p.transform.x,0)+'" data-db-part-number="x" data-db-part-id="'+p.id+'"></div><div class="db-row three"><label>Position Y</label><input type="range" min="-2000" max="2000" step="1" value="'+n(p.transform&&p.transform.y,0)+'" data-db-part-field="y" data-db-part-id="'+p.id+'"><input type="number" value="'+n(p.transform&&p.transform.y,0)+'" data-db-part-number="y" data-db-part-id="'+p.id+'"></div><div class="db-row three"><label>Scale</label><input type="range" min="0.05" max="5" step="0.01" value="'+n(p.transform&&p.transform.scale,1)+'" data-db-part-field="scale" data-db-part-id="'+p.id+'"><input type="number" step="0.01" value="'+n(p.transform&&p.transform.scale,1)+'" data-db-part-number="scale" data-db-part-id="'+p.id+'"></div><div class="db-row three"><label>Rotation</label><input type="range" min="-360" max="360" step="1" value="'+n(p.transform&&p.transform.rotation,0)+'" data-db-part-field="rotation" data-db-part-id="'+p.id+'"><input type="number" value="'+n(p.transform&&p.transform.rotation,0)+'" data-db-part-number="rotation" data-db-part-id="'+p.id+'"></div><div class="db-row"><label>Pin to part</label><select data-db-pin-target="'+p.id+'">'+targetOptions+'</select></div><div class="db-row"><label>Target bone</label><select data-db-pin-bone="'+p.id+'">'+boneOptions+'</select></div><label class="db-check"><input type="checkbox" data-db-pin-rotation="'+p.id+'"'+(p.pin&&p.pin.inheritRotation?' checked':'')+'> Inherit target bone rotation</label><div class="db-grid2" style="margin-top:7px"><button class="db-btn primary" data-db-apply-pin="'+p.id+'">Apply Pin</button><button class="db-btn" data-db-clear-pin="'+p.id+'">Unpin</button></div></div>':'')+'</div>';
+    }).join(''):'<div class="db-empty">No character parts yet. Build a part, then choose Add To Character.</div>';
+    return '<div class="db-page active"><div class="db-section"><h3>MyCharacter</h3><div class="db-row"><label>Name</label><input value="'+esc(state.character.name)+'" data-db-character-name></div><div class="db-grid3"><button class="db-btn primary" data-db-character-add>Add Current Part</button><button class="db-btn" data-db-character-save>Save</button><button class="db-btn" data-db-character-load>Load</button></div></div><div class="db-section"><h3>Parts</h3><div class="db-list">'+cards+'</div></div><div class="db-section"><button class="db-btn primary" style="width:100%" data-db-character-commit>Create / Update Character Clip</button></div></div>';
   }
 
-  function bindPanelEvents(){
-    var panel = state.panel;
-    panel.querySelector("[data-db-close]").addEventListener("click",close);
-    panel.querySelector("[data-db-use]").addEventListener("click",function(){ if(!selectExistingRig()) createRigFromSelection(); });
-    panel.querySelector("[data-db-add]").addEventListener("click",function(){
-      if (!state.activeRig) { notify("Use Selection first.",true); return; }
-      state.mode = state.mode === "add" ? "select" : "add";
-      renderPanel();
-      notify(state.mode === "add" ? "Drag on the stage to create a bone. Escape cancels Add Bone mode." : "Add Bone mode closed.",false);
-    });
-    panel.querySelector("[data-db-bind]").addEventListener("click",bindRig);
-    panel.querySelector("[data-db-export]").addEventListener("click",exportRig);
-    panel.querySelector("[data-db-import]").addEventListener("click",function(){state.fileInput.click();});
-    panel.querySelector("[data-db-file]").addEventListener("change",function(){
-      importRigFile(this.files && this.files[0]);
-      this.value = "";
-    });
-    panel.querySelector("[data-db-rename]").addEventListener("click",renameSelectedBone);
-    panel.querySelector("[data-db-delete-bone]").addEventListener("click",removeSelectedBone);
-    panel.querySelector("[data-db-set-key]").addEventListener("click",setKeyFromControls);
-    panel.querySelector("[data-db-delete-key]").addEventListener("click",deleteCurrentKey);
-    panel.querySelector("[data-db-reset-pose]").addEventListener("click",resetPose);
-    panel.querySelector("[data-db-rebind]").addEventListener("click",bindRig);
-    panel.querySelector("[data-db-refresh]").addEventListener("click",function(){
-      state.currentSceneKey = sceneKey();
-      if (!selectExistingRig()) renderPanel();
-    });
-    panel.querySelector("[data-db-clear]").addEventListener("click",clearRig);
+  function sourcePage(){var rig=state.activeRig,count=rig?rigObjects(rig).length:0;return '<div class="db-page active"><div class="db-section"><h3>Project</h3><div class="db-grid2"><button class="db-btn primary" data-db-save-part>Save Part</button><button class="db-btn" data-db-load-part>Load Part</button></div></div><div class="db-section"><h3>Source</h3><div class="db-grid3"><button class="db-btn primary" data-db-use-selection>Use Stage Selection</button><button class="db-btn" data-db-load-svg>Load SVG</button><button class="db-btn" data-db-add-dummy>Add Dummy</button></div><label class="db-check" style="margin-top:8px"><input type="checkbox" data-db-remove-originals'+(state.removeOriginals?' checked':'')+'> Remove selected originals after conversion</label><div class="db-grid2" style="margin-top:8px"><button class="db-btn" data-db-export-svg>Export Selection SVG</button><button class="db-btn" data-db-release-stage>Return Shapes To Stage</button></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-add-character>Add To Character</button><button class="db-btn" data-db-cancel-edit>Cancel Part Edit</button></div></div><div class="db-section"><h3>Build Status</h3><p class="db-help">Part: '+esc(rig?rig.name:'None')+'<br>Shapes: '+count+'<br>Bones: '+(rig&&rig.bones?rig.bones.length:0)+'</p></div></div>';}
 
-    [["[data-db-dx]","[data-db-dx-num]"],["[data-db-dy]","[data-db-dy-num]"],["[data-db-rotation]","[data-db-rotation-num]"]].forEach(function(pair){
-      var range=panel.querySelector(pair[0]);
-      var number=panel.querySelector(pair[1]);
-      range.addEventListener("input",function(){number.value=range.value;livePoseChanged();});
-      number.addEventListener("input",function(){range.value=number.value;livePoseChanged();});
-    });
-    panel.querySelector("[data-db-easing]").addEventListener("change",livePoseChanged);
+  function boneListHtml(){var rig=state.activeRig;if(!rig||!rig.bones.length)return'<div class="db-empty">No bones yet.</div>';return'<div class="db-list">'+rig.bones.map(function(b){return'<div class="db-bone-row'+(b.id===state.selectedBoneId?' active':'')+'" data-db-bone-id="'+esc(b.id)+'"><span class="db-dot"></span><span>'+esc(b.name)+'</span><span class="db-pill">'+esc(b.type||'bone')+'</span></div>';}).join('')+'</div>';}
+  function bonesPage(){return '<div class="db-page active"><div class="db-section"><h3>Bone Creation</h3><p class="db-help">The Bones tab stays in Add Bone mode. Drag to create the first bone. After it is finished, the next click-and-drag creates a child from the selected bone tail. Click an existing bone without dragging to select it.</p><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone">Bone</option><option value="lip">Lip_Bone</option><option value="frame">Frame_Bone</option></select></div><div class="db-grid3"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div></div><div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div></div>';}
+
+  function editBonePage(){var b=selectedBone(),rig=state.activeRig;var parents='<option value="">No parent</option>'+((rig&&rig.bones)||[]).filter(function(x){return!b||x.id!==b.id;}).map(function(x){return'<option value="'+esc(x.id)+'"'+(b&&b.parentId===x.id?' selected':'')+'>'+esc(x.name)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Edit Bone</h3>'+(b?'<div class="db-row"><label>Name</label><input value="'+esc(b.name)+'" data-db-edit-bone-name></div><div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div><div class="db-row three"><label>Head X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.x)+'" data-db-bone-head-x><input type="number" value="'+round3(b.restHead.x)+'" data-db-bone-head-x-num></div><div class="db-row three"><label>Head Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.y)+'" data-db-bone-head-y><input type="number" value="'+round3(b.restHead.y)+'" data-db-bone-head-y-num></div><div class="db-row three"><label>Tail X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x><input type="number" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x-num></div><div class="db-row three"><label>Tail Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y><input type="number" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y-num></div><div class="db-grid2"><button class="db-btn primary" data-db-apply-bone-edit>Apply</button><button class="db-btn danger" data-db-delete-bone>Delete Bone</button></div>':'<div class="db-empty">Select a bone in the Bones tab or on the stage.</div>')+'</div></div>';}
+
+  function animatePage(){var b=selectedBone(),p=b?interpolatePose(b,currentTime()):{dx:0,dy:0,rotation:0,scale:1,easing:'linear'};return '<div class="db-page active"><div class="db-section"><h3>Animate Selected Bone</h3>'+(b?'<p class="db-help">'+esc(b.name)+' · Frame '+currentFrame()+'</p><div class="db-row three"><label>Move X</label><input type="range" min="-1000" max="1000" value="'+round3(p.dx)+'" data-db-pose-dx><input type="number" value="'+round3(p.dx)+'" data-db-pose-dx-num></div><div class="db-row three"><label>Move Y</label><input type="range" min="-1000" max="1000" value="'+round3(p.dy)+'" data-db-pose-dy><input type="number" value="'+round3(p.dy)+'" data-db-pose-dy-num></div><div class="db-row three"><label>Rotation</label><input type="range" min="-360" max="360" value="'+round3(p.rotation)+'" data-db-pose-rotation><input type="number" value="'+round3(p.rotation)+'" data-db-pose-rotation-num></div><div class="db-row three"><label>Scale</label><input type="range" min="0.05" max="5" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale><input type="number" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale-num></div><div class="db-row"><label>Easing</label><select data-db-pose-easing><option value="linear"'+(p.easing==='linear'?' selected':'')+'>Linear</option><option value="ease-in"'+(p.easing==='ease-in'?' selected':'')+'>Ease In</option><option value="ease-out"'+(p.easing==='ease-out'?' selected':'')+'>Ease Out</option><option value="ease-in-out"'+(p.easing==='ease-in-out'?' selected':'')+'>Ease In/Out</option><option value="hold"'+(p.easing==='hold'?' selected':'')+'>Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-bone-key>Set Key</button><button class="db-btn danger" data-db-delete-bone-key>Delete Key</button></div>':'<div class="db-empty">Select a bone first.</div>')+'</div></div>';}
+
+  function curvesPage(){var rig=state.activeRig,objs=rig?rigObjects(rig):[],o=findObjectById(state.selectedCurveId)||objs[0];if(o&&!state.selectedCurveId)state.selectedCurveId=o.id;var options=objs.map(function(x,i){return'<option value="'+esc(x.id)+'"'+(o&&o.id===x.id?' selected':'')+'>Curve '+(i+1)+'</option>';}).join('');var points=o&&o.points||[];var rows=points.map(function(p,i){return'<div class="db-point-row'+(i===state.selectedPointIndex?' active':'')+'" data-db-point-index="'+i+'"><span>'+i+'</span><input type="number" step="0.1" value="'+round3(p.x)+'" data-db-point-x="'+i+'"><input type="number" step="0.1" value="'+round3(p.y)+'" data-db-point-y="'+i+'"></div>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Curves</h3>'+(o?'<div class="db-note">Edit the source outline or key its points. Click <b>Add Point</b>, then click directly on a curve segment. Ctrl+click on a segment does the same thing.</div><div class="db-row"><label>Curve</label><select data-db-curve-select>'+options+'</select></div><div class="db-row"><label>Points</label><span>'+points.length+'</span></div><div class="db-grid3"><button class="db-btn'+(state.curvePointAddMode?' primary':'')+'" data-db-add-curve-point>'+(state.curvePointAddMode?'Click Curve…':'Add Point')+'</button><button class="db-btn" data-db-subdivide-curve>Subdivide All</button><button class="db-btn danger" data-db-delete-source-point>Delete Point</button></div><div class="db-point-list">'+rows+'</div><div class="db-row" style="margin-top:8px"><label>Easing</label><select data-db-point-easing><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="ease-in-out">Ease In/Out</option><option value="hold">Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-point-key>Set Curve Key</button><button class="db-btn danger" data-db-delete-point-key>Delete Curve Key</button></div>':'<div class="db-empty">Build or load a part containing editable curves.</div>')+'</div></div>';}
+
+  function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
+
+  function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. The child Clips remain editable, and Dem Bones animation remains driven by this external tool script.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div><div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Bind assigns each curve point to its nearest bones.</p><p class="db-help"><b>MyCharacter:</b> Add To Character stores an independent copy of the part rig. Parts can be reordered, transformed and pinned to a bone in another part.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
+
+  function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():state.tab==='commit'?commitPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
+  function renderAll(){if(!state.panel)return;state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});renderBody();}
+
+  function bindPair(rangeSel,numSel,callback){var r=state.panel.querySelector(rangeSel),m=state.panel.querySelector(numSel);if(!r||!m)return;r.addEventListener('input',function(){m.value=r.value;callback&&callback(r.value);});m.addEventListener('input',function(){r.value=m.value;callback&&callback(m.value);});}
+
+  function bindBodyEvents(){var p=state.panel;if(!p)return;
+    p.querySelectorAll('[data-db-use-selection]').forEach(function(b){b.onclick=useStageSelection;});p.querySelectorAll('[data-db-load-svg]').forEach(function(b){b.onclick=function(){state.fileInputs.svg.click();};});p.querySelectorAll('[data-db-add-dummy]').forEach(function(b){b.onclick=addDummy;});p.querySelectorAll('[data-db-export-svg]').forEach(function(b){b.onclick=function(){var o=selectedObjects().filter(supportedObject);if(!o.length&&state.activeRig)o=rigObjects(state.activeRig);if(!o.length){notify('Select shapes or build a part first.',true);return;}downloadText('LukeAnimate_Selection.svg',objectsToSvg(o),'image/svg+xml');};});
+    var rem=p.querySelector('[data-db-remove-originals]');if(rem)rem.onchange=function(){state.removeOriginals=!!rem.checked;};p.querySelectorAll('[data-db-add-character],[data-db-character-add]').forEach(function(b){b.onclick=addBuildToCharacter;});p.querySelectorAll('[data-db-release-stage]').forEach(function(b){b.onclick=releaseRigToStage;});p.querySelectorAll('[data-db-cancel-edit]').forEach(function(b){b.onclick=function(){state.editingPartId=null;notify('Part edit cancelled.',false);};});p.querySelectorAll('[data-db-save-part]').forEach(function(b){b.onclick=savePart;});p.querySelectorAll('[data-db-load-part]').forEach(function(b){b.onclick=function(){state.fileInputs.part.click();};});
+    var cn=p.querySelector('[data-db-character-name]');if(cn)cn.oninput=function(){state.character.name=cn.value||'MyCharacter';};p.querySelectorAll('[data-db-character-save]').forEach(function(b){b.onclick=saveCharacter;});p.querySelectorAll('[data-db-character-load]').forEach(function(b){b.onclick=function(){state.fileInputs.character.click();};});p.querySelectorAll('[data-db-character-commit],[data-db-commit-character]').forEach(function(b){b.onclick=commitCharacter;});var commitName=p.querySelector('[data-db-commit-name]');if(commitName)commitName.oninput=function(){state.character.name=commitName.value||'MyCharacter';};
+    p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(e){if(e.target.closest('button,input,select'))return;state.character.selectedPartId=n(card.getAttribute('data-db-part-card'),0);renderAll();};});p.querySelectorAll('[data-db-part-toggle]').forEach(function(b){b.onclick=function(){var part=partById(b.getAttribute('data-db-part-toggle'));if(part){part.collapsed=!part.collapsed;renderAll();}};});p.querySelectorAll('[data-db-part-delete]').forEach(function(b){b.onclick=function(){deleteCharacterPart(partById(b.getAttribute('data-db-part-delete')));};});p.querySelectorAll('[data-db-part-edit]').forEach(function(b){b.onclick=function(){editCharacterPart(partById(b.getAttribute('data-db-part-edit')));};});p.querySelectorAll('[data-db-part-up]').forEach(function(b){b.onclick=function(){movePart(partById(b.getAttribute('data-db-part-up')),-1);};});p.querySelectorAll('[data-db-part-down]').forEach(function(b){b.onclick=function(){movePart(partById(b.getAttribute('data-db-part-down')),1);};});p.querySelectorAll('[data-db-part-name]').forEach(function(inp){inp.onchange=function(){var part=partById(inp.getAttribute('data-db-part-name'));if(part){part.name=inp.value||part.name;if(clips()[part.clipId])clips()[part.clipId].name=part.name;updateCharacterInstances();renderAll();}};});
+    function partFieldChange(inp){var part=partById(inp.getAttribute('data-db-part-id')),field=inp.getAttribute('data-db-part-field')||inp.getAttribute('data-db-part-number');if(!part||!field)return;part.transform=part.transform||{x:0,y:0,scale:1,rotation:0,opacity:1};part.transform[field]=field==='scale'?Math.max(.01,n(inp.value,1)):n(inp.value,0);updateCharacterInstances();var pair=field==='x'||field==='y'||field==='scale'||field==='rotation'?p.querySelector((inp.hasAttribute('data-db-part-field')?'[data-db-part-number="'+field+'"]':'[data-db-part-field="'+field+'"]')+'[data-db-part-id="'+part.id+'"]'):null;if(pair)pair.value=inp.value;}
+    p.querySelectorAll('[data-db-part-field],[data-db-part-number]').forEach(function(inp){inp.oninput=function(){partFieldChange(inp);};});p.querySelectorAll('[data-db-apply-pin]').forEach(function(b){b.onclick=function(){var id=n(b.getAttribute('data-db-apply-pin'),0),target=p.querySelector('[data-db-pin-target="'+id+'"]'),bone=p.querySelector('[data-db-pin-bone="'+id+'"]'),rot=p.querySelector('[data-db-pin-rotation="'+id+'"]');setPartPin(partById(id),n(target&&target.value,0),bone&&bone.value,rot&&rot.checked);};});p.querySelectorAll('[data-db-clear-pin]').forEach(function(b){b.onclick=function(){setPartPin(partById(b.getAttribute('data-db-clear-pin')),0,'',false);};});p.querySelectorAll('[data-db-pin-target]').forEach(function(sel){sel.onchange=function(){var part=partById(sel.getAttribute('data-db-pin-target'));if(part){part.pin=sel.value?{targetPartId:n(sel.value,0),boneId:'',offsetX:0,offsetY:0,inheritRotation:false,rotationOffset:0}:null;renderAll();}};});
+    p.querySelectorAll('[data-db-bone-id]').forEach(function(row){row.onclick=function(){state.selectedBoneId=row.getAttribute('data-db-bone-id');if(state.tab==='bones')state.mode='add-bone';renderAll();};});p.querySelectorAll('[data-db-add-bone]').forEach(function(b){b.onclick=function(){if(!state.activeRig){notify('Build or load a part first.',true);return;}state.mode='add-bone';renderAll();notify('Drag on the stage to create a bone. Keep dragging again to extend the chain.',false);};});p.querySelectorAll('[data-db-bind-rig]').forEach(function(b){b.onclick=bindRig;});p.querySelectorAll('[data-db-clear-bones]').forEach(function(b){b.onclick=clearBones;});p.querySelectorAll('[data-db-delete-bone]').forEach(function(b){b.onclick=deleteBone;});
+    var applyBone=p.querySelector('[data-db-apply-bone-edit]');if(applyBone)applyBone.onclick=function(){var b=selectedBone();if(!b)return;b.name=p.querySelector('[data-db-edit-bone-name]').value||b.name;b.type=p.querySelector('[data-db-edit-bone-type]').value;b.parentId=p.querySelector('[data-db-edit-bone-parent]').value;b.restHead.x=n(p.querySelector('[data-db-bone-head-x-num]').value,b.restHead.x);b.restHead.y=n(p.querySelector('[data-db-bone-head-y-num]').value,b.restHead.y);b.restTail.x=n(p.querySelector('[data-db-bone-tail-x-num]').value,b.restTail.x);b.restTail.y=n(p.querySelector('[data-db-bone-tail-y-num]').value,b.restTail.y);bindRig();renderAll();};
+    bindPair('[data-db-bone-head-x]','[data-db-bone-head-x-num]');bindPair('[data-db-bone-head-y]','[data-db-bone-head-y-num]');bindPair('[data-db-bone-tail-x]','[data-db-bone-tail-x-num]');bindPair('[data-db-bone-tail-y]','[data-db-bone-tail-y-num]');
+    bindPair('[data-db-pose-dx]','[data-db-pose-dx-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-dy]','[data-db-pose-dy-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-rotation]','[data-db-pose-rotation-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-scale]','[data-db-pose-scale-num]',previewBonePoseFromInputs);p.querySelectorAll('[data-db-set-bone-key]').forEach(function(b){b.onclick=setBoneKey;});p.querySelectorAll('[data-db-delete-bone-key]').forEach(function(b){b.onclick=deleteBoneKey;});
+    var curveSel=p.querySelector('[data-db-curve-select]');if(curveSel)curveSel.onchange=function(){state.selectedCurveId=curveSel.value;state.selectedPointIndex=0;state.curvePointAddMode=false;renderAll();};p.querySelectorAll('[data-db-point-row]').forEach(function(row){row.onclick=function(e){if(e.target.tagName==='INPUT')return;state.selectedPointIndex=n(row.getAttribute('data-db-point-index'),0);renderAll();};});p.querySelectorAll('[data-db-point-x],[data-db-point-y]').forEach(function(inp){inp.onchange=function(){var o=findObjectById(state.selectedCurveId),i=n(inp.getAttribute('data-db-point-x')||inp.getAttribute('data-db-point-y'),0);if(!o||!o.points||!o.points[i])return;API.pushUndo();var x=o.points[i].x,y=o.points[i].y;if(inp.hasAttribute('data-db-point-x'))x=n(inp.value,x);else y=n(inp.value,y);setCurvePointSourcePosition(o,i,x,y);renderAll();};});p.querySelectorAll('[data-db-add-curve-point]').forEach(function(b){b.onclick=function(){state.curvePointAddMode=!state.curvePointAddMode;state.mode=state.curvePointAddMode?'add-curve-point':'select';renderAll();notify(state.curvePointAddMode?'Click a curve segment to insert a point. Ctrl+click also works.':'Add Point cancelled.',false);};});p.querySelectorAll('[data-db-subdivide-curve]').forEach(function(b){b.onclick=subdivideSelectedCurve;});p.querySelectorAll('[data-db-delete-source-point]').forEach(function(b){b.onclick=deleteSelectedCurvePoint;});p.querySelectorAll('[data-db-set-point-key]').forEach(function(b){b.onclick=setCurvePointKey;});p.querySelectorAll('[data-db-delete-point-key]').forEach(function(b){b.onclick=deleteCurvePointKey;});
+    p.querySelectorAll('[data-db-expression-type]').forEach(function(b){b.onclick=function(){state.expressionType=b.getAttribute('data-db-expression-type');renderAll();};});var esn=p.querySelector('[data-db-expression-slot-name]');if(esn)esn.oninput=function(){state.expressionSlot=esn.value||'Default';};var ess=p.querySelector('[data-db-expression-slot]');if(ess)ess.onchange=function(){state.expressionSlot=ess.value||state.expressionSlot;};p.querySelectorAll('[data-db-import-expression]').forEach(function(b){b.onclick=function(){state.expressionSlot=(p.querySelector('[data-db-expression-slot-name]').value||'Default').trim();state.fileInputs.expression.click();};});p.querySelectorAll('[data-db-set-expression-key]').forEach(function(b){b.onclick=function(){setExpressionKey(state.expressionType,state.expressionSlot);};});p.querySelectorAll('[data-db-clear-expression-key]').forEach(function(b){b.onclick=function(){clearExpressionKey(state.expressionType);};});
   }
 
-  function bindGlobalListeners(){
-    if (state.listenersBound) return;
-    state.listenersBound = true;
-    var surface = API.overlay || API.canvas;
-    surface.addEventListener("pointerdown",onCanvasPointerDown,true);
-    surface.addEventListener("pointermove",onCanvasPointerMove,true);
-    surface.addEventListener("pointerup",onCanvasPointerUp,true);
-    surface.addEventListener("pointercancel",onCanvasPointerUp,true);
-    window.addEventListener("keydown",function(event){
-      if (!state.open) return;
-      if (event.key === "Escape") {
-        state.mode="select";
-        state.addPreview=null;
-        state.drag=null;
-        renderPanel();
-      }
-    },true);
-  }
+  function createPanel(){ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){state.tab=b.getAttribute('data-db-tab');state.curvePointAddMode=false;state.mode=state.tab==='bones'?'add-bone':'select';renderAll();};});state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();}
+  function makeDraggable(panel,handle){handle.addEventListener('pointerdown',function(e){if(e.target.closest('button'))return;e.preventDefault();API.bringFloatingPanelToFront(panel);var r=panel.getBoundingClientRect(),ox=e.clientX-r.left,oy=e.clientY-r.top;function mv(ev){panel.style.left=(ev.clientX-ox)+'px';panel.style.top=(ev.clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto';}function up(){window.removeEventListener('pointermove',mv,true);window.removeEventListener('pointerup',up,true);API.clampFloatingPanelToViewport(panel);}window.addEventListener('pointermove',mv,true);window.addEventListener('pointerup',up,true);});}
+
+  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();}},true);setInterval(function(){if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}}},160);}
 
   function open(){
-    if (!state.panel) createPanel();
-    state.open = true;
-    state.panel.classList.add("open");
-    state.currentSceneKey = sceneKey();
+    /* Capture the stage selection before changing focus or suppressing the fixed
+       inspector. This mirrors LukeTools, where the selected curve is already
+       known when the floating tool opens. */
+    selectedObjects(false);
+    if(!state.panel)createPanel();
+    state.open=true;state.panel.classList.add('open');
     API.setSelectionInspectorSuppressed(TOOL_ID,true);
-    API.setConfiguredToolActive(group && group.id ? group.id : "animate",item && (item.id||item.label) ? (item.id||item.label) : TOOL_ID,true);
-    API.bringFloatingPanelToFront(state.panel);
-    API.clampFloatingPanelToViewport(state.panel);
-    if (!selectExistingRig()) renderPanel();
-    notify("Dem Bones is ready. Select shapes and click Use Selection, or choose an existing rigged shape.",false);
+    API.setConfiguredToolActive(GROUP_ID,ITEM_ID,true);
+    API.bringFloatingPanelToFront(state.panel);API.clampFloatingPanelToViewport(state.panel);
+    renderAll();notify('Full Dem Bones / MyCharacter workspace loaded. Use Stage Selection ingests the selected Luke Animate vector.',false);
   }
+  function close(){state.open=false;state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;if(state.panel)state.panel.classList.remove('open');API.setSelectionInspectorSuppressed(TOOL_ID,false);API.setConfiguredToolActive(GROUP_ID,ITEM_ID,false);}
 
-  function close(){
-    state.open = false;
-    state.mode = "select";
-    state.addPreview = null;
-    state.drag = null;
-    if (state.panel) state.panel.classList.remove("open");
-    API.setSelectionInspectorSuppressed(TOOL_ID,false);
-    API.setConfiguredToolActive(group && group.id ? group.id : "animate",item && (item.id||item.label) ? (item.id||item.label) : TOOL_ID,false);
-  }
-
-  var plugin = {
-    open:open,
-    close:close,
-    get panel(){return state.panel;},
-    get activeRig(){return state.activeRig;},
-    refresh:function(){state.currentSceneKey=sceneKey();selectExistingRig();renderPanel();}
-  };
-  window[SINGLETON_KEY] = plugin;
-
+  var plugin={open:open,close:close,get panel(){return state.panel;},get state(){return state;},refresh:function(){syncRigRefs(state.activeRig);renderAll();API.refreshUI();}};
+  window[SINGLETON_KEY]=plugin;
   API.registerObjectEvaluator(EVALUATOR_ID,evaluator);
   API.registerStageOverlayRenderer(OVERLAY_ID,overlayRenderer);
-  bindGlobalListeners();
+  bindGlobal();
   open();
 })();
