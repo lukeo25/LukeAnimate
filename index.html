@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v81</title>
+<title>Luke Animate v98</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -96,6 +96,52 @@
   .shape-point-handle.active{background:var(--accent);}
   .shape-point-handle:hover{background:var(--accent-dim);}
   .shape-point-handle:active{cursor:grabbing;}
+
+  .bezier-anchor-handle{
+    position:absolute; width:13px; height:13px; margin:-6.5px 0 0 -6.5px;
+    border-radius:50%; background:#ffffff; border:2px solid #17212b;
+    cursor:grab; z-index:12; pointer-events:auto;
+    box-shadow:0 0 0 1px rgba(255,255,255,.75);
+  }
+  .bezier-anchor-handle.active{background:var(--accent);}
+  .bezier-anchor-handle:hover{background:var(--accent-dim);}
+  .bezier-control-handle{
+    position:absolute; width:11px; height:11px; margin:-5.5px 0 0 -5.5px;
+    border-radius:2px; background:#ffffff; border:2px solid #9d245f;
+    cursor:crosshair; z-index:13; pointer-events:auto;
+  }
+  .bezier-control-handle:hover,.bezier-control-handle.active{background:#b72f72;}
+  .bezier-handle-line{
+    position:absolute; height:1px; transform-origin:0 50%;
+    background:rgba(157,36,95,.78); z-index:10; pointer-events:none;
+  }
+  .pen-edit-anchor{
+    position:absolute; width:13px; height:13px; margin:-6.5px 0 0 -6.5px;
+    transform:rotate(45deg); border-radius:2px; background:#fff; border:2px solid #17212b;
+    cursor:grab; z-index:15; pointer-events:auto; box-shadow:0 0 0 1px rgba(255,255,255,.75);
+  }
+  .pen-edit-anchor:hover,.pen-edit-anchor.active{background:var(--accent);}
+  .pen-edit-control{
+    position:absolute; width:11px; height:11px; margin:-5.5px 0 0 -5.5px;
+    border-radius:50%; background:#fff; border:2px solid #7c2d62;
+    cursor:crosshair; z-index:16; pointer-events:auto;
+  }
+  .pen-edit-control:hover{background:#b72f72;}
+  .pen-edit-bend{
+    position:absolute; width:14px; height:14px; margin:-7px 0 0 -7px;
+    border-radius:50%; background:var(--accent); border:2px solid #17212b;
+    cursor:grab; z-index:17; pointer-events:auto;
+  }
+  .pen-edit-bend:hover{background:var(--accent-dim);}
+  .pen-edit-width{
+    position:absolute; width:13px; height:13px; margin:-6.5px 0 0 -6.5px;
+    border-radius:3px; background:#b72f72; border:2px solid #17212b;
+    cursor:ns-resize; z-index:17; pointer-events:auto;
+  }
+  .pen-edit-line{
+    position:absolute; height:1px; transform-origin:0 50%;
+    background:rgba(124,45,98,.78); z-index:14; pointer-events:none;
+  }
 
   .xform-handle{
     position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px;
@@ -202,6 +248,11 @@
     filter:grayscale(1) brightness(0) invert(1); opacity:.96;
   }
   .draw-tool.active .draw-tool-icon{ filter:brightness(0) invert(1); opacity:1; }
+  /* Pen and Bucket use Luke's supplied SVG artwork exactly as authored. */
+  #tool-pen .draw-tool-icon, #tool-fill .draw-tool-icon,
+  #tool-pen.active .draw-tool-icon, #tool-fill.active .draw-tool-icon{
+    filter:none; opacity:1;
+  }
   .draw-tool-inline-icon{ fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
   .draw-tool-fallback{ display:none; font-size:19px; line-height:1; pointer-events:none; }
   .draw-tool.icon-missing .draw-tool-icon{ display:none; }
@@ -346,6 +397,58 @@
     border:1px dashed var(--line); border-radius:7px; background:#fff;
     white-space:pre-wrap; overflow-wrap:anywhere;
   }
+
+  /* ---------- floating Bezier curve editor ---------- */
+  #curve-settings-panel{
+    position:fixed; top:92px; right:336px; z-index:calc(var(--floating-panel-z) + 2);
+    width:306px; display:none;
+    background:rgba(255,255,255,.98); border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 14px 38px rgba(0,0,0,.24); backdrop-filter:blur(8px);
+    overflow:hidden; isolation:isolate; pointer-events:auto;
+  }
+  #curve-settings-panel.open{display:block;}
+  #curve-settings-header{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:9px 10px 9px 12px; border-bottom:1px solid var(--line);
+    background:var(--panel-2); cursor:move; user-select:none;
+    font-size:12px; font-weight:700;
+  }
+  #curve-settings-body{padding:10px 12px 12px;}
+  .curve-settings-row{
+    display:flex; align-items:center; gap:8px; margin-bottom:9px;
+    font-size:11.5px; color:var(--text-dim);
+  }
+  .curve-settings-row > label{flex:0 0 62px;}
+  #curve-settings-panel input[type=range]{flex:1;min-width:80px;}
+  #curve-settings-panel .btn.active{
+    background:#b72f72; border-color:#8f1f55; color:#fff;
+  }
+
+  /* ---------- floating Pen / Fill settings ---------- */
+  #ink-settings-panel{
+    position:fixed; top:92px; right:336px; z-index:calc(var(--floating-panel-z) + 3);
+    width:314px; display:none;
+    background:rgba(255,255,255,.98); border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 14px 38px rgba(0,0,0,.24); backdrop-filter:blur(8px);
+    overflow:hidden; isolation:isolate; pointer-events:auto;
+  }
+  #ink-settings-panel.open{display:block;}
+  #ink-settings-header{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:9px 10px 9px 12px; border-bottom:1px solid var(--line);
+    background:var(--panel-2); cursor:move; user-select:none;
+    font-size:12px; font-weight:700;
+  }
+  #ink-settings-body{padding:10px 12px 12px;}
+  .ink-settings-row{
+    display:flex; align-items:center; gap:8px; margin-bottom:9px;
+    font-size:11.5px; color:var(--text-dim);
+  }
+  .ink-settings-row > label:first-child{flex:0 0 82px;}
+  #ink-settings-panel input[type=range]{flex:1;min-width:76px;}
+  #ink-settings-panel input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);}
+  #ink-settings-panel .ink-checks{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 10px;}
+  #ink-settings-panel .ink-checks label{display:flex;align-items:center;gap:7px;font-size:11.5px;}
 
   .text-toggle{
     display:flex; align-items:center; gap:7px; flex:1; color:var(--text);
@@ -735,7 +838,31 @@
     flex:0 0 var(--timeline-content-width);
     width:var(--timeline-content-width);
     min-width:var(--timeline-content-width);
+    position:relative;
   }
+  .onion-range-overlay{
+    position:absolute; inset:0 0 auto 0; height:24px; z-index:5;
+    pointer-events:none; display:none; user-select:none;
+  }
+  .onion-range-overlay.show{ display:block; }
+  .onion-range-band{
+    position:absolute; top:14px; height:8px; min-width:1px;
+    border-top:1px solid rgba(255,255,255,.6);
+    border-bottom:1px solid rgba(0,0,0,.18);
+    pointer-events:none;
+  }
+  #onion-range-before{ background:rgba(155,47,99,.48); }
+  #onion-range-after{ background:rgba(48,117,184,.43); }
+  .onion-range-handle{
+    position:absolute; top:1px; width:12px; height:22px;
+    transform:translateX(-50%); border:2px solid #fff; border-radius:5px;
+    box-shadow:0 0 0 1px rgba(12,13,14,.85), 0 2px 5px rgba(0,0,0,.28);
+    cursor:ew-resize; pointer-events:auto; touch-action:none;
+  }
+  .onion-range-handle.before{ background:#9b2f63; }
+  .onion-range-handle.after{ background:#3075b8; }
+  .onion-range-handle:hover{ filter:brightness(1.15); }
+  .onion-range-handle:active{ cursor:grabbing; }
   .timeline-ruler{
     position:relative; height:24px; border-bottom:1px solid var(--line);
     font-family:var(--mono); font-size:9px; color:var(--text-dim); cursor:ew-resize;
@@ -780,6 +907,33 @@
     transform:rotate(45deg); border-radius:2px; background:var(--accent);
     border:1.5px solid #0c0d0e; cursor:ew-resize; z-index:4;
   }
+  .timeline-key-dot[data-easing="ease-in"]{ box-shadow:inset 2px -2px 0 rgba(255,255,255,.55); }
+  .timeline-key-dot[data-easing="ease-out"]{ box-shadow:inset -2px 2px 0 rgba(255,255,255,.55); }
+  .timeline-key-dot[data-easing="ease-in-out"]{ box-shadow:inset 0 0 0 2px rgba(255,255,255,.58); }
+  .timeline-key-dot[data-easing="hold"]{ background:#f05b9f; border-radius:0; }
+  .keyframe-context-menu{
+    position:fixed; z-index:5000; min-width:238px; padding:7px; border-radius:10px;
+    background:#f7f8fa; border:1px solid #aeb8c5; box-shadow:0 12px 32px rgba(16,24,40,.28);
+    color:#263241; font-family:inherit; user-select:none;
+  }
+  .keyframe-context-menu[hidden]{display:none;}
+  .keyframe-context-title{
+    padding:5px 8px 7px; color:#657286; font-size:10px; font-weight:800;
+    letter-spacing:.12em; text-transform:uppercase; border-bottom:1px solid #d7dde5; margin-bottom:4px;
+  }
+  .keyframe-context-item{
+    display:grid; grid-template-columns:22px 1fr; gap:7px; align-items:center; width:100%;
+    border:0; border-radius:7px; padding:7px 8px; background:transparent; color:#263241;
+    text-align:left; cursor:pointer; font-family:inherit;
+  }
+  .keyframe-context-item:hover{background:#e8edf3;}
+  .keyframe-context-item.active{background:#d9f3ee; color:#086e60;}
+  .keyframe-context-item.danger{color:#a51f4f;}
+  .keyframe-context-item.danger:hover{background:#f8dce7;}
+  .keyframe-context-separator{height:1px;background:#d9dee7;margin:5px 0;}
+  .keyframe-context-check{font-weight:900; text-align:center;}
+  .keyframe-context-label{display:block; font-size:12px; font-weight:750;}
+  .keyframe-context-hint{display:block; margin-top:1px; font-size:10px; color:#738094; font-weight:500;}
   .timeline-handle{ position:absolute; top:0; bottom:0; width:9px; cursor:ew-resize; }
   .timeline-handle.left{ left:-3px; }
   .timeline-handle.right{ right:-3px; }
@@ -879,6 +1033,18 @@
       <button class="draw-tool icon-only" id="tool-freehand" data-tool="freehand" title="Freehand draw" aria-label="Draw">
         <img class="draw-tool-icon" src="https://lukeo25.github.io/LukeAnimate/SVGs/Draw.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
         <span class="draw-tool-fallback" aria-hidden="true">✎</span><span class="sr-only">Draw</span>
+      </button>
+      <button class="draw-tool icon-only" id="tool-bcurve" data-tool="bcurve" title="Bezier Curve — bend lines and shape edges" aria-label="Bezier Curve">
+        <img class="draw-tool-icon" src="https://lukeo25.github.io/LukeAnimate/SVGs/BCurve.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
+        <span class="draw-tool-fallback" aria-hidden="true">⌁</span><span class="sr-only">Bezier Curve</span>
+      </button>
+      <button class="draw-tool icon-only" id="tool-pen" data-tool="pen" title="Tapered Pen — click-drag to draw; drag the stroke or its handles to bend; double-click to add an anchor" aria-label="Tapered Pen">
+        <img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Pen.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
+        <span class="draw-tool-fallback" aria-hidden="true">✒</span><span class="sr-only">Tapered Pen</span>
+      </button>
+      <button class="draw-tool icon-only" id="tool-fill" data-tool="fill" title="Fill enclosed line work — adjustable gap closing" aria-label="Fill enclosed line work">
+        <img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Bucket.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
+        <span class="draw-tool-fallback" aria-hidden="true">◆</span><span class="sr-only">Fill</span>
       </button>
       <button class="draw-tool icon-only" id="tool-line" data-tool="line" title="Straight line" aria-label="Line">
         <svg class="draw-tool-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19L19 5"></path></svg>
@@ -1031,6 +1197,82 @@
         <button class="btn danger" id="btn-text-delete">Delete Selected</button>
       </div>
       <div class="hint">Enter creates a new line. Ctrl/Cmd+Enter or clicking elsewhere finishes the text. Escape cancels. Select text and press Delete or Backspace to remove it.</div>
+    </div>
+  </div>
+
+  <div id="curve-settings-panel" aria-label="Bezier Curve Settings">
+    <div id="curve-settings-header">
+      <span>Bezier Curve</span>
+      <button class="btn small" id="btn-curve-settings-close" style="flex:0 0 auto;padding:3px 8px;" title="Close curve tool">×</button>
+    </div>
+    <div id="curve-settings-body">
+      <div class="hint" id="curve-shape-info" style="padding:0 0 10px;">Select a line, rectangle, ellipse or drawing on the stage.</div>
+      <div class="curve-settings-row" id="curve-point-count-row" style="display:none;">
+        <label for="curve-point-count">Points</label>
+        <input type="range" id="curve-point-count" min="3" max="64" step="1" value="64">
+        <span class="val" id="val-curve-point-count">64</span>
+      </div>
+      <div class="btn-row" style="margin-bottom:8px;">
+        <button class="btn small" id="btn-curve-smooth">Smooth Point</button>
+        <button class="btn small" id="btn-curve-corner">Corner Point</button>
+      </div>
+      <div class="btn-row" style="margin-bottom:8px;">
+        <button class="btn small" id="btn-curve-reset-handles">Reset Selected Handles</button>
+      </div>
+      <div class="hint">Drag a round anchor to move it. Drag either square handle to bend the edge. Smooth Point mirrors both handles; Corner Point lets each side move independently. Ellipses can be reduced from their current point count down to 3.</div>
+    </div>
+  </div>
+
+  <div id="ink-settings-panel" aria-label="Pen and Fill Settings">
+    <div id="ink-settings-header">
+      <span id="ink-settings-title">Tapered Pen</span>
+      <button class="btn small" id="btn-ink-settings-close" style="flex:0 0 auto;padding:3px 8px;" title="Close tool">×</button>
+    </div>
+    <div id="ink-settings-body">
+      <div id="pen-settings-section">
+        <div class="ink-settings-row">
+          <label for="pen-width">Pen width</label>
+          <input type="range" id="pen-width" min="2" max="120" step="1" value="32">
+          <span class="val" id="val-pen-width">32</span>
+        </div>
+        <div class="ink-settings-row">
+          <label for="pen-nib-aspect">Nib roundness</label>
+          <input type="range" id="pen-nib-aspect" min="8" max="100" step="1" value="89">
+          <span class="val" id="val-pen-nib-aspect">89%</span>
+        </div>
+        <div class="ink-settings-row">
+          <label for="pen-nib-angle">Nib angle</label>
+          <input type="range" id="pen-nib-angle" min="-90" max="90" step="1" value="-25">
+          <span class="val" id="val-pen-nib-angle">−25°</span>
+        </div>
+        <div class="ink-settings-row">
+          <label for="pen-taper-length">Taper curve</label>
+          <input type="range" id="pen-taper-length" min="5" max="95" step="1" value="95">
+          <span class="val" id="val-pen-taper-length">95%</span>
+        </div>
+        <div class="ink-settings-row">
+          <label for="pen-width-position">Width position</label>
+          <input type="range" id="pen-width-position" min="10" max="90" step="1" value="47">
+          <span class="val" id="val-pen-width-position">47%</span>
+        </div>
+        <div class="ink-checks">
+          <label><input type="checkbox" id="pen-taper-start" checked> Taper start</label>
+          <label><input type="checkbox" id="pen-taper-end" checked> Taper end</label>
+        </div>
+        <div class="btn-row" style="display:none;">
+          <button class="btn primary" id="btn-pen-finish">Finish Stroke</button>
+          <button class="btn" id="btn-pen-cancel">Cancel Stroke</button>
+        </div>
+        <div class="hint" id="pen-tool-hint">Click and drag to create the stroke. Drag the stroke itself or its teal bend handles to curve it without adding points. Drag endpoint and tangent handles for precise shaping. Drag the pink width handle to change thickness. Double-click the stroke only when you want another anchor.</div>
+      </div>
+      <div id="fill-settings-section" style="display:none;">
+        <div class="ink-settings-row">
+          <label for="fill-gap-tolerance">Close gaps</label>
+          <input type="range" id="fill-gap-tolerance" min="0" max="36" step="1" value="8">
+          <span class="val" id="val-fill-gap-tolerance">8 px</span>
+        </div>
+        <div class="hint">Click inside an area made from line work. Close gaps expands the boundary temporarily so small openings do not leak. The resulting fill is a real editable closed vector placed behind the line work.</div>
+      </div>
     </div>
   </div>
 
@@ -1417,13 +1659,17 @@
   </div>
 
   <div class="devpanel" id="devpanel-animate">
-    <div class="hint" style="padding:12px 14px 0;">Click a shape to select it and drag it immediately. Shift-click adds or removes shapes from a multi-selection for creating a reusable <b>Clip</b>. Selected shapes can be moved, scaled, rotated and keyframed directly.</div>
+    <div class="hint" style="padding:12px 14px 0;">Click a shape to select it and drag it immediately. Shift-click adds or removes shapes. Press <b>Ctrl+G</b> (Cmd+G on Mac) to group the selection as one normal stage object. Double-click any visible item in a group to edit and keyframe only that item. Click outside the group to return to the complete group.</div>
     <div style="padding:10px 14px;">
+      <div id="group-isolation-bar" class="viz-callout" style="display:none;margin-bottom:10px;padding:8px 10px;align-items:center;gap:8px;">
+        <span id="group-isolation-label" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Editing grouped item</span>
+        <button class="btn small" id="btn-exit-group-isolation">Exit Group</button>
+      </div>
       <div class="btn-row" style="margin-bottom:8px;">
         <span id="selected-count" class="audio-filename" style="flex:0 0 auto;">0 selected</span>
       </div>
       <div class="btn-row" style="margin-bottom:12px;">
-        <button class="btn small primary" id="btn-convert-to-clip">Convert Selected to Clip</button>
+        <button class="btn small" id="btn-convert-to-clip">Convert Selected to Clip</button>
       </div>
       <div class="hint" style="padding:0 0 8px;">Double-click a Clip on the stage to jump straight inside it — or use <b>Edit</b> below. Either way its Path/Layers/Timeline take over the main UI, with a breadcrumb (← Back) to get out. <b>+ Instance</b> places another copy of that clip on the stage you're currently in.</div>
       <div id="clip-library" style="display:flex;flex-direction:column;gap:6px;"></div>
@@ -1542,6 +1788,10 @@ ctx.fill();</textarea>
       <img src="https://lukeo25.github.io/LukeAnimate/SVGs/Key.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
       <span class="transport-icon-fallback" aria-hidden="true">◆</span>
     </button>
+    <button class="transport-icon-btn" id="btn-onion-skin" type="button" title="Onion Skin: Off — enable it, then drag the pink and blue timeline handles to adjust the visible frame range" aria-label="Onion Skin: Off" aria-pressed="false">
+      <img src="https://lukeo25.github.io/LukeAnimate/SVGs/Onion.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
+      <span class="transport-icon-fallback" aria-hidden="true">◉</span>
+    </button>
     <span id="time-readout">0.0s / 6.0s</span>
     <span class="transport-sep"></span>
     <label class="transport-field">Duration<input type="number" id="inp-timelineduration" value="6" min="1" max="120" step="0.5"></label>
@@ -1560,6 +1810,12 @@ ctx.fill();</textarea>
     <div class="timeline-ruler-row">
       <div class="timeline-track-name">Frames</div>
       <div class="timeline-ruler-col">
+        <div class="onion-range-overlay" id="onion-range-overlay" aria-hidden="true">
+          <div class="onion-range-band" id="onion-range-before"></div>
+          <div class="onion-range-band" id="onion-range-after"></div>
+          <div class="onion-range-handle before" id="onion-range-before-handle" title="Drag to adjust previous onion-skin frames"></div>
+          <div class="onion-range-handle after" id="onion-range-after-handle" title="Drag to adjust following onion-skin frames"></div>
+        </div>
         <div class="timeline-ruler" id="timeline-ruler" title="Click or drag to scrub by frame"></div>
       </div>
     </div>
@@ -1611,17 +1867,24 @@ ctx.fill();</textarea>
     fps: 30,
     previousPlaying: false,
     previousTime: 0,
-    videoTrack: null
+    videoTrack: null,
+    uiSnapshot: null,
+    startPending: false
   };
 
   let bgMode = 'transparent'; // 'transparent' or 'color'
   let stageColor = '#ffffff';
   let stageZoom = 1;
   const MIN_ZOOM = 0.25, MAX_ZOOM = 3;
-  let stageTool = 'none'; // 'none'|'freehand'|'line'|'rect'|'ellipse'|'text'
+  let stageTool = 'none'; // 'none'|'freehand'|'bcurve'|'pen'|'fill'|'line'|'rect'|'ellipse'|'text'
   let drawObjects = [];   // static SVG-like shapes/text stamped onto the canvas
   let pendingDraw = null; // in-progress shape being dragged out, for live preview
   let freehandPoints = null;
+  let penDraft = null;
+  let penJustFinishedAt = 0;
+  let penSettings = { width:32, nibAspect:0.89, nibAngle:-25, taperLength:0.95, widthPosition:0.47, taperStart:true, taperEnd:true };
+  let fillGapTolerance = 8;
+  let inkPanelHistoryPushed = false;
   let stageTextEdit = null; // active in-place text entry {x,y,existingIndex}
   const loadedGoogleFonts = new Set();
 
@@ -1668,11 +1931,24 @@ ctx.fill();</textarea>
   let shapePointAddMode = false;  // next click on an outline inserts a point
   let shapePointEditObjectId = null;
   let shapePointSelectedIndex = 0;
+  let bezierCurveObjectId = null;
+  let bezierSelectedAnchorIndex = 0;
+  let bezierPointSliderEditing = false;
 
   let animatePanelOpen = false;
   let autoKeyframe = false;
+  let onionSkinEnabled = false;
+  let onionSkinRendering = false;
+  let onionSkinBeforeFrames = 5;
+  let onionSkinAfterFrames = 5;
+  const ONION_MAX_FRAMES = 12;
   let selectedDrawIndices = new Set();
   let drawObjectCounter = 0;
+  let groupCounter = 0;
+  // A Group is a normal stage object, not a Clip. Its children keep their own
+  // editable geometry and keyframes. Double-clicking one child enters isolation
+  // so only that child can be manipulated and keyed until Escape / Exit Group.
+  let isolatedGroupEdit = null; // { rootIndex, childIndex }
   let placingClipId = null; // set while waiting for a click to place a new instance of this clip
   let behaviours = [];      // custom user-scripted per-layer behaviours {id,name,code,enabled}
   let behaviourCounter = 0;
@@ -1865,7 +2141,9 @@ ctx.fill();</textarea>
     return stageOverlayRenderers.delete(String(id));
   }
   function renderRegisteredStageOverlays(){
-    if(!stageOverlayRenderers.size) return;
+    // Editing overlays such as Dem Bones bones, StickRig guides and tool-specific
+    // handles must never become part of the recorded stage image.
+    if(exportPlayback.active || !stageOverlayRenderers.size) return;
     stageOverlayRenderers.forEach((renderer, rendererId)=>{
       try{
         ctx.save();
@@ -1892,7 +2170,7 @@ ctx.fill();</textarea>
     updateInspector();
     return selectionInspectorSuppressors.size > 0;
   }
-  ['freehand','line','rect','ellipse','text','clipinstance'].forEach(type=> registerObjectPanelOwner(type, 'animate'));
+  ['freehand','line','rect','ellipse','text','clipinstance','group'].forEach(type=> registerObjectPanelOwner(type, 'animate'));
 
   function panelForDrawObject(obj){
     return (obj && obj.panelId) || objectPanelOwners[obj && obj.type] || 'animate';
@@ -1901,7 +2179,7 @@ ctx.fill();</textarea>
   function drawObjectTypeLabel(type){
     return {
       freehand:'Drawing', line:'Line', rect:'Rectangle', ellipse:'Ellipse',
-      text:'Text', clipinstance:'Clip'
+      text:'Text', clipinstance:'Clip', group:'Group'
     }[type] || (type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Object');
   }
 
@@ -1920,6 +2198,44 @@ ctx.fill();</textarea>
       if(obj.strokeEnabled === undefined) obj.strokeEnabled = Math.max(0, Number(obj.strokeWidth) || 0) > 0;
       if(!['left','center','right'].includes(obj.textAlign)) obj.textAlign = 'left';
     }
+    if(obj.penStroke){
+      obj.penWidth=Math.max(1,Number(obj.penWidth!==undefined?obj.penWidth:obj.strokeWidth)||32);
+      obj.strokeWidth=obj.penWidth;
+      obj.penNibAspect=Math.max(.05,Math.min(1,Number(obj.penNibAspect)||.28));
+      obj.penNibAngle=Number(obj.penNibAngle)||0;
+      if(obj.penTaperModel!=='continuous-v2'){obj.penTaperLength=.55;obj.penTaperModel='continuous-v2';}
+      obj.penTaperLength=Math.max(.05,Math.min(.95,Number(obj.penTaperLength)||.55));
+      obj.penWidthPosition=Math.max(.1,Math.min(.9,Number(obj.penWidthPosition)||.47));
+      if(obj.penTaperStart===undefined)obj.penTaperStart=true;
+      if(obj.penTaperEnd===undefined)obj.penTaperEnd=true;
+      obj.closedPath=false;obj.fillEnabled=false;obj.strokeEnabled=true;
+    }
+    if(obj.type === 'group'){
+      if(!Array.isArray(obj.children)) obj.children = [];
+      obj.children.forEach(ensureDrawObjectMetadata);
+      const match = String(obj.id || '').match(/group-(\d+)/);
+      if(match) groupCounter = Math.max(groupCounter, parseInt(match[1],10) || 0);
+      if(!obj.groupBounds || !Number.isFinite(Number(obj.groupBounds.x1))){
+        obj.groupBounds = calculateGroupBounds(obj.children, 0);
+      }
+      if(obj.tx === undefined) obj.tx = 0;
+      if(obj.ty === undefined) obj.ty = 0;
+      if(obj.tscale === undefined) obj.tscale = 1;
+      if(obj.trotation === undefined) obj.trotation = 0;
+      if(obj.opacity === undefined) obj.opacity = 1;
+      if(!Array.isArray(obj.keyframes)) obj.keyframes = [];
+    }
+    if(obj.type === 'freehand' && obj.bezierHandles){
+      if(!Array.isArray(obj.bezierHandles)) obj.bezierHandles = [];
+      while(obj.bezierHandles.length < (obj.points || []).length) obj.bezierHandles.push({inX:0,inY:0,outX:0,outY:0});
+      obj.bezierHandles = obj.bezierHandles.slice(0,(obj.points || []).length).map(h=>({
+        inX:Number(h && h.inX)||0, inY:Number(h && h.inY)||0,
+        outX:Number(h && h.outX)||0, outY:Number(h && h.outY)||0
+      }));
+      if(!Array.isArray(obj.bezierModes)) obj.bezierModes = (obj.points || []).map(()=> 'corner');
+      while(obj.bezierModes.length < (obj.points || []).length) obj.bezierModes.push('corner');
+      obj.bezierModes = obj.bezierModes.slice(0,(obj.points || []).length).map(mode=>mode === 'smooth' ? 'smooth' : 'corner');
+    }
     if(!obj.panelId) obj.panelId = panelForDrawObject(obj);
     if(!obj.name){
       if(obj.type === 'text' && obj.text){
@@ -1927,6 +2243,9 @@ ctx.fill();</textarea>
         obj.name = shortText ? 'Text: ' + shortText : 'Text ' + drawObjectCounter;
       } else if(obj.type === 'clipinstance' && clips[obj.clipId]){
         obj.name = clips[obj.clipId].name;
+      } else if(obj.type === 'group'){
+        groupCounter++;
+        obj.name = 'Group ' + groupCounter;
       } else {
         obj.name = drawObjectTypeLabel(obj.type) + ' ' + drawObjectCounter;
       }
@@ -1940,7 +2259,10 @@ ctx.fill();</textarea>
 
   function objectLayerName(obj){
     ensureDrawObjectMetadata(obj);
-    return obj.name || drawObjectTypeLabel(obj.type);
+    if(obj.name) return obj.name;
+    if(obj.penStroke) return 'Pen Stroke';
+    if(obj.fillRegion) return 'Fill';
+    return drawObjectTypeLabel(obj.type);
   }
 
   // deterministic pseudo-random in [0,1) from a numeric seed — lets particle-style
@@ -1991,6 +2313,9 @@ ctx.fill();</textarea>
       trailFade,
       timelineDuration,
       loopTimeline,
+      onionSkinEnabled,
+      onionSkinBeforeFrames,
+      onionSkinAfterFrames,
       drawObjects: JSON.parse(JSON.stringify(drawObjects)),
       behaviours: behaviours.map(b=>({ id:b.id, name:b.name, code:b.code, enabled:b.enabled })),
       targetPoints: targetPoints.map(pt=>({id:pt.id,name:pt.name,x:pt.x,y:pt.y})),
@@ -2018,9 +2343,16 @@ ctx.fill();</textarea>
     trailFade = snap.trailFade;
     timelineDuration = snap.timelineDuration !== undefined ? snap.timelineDuration : timelineDuration;
     loopTimeline = snap.loopTimeline !== undefined ? snap.loopTimeline : loopTimeline;
+    onionSkinBeforeFrames = Math.max(0, Math.min(ONION_MAX_FRAMES, Math.round(Number(snap.onionSkinBeforeFrames !== undefined ? snap.onionSkinBeforeFrames : onionSkinBeforeFrames) || 0)));
+    onionSkinAfterFrames = Math.max(0, Math.min(ONION_MAX_FRAMES, Math.round(Number(snap.onionSkinAfterFrames !== undefined ? snap.onionSkinAfterFrames : onionSkinAfterFrames) || 0)));
     drawObjects = snap.drawObjects ? JSON.parse(JSON.stringify(snap.drawObjects)) : [];
     normalizeAllDrawObjects();
     selectedDrawIndices.clear();
+    isolatedGroupEdit = null;
+    bezierCurveObjectId = null;
+    bezierSelectedAnchorIndex = 0;
+    document.getElementById('curve-settings-panel').classList.remove('open');
+    overlay.querySelectorAll('.bezier-anchor-handle,.bezier-control-handle,.bezier-handle-line,.pen-edit-anchor,.pen-edit-control,.pen-edit-bend,.pen-edit-width,.pen-edit-line').forEach(element=>element.remove());
     pendingDraw = null;
     if(snap.behaviours){
       behaviours = snap.behaviours.map(b=>({ id:b.id, name:b.name, code:b.code, enabled:b.enabled }));
@@ -2031,6 +2363,8 @@ ctx.fill();</textarea>
     document.getElementById('inp-timelineduration').value = timelineDuration;
     document.getElementById('inp-duration').value = timelineDuration;
     document.getElementById('chk-looptimeline').checked = loopTimeline;
+    setOnionSkin(snap.onionSkinEnabled !== undefined ? !!snap.onionSkinEnabled : onionSkinEnabled);
+    updateOnionRangeUI();
 
     targetPoints.length = 0;
     snap.targetPoints.forEach(pt => targetPoints.push({ id:pt.id, name:pt.name, x:pt.x, y:pt.y }));
@@ -2080,11 +2414,23 @@ ctx.fill();</textarea>
   window.addEventListener('keydown', (e)=>{
     const tag = (e.target.tagName || '').toLowerCase();
     if(tag === 'input' || tag === 'select' || tag === 'textarea' || e.target.isContentEditable) return; // don't hijack typing/sliders
+    if(stageTool === 'pen' && e.key === 'Enter' && penDraft){
+      e.preventDefault();finishPenDraft(true);return;
+    }
+    if(stageTool === 'pen' && e.key === 'Escape' && penDraft){
+      e.preventDefault();finishPenDraft(false);return;
+    }
+    if(e.key === 'Escape' && stageTool === 'bcurve'){
+      e.preventDefault(); closeCurveSettingsPanel(true); return;
+    }
     if(e.key === 'Escape' && shapePointEditMode){
       e.preventDefault();
       if(shapePointAddMode){shapePointAddMode=false;overlay.style.cursor='default';updateInspector();}
       else setShapePointEditMode(false);
       return;
+    }
+    if(e.key === 'Escape' && getIsolatedGroupInfo()){
+      e.preventDefault();exitGroupIsolation();return;
     }
     if((e.key === 'Delete' || e.key === 'Backspace') && shapePointEditMode){
       const obj=currentShapePointEditObject();
@@ -2096,8 +2442,15 @@ ctx.fill();</textarea>
       return;
     }
     if(!(e.ctrlKey || e.metaKey)) return;
-    if(e.key.toLowerCase() === 'z' && !e.shiftKey){ e.preventDefault(); doUndo(); }
-    else if((e.key.toLowerCase() === 'z' && e.shiftKey) || e.key.toLowerCase() === 'y'){ e.preventDefault(); doRedo(); }
+    const shortcutKey=String(e.key||'').toLowerCase();
+    if(shortcutKey === 'g' && !e.shiftKey && !e.altKey){
+      e.preventDefault();
+      e.stopPropagation();
+      createGroupFromSelection();
+      return;
+    }
+    if(shortcutKey === 'z' && !e.shiftKey){ e.preventDefault(); doUndo(); }
+    else if((shortcutKey === 'z' && e.shiftKey) || shortcutKey === 'y'){ e.preventDefault(); doRedo(); }
   });
 
   // Adding a point isn't just placement — it's meant to instantly read as
@@ -2396,7 +2749,7 @@ ctx.fill();</textarea>
       ensureDrawObjectMetadata(obj);
       if(obj.enabled !== false) renderOneDrawObject(obj, false, idx);
     });
-    if(pendingDraw) renderOneDrawObject(pendingDraw, true);
+    if(pendingDraw && !onionSkinRendering) renderOneDrawObject(pendingDraw, true);
   }
 
   function roundedRectPath(context, x, y, w, h, radius){
@@ -2422,18 +2775,238 @@ ctx.fill();</textarea>
     context.closePath();
   }
 
+  function makeSmoothOpenBezierHandles(pointsInput){
+    const points=(pointsInput||[]).map(point=>({x:Number(point.x)||0,y:Number(point.y)||0}));
+    const handles=points.map(()=>({inX:0,inY:0,outX:0,outY:0}));
+    if(points.length<2) return handles;
+    for(let index=0;index<points.length-1;index++){
+      const p0=points[Math.max(0,index-1)],p1=points[index],p2=points[index+1],p3=points[Math.min(points.length-1,index+2)];
+      handles[index].outX=(p2.x-p0.x)/6;
+      handles[index].outY=(p2.y-p0.y)/6;
+      handles[index+1].inX=-(p3.x-p1.x)/6;
+      handles[index+1].inY=-(p3.y-p1.y)/6;
+    }
+    handles[0].inX=handles[0].inY=0;
+    handles[handles.length-1].outX=handles[handles.length-1].outY=0;
+    return handles;
+  }
+
+  function makeStablePenHandles(pointsInput){
+    const points=(pointsInput||[]).map(point=>({x:Number(point.x)||0,y:Number(point.y)||0}));
+    const handles=points.map(()=>({inX:0,inY:0,outX:0,outY:0}));
+    const count=points.length;
+    if(count<2) return handles;
+    const normalise=(x,y)=>{const length=Math.hypot(x,y);return length>0.000001?{x:x/length,y:y/length}:{x:1,y:0};};
+    if(count===2){
+      const dx=points[1].x-points[0].x,dy=points[1].y-points[0].y;
+      handles[0].outX=dx/3;handles[0].outY=dy/3;
+      handles[1].inX=-dx/3;handles[1].inY=-dy/3;
+      return handles;
+    }
+    for(let index=0;index<count;index++){
+      const current=points[index];
+      if(index===0){
+        const next=points[1],distance=Math.hypot(next.x-current.x,next.y-current.y);
+        const tangent=normalise(next.x-current.x,next.y-current.y);
+        handles[index].outX=tangent.x*distance/3;handles[index].outY=tangent.y*distance/3;
+        continue;
+      }
+      if(index===count-1){
+        const previous=points[index-1],distance=Math.hypot(current.x-previous.x,current.y-previous.y);
+        const tangent=normalise(current.x-previous.x,current.y-previous.y);
+        handles[index].inX=-tangent.x*distance/3;handles[index].inY=-tangent.y*distance/3;
+        continue;
+      }
+      const previous=points[index-1],next=points[index+1];
+      const incoming=normalise(current.x-previous.x,current.y-previous.y);
+      const outgoing=normalise(next.x-current.x,next.y-current.y);
+      let tangent=normalise(incoming.x+outgoing.x,incoming.y+outgoing.y);
+      if(Math.hypot(incoming.x+outgoing.x,incoming.y+outgoing.y)<0.08) tangent=outgoing;
+      const dot=Math.max(-1,Math.min(1,incoming.x*outgoing.x+incoming.y*outgoing.y));
+      // Shorten handles around tight corners. This prevents loops and swollen/lumpy joins.
+      const cornerFactor=0.14+0.19*Math.sqrt(Math.max(0,(dot+1)/2));
+      const previousLength=Math.hypot(current.x-previous.x,current.y-previous.y);
+      const nextLength=Math.hypot(next.x-current.x,next.y-current.y);
+      handles[index].inX=-tangent.x*previousLength*cornerFactor;
+      handles[index].inY=-tangent.y*previousLength*cornerFactor;
+      handles[index].outX=tangent.x*nextLength*cornerFactor;
+      handles[index].outY=tangent.y*nextLength*cornerFactor;
+    }
+    return handles;
+  }
+
+  function cubicBezierDerivative(p0,p1,p2,p3,u){
+    const v=1-u;
+    return {
+      x:3*v*v*(p1.x-p0.x)+6*v*u*(p2.x-p1.x)+3*u*u*(p3.x-p2.x),
+      y:3*v*v*(p1.y-p0.y)+6*v*u*(p2.y-p1.y)+3*u*u*(p3.y-p2.y)
+    };
+  }
+
+  function sampleOpenBezierCentreline(pointsInput,handlesInput){
+    const points=Array.isArray(pointsInput)?pointsInput:[];
+    if(points.length===0) return [];
+    if(points.length===1) return [{x:points[0].x,y:points[0].y,tx:1,ty:0,len:0,total:0}];
+    const handles=Array.isArray(handlesInput)&&handlesInput.length===points.length?handlesInput:makeSmoothOpenBezierHandles(points);
+    const samples=[];
+    let total=0,previous=null;
+    for(let i=0;i<points.length-1;i++){
+      const a=points[i],b=points[i+1],ah=handles[i]||{},bh=handles[i+1]||{};
+      const c1={x:a.x+(Number(ah.outX)||0),y:a.y+(Number(ah.outY)||0)};
+      const c2={x:b.x+(Number(bh.inX)||0),y:b.y+(Number(bh.inY)||0)};
+      const estimate=Math.hypot(b.x-a.x,b.y-a.y)+Math.hypot(c1.x-a.x,c1.y-a.y)+Math.hypot(b.x-c2.x,b.y-c2.y);
+      const steps=Math.max(8,Math.min(80,Math.ceil(estimate/7)));
+      for(let step=(i===0?0:1);step<=steps;step++){
+        const u=step/steps;
+        const point=cubicBezierPoint(a,c1,c2,b,u);
+        const derivative=cubicBezierDerivative(a,c1,c2,b,u);
+        const magnitude=Math.max(0.0001,Math.hypot(derivative.x,derivative.y));
+        if(previous) total+=Math.hypot(point.x-previous.x,point.y-previous.y);
+        const sample={x:point.x,y:point.y,tx:derivative.x/magnitude,ty:derivative.y/magnitude,len:total,total:0};
+        samples.push(sample);previous=sample;
+      }
+    }
+    samples.forEach(sample=>sample.total=total);
+    return samples;
+  }
+
+  function stabilisePenCentrelineSamples(samplesInput,fullWidth){
+    const source=Array.isArray(samplesInput)?samplesInput:[];
+    if(source.length<2) return source;
+    const total=Math.max(0,Number(source[source.length-1].len)||Number(source[0].total)||0);
+    if(total<0.001) return source;
+    const spacing=Math.max(0.8,Math.min(4,Math.max(1,Number(fullWidth)||1)/7));
+    const count=Math.max(2,Math.ceil(total/spacing)+1);
+    const result=[];
+    let cursor=1;
+    for(let index=0;index<count;index++){
+      const target=index===count-1?total:(total*index/(count-1));
+      while(cursor<source.length-1 && source[cursor].len<target) cursor++;
+      const left=source[Math.max(0,cursor-1)],right=source[Math.min(source.length-1,cursor)];
+      const span=Math.max(0.000001,(right.len||0)-(left.len||0));
+      const ratio=Math.max(0,Math.min(1,(target-(left.len||0))/span));
+      result.push({x:left.x+(right.x-left.x)*ratio,y:left.y+(right.y-left.y)*ratio,len:target,total});
+    }
+    // Central-difference tangents followed by two light smoothing passes keep the
+    // outline even when an anchor is dragged through a tight bend.
+    let tangents=result.map((point,index)=>{
+      const before=result[Math.max(0,index-1)],after=result[Math.min(result.length-1,index+1)];
+      const dx=after.x-before.x,dy=after.y-before.y,length=Math.max(0.000001,Math.hypot(dx,dy));
+      return {x:dx/length,y:dy/length};
+    });
+    for(let pass=0;pass<2;pass++){
+      tangents=tangents.map((tangent,index)=>{
+        const before=tangents[Math.max(0,index-1)],after=tangents[Math.min(tangents.length-1,index+1)];
+        const x=before.x+tangent.x*2+after.x,y=before.y+tangent.y*2+after.y,length=Math.max(0.000001,Math.hypot(x,y));
+        return {x:x/length,y:y/length};
+      });
+    }
+    result.forEach((sample,index)=>{sample.tx=tangents[index].x;sample.ty=tangents[index].y;});
+    return result;
+  }
+
+  function smoothStep01(value){
+    const x=Math.max(0,Math.min(1,value));
+    return x*x*(3-2*x);
+  }
+
+  function penTaperProfile(fraction,eff,obj){
+    const f=Math.max(0,Math.min(1,Number(fraction)||0));
+    const startTaper=(eff.penTaperStart!==undefined?eff.penTaperStart:obj.penTaperStart)!==false;
+    const endTaper=(eff.penTaperEnd!==undefined?eff.penTaperEnd:obj.penTaperEnd)!==false;
+    const peak=Math.max(.1,Math.min(.9,Number(eff.penWidthPosition!==undefined?eff.penWidthPosition:obj.penWidthPosition)||.47));
+    const curve=Math.max(.05,Math.min(.95,Number(eff.penTaperLength!==undefined?eff.penTaperLength:obj.penTaperLength)||.55));
+    const power=.38+(1-curve)*1.35;
+    const eased=value=>Math.pow(Math.sin(Math.max(0,Math.min(1,value))*Math.PI/2),power);
+    if(startTaper&&endTaper) return f<=peak?eased(f/peak):eased((1-f)/(1-peak));
+    if(startTaper) return eased(f);
+    if(endTaper) return eased(1-f);
+    return 1;
+  }
+
+  function calligraphyRadius(sample,eff,obj){
+    const fullWidth=Math.max(1,Number(eff.penWidth!==undefined?eff.penWidth:(obj.penWidth!==undefined?obj.penWidth:(eff.strokeWidth!==undefined?eff.strokeWidth:obj.strokeWidth)))||32);
+    const aspect=Math.max(0.05,Math.min(1,Number(eff.penNibAspect!==undefined?eff.penNibAspect:obj.penNibAspect)||0.28));
+    const angle=(Number(eff.penNibAngle!==undefined?eff.penNibAngle:obj.penNibAngle)||0)*Math.PI/180;
+    const a=fullWidth/2,b=Math.max(0.5,a*aspect);
+    const nx=-sample.ty,ny=sample.tx;
+    const ux=Math.cos(angle),uy=Math.sin(angle),vx=-uy,vy=ux;
+    const du=nx*ux+ny*uy,dv=nx*vx+ny*vy;
+    const nibRadius=1/Math.sqrt((du*du)/(a*a)+(dv*dv)/(b*b));
+    const total=Math.max(0.0001,sample.total||0.0001);
+    return Math.max(0,nibRadius*penTaperProfile(sample.len/total,eff,obj));
+  }
+
+  function smoothPenRadii(samples,radii){
+    let values=radii.slice();
+    for(let pass=0;pass<3;pass++){
+      const next=values.slice();
+      for(let i=1;i<values.length-1;i++) next[i]=(values[i-1]+values[i]*4+values[i+1])/6;
+      values=next;
+    }
+    // Do not let the inside edge fold over itself on a tight bend. Limiting the
+    // offset to the local radius of curvature keeps the brush body even.
+    for(let i=1;i<values.length-1;i++){
+      const a=samples[i-1],b=samples[i],c=samples[i+1];
+      const dot=Math.max(-1,Math.min(1,a.tx*c.tx+a.ty*c.ty));
+      const angle=Math.acos(dot);
+      if(angle>.002){
+        const arc=Math.max(.001,(Math.hypot(b.x-a.x,b.y-a.y)+Math.hypot(c.x-b.x,c.y-b.y))*.5);
+        values[i]=Math.min(values[i],arc/angle*.82);
+      }
+    }
+    if(values.length){values[0]=radii[0];values[values.length-1]=radii[radii.length-1];}
+    return values;
+  }
+
+  function traceSmoothClosedBoundary(context,boundary){
+    if(!Array.isArray(boundary)||boundary.length<3) return false;
+    const count=boundary.length;
+    const midpoint=(a,b)=>({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+    const start=midpoint(boundary[count-1],boundary[0]);
+    context.beginPath();context.moveTo(start.x,start.y);
+    for(let i=0;i<count;i++){
+      const current=boundary[i],next=boundary[(i+1)%count],mid=midpoint(current,next);
+      context.quadraticCurveTo(current.x,current.y,mid.x,mid.y);
+    }
+    context.closePath();return true;
+  }
+
+  function renderCalligraphyStroke(context,obj,eff,points,handles,color){
+    const fullWidth=Math.max(1,Number(eff.penWidth!==undefined?eff.penWidth:(obj.penWidth||obj.strokeWidth||32))||32);
+    const samples=stabilisePenCentrelineSamples(sampleOpenBezierCentreline(points,handles),fullWidth);
+    if(!samples.length) return;
+    if(samples.length===1 || samples[0].total<0.001){
+      const width=Math.max(2,fullWidth);
+      const aspect=Math.max(.05,Math.min(1,Number(eff.penNibAspect!==undefined?eff.penNibAspect:obj.penNibAspect)||.28));
+      context.save();context.translate(samples[0].x,samples[0].y);context.rotate((Number(eff.penNibAngle!==undefined?eff.penNibAngle:obj.penNibAngle)||0)*Math.PI/180);
+      context.beginPath();context.ellipse(0,0,width/2,Math.max(.5,width*aspect/2),0,0,Math.PI*2);context.fillStyle=color;context.fill();context.restore();
+      return;
+    }
+    const radii=smoothPenRadii(samples,samples.map(sample=>calligraphyRadius(sample,eff,obj)));
+    const left=[],right=[];
+    samples.forEach((sample,index)=>{
+      const radius=radii[index],nx=-sample.ty,ny=sample.tx;
+      left.push({x:sample.x+nx*radius,y:sample.y+ny*radius});
+      right.push({x:sample.x-nx*radius,y:sample.y-ny*radius});
+    });
+    const boundary=left.concat(right.slice().reverse());
+    traceSmoothClosedBoundary(context,boundary);
+    context.fillStyle=color;context.fill();
+  }
+
   function renderOneDrawObject(obj, isPreview, idx){
     const eff = getEffectiveObj(obj, t);
 
     if(obj.type === 'clipinstance'){
       renderClipInstance(obj, eff);
-      if(idx !== undefined && selectedDrawIndices.has(idx)) drawSelectionHighlight(obj);
+      if(!onionSkinRendering && idx !== undefined && selectedDrawIndices.has(idx)) drawSelectionHighlight(obj);
       return;
     }
 
     ctx.save();
-    if(isPreview) ctx.globalAlpha = 0.6;
-    else ctx.globalAlpha = (eff.opacity !== undefined ? eff.opacity : 1);
+    if(isPreview) ctx.globalAlpha *= 0.6;
+    else ctx.globalAlpha *= (eff.opacity !== undefined ? eff.opacity : 1);
 
     // apply the shape's transform (translate/rotate/scale) around its own
     // original centroid, so moving/rotating/scaling never shifts the geometry
@@ -2453,20 +3026,46 @@ ctx.fill();</textarea>
     const strokeWidth = Math.max(1, eff.strokeWidth !== undefined ? eff.strokeWidth : (obj.strokeWidth || 4));
     const cornerRadius = Math.max(0, eff.cornerRadius !== undefined ? eff.cornerRadius : (obj.cornerRadius || 0));
 
-    if(obj.type === 'freehand'){
+    if(obj.type === 'group'){
+      (obj.children || []).forEach(child=>{
+        ensureDrawObjectMetadata(child);
+        if(child.enabled !== false) renderOneDrawObject(child, false, undefined);
+      });
+    } else if(obj.type === 'freehand'){
       const renderPoints = Array.isArray(eff.points) ? eff.points : obj.points;
-      if(!renderPoints || renderPoints.length < 2){ ctx.restore(); return; }
+      if(!renderPoints || renderPoints.length < (obj.penStroke ? 1 : 2)){ ctx.restore(); return; }
       const closedPath = eff.closedPath !== undefined ? !!eff.closedPath : !!obj.closedPath;
       const fillEnabled = eff.fillEnabled !== undefined ? !!eff.fillEnabled : !!obj.fillEnabled;
       const strokeEnabled = eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false;
-      ctx.strokeStyle = strokeColor; ctx.lineWidth = strokeWidth;
-      ctx.fillStyle = fillColor;
-      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.beginPath();
-      renderPoints.forEach((p,i)=>{ if(i===0) ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
-      if(closedPath) ctx.closePath();
-      if(closedPath && fillEnabled) ctx.fill();
-      if(strokeEnabled) ctx.stroke();
+      const renderHandles = Array.isArray(eff.bezierHandles) ? eff.bezierHandles : obj.bezierHandles;
+      if(obj.penStroke){
+        renderCalligraphyStroke(ctx,obj,eff,renderPoints,renderHandles,strokeColor);
+      }else{
+        ctx.strokeStyle = strokeColor; ctx.lineWidth = strokeWidth;
+        ctx.fillStyle = fillColor;
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(renderPoints[0].x,renderPoints[0].y);
+        const useBezier = Array.isArray(renderHandles) && renderHandles.length === renderPoints.length;
+        if(useBezier){
+          const segmentCount = closedPath ? renderPoints.length : renderPoints.length - 1;
+          for(let i=0;i<segmentCount;i++){
+            const j=(i+1)%renderPoints.length;
+            const a=renderPoints[i], b=renderPoints[j];
+            const ah=renderHandles[i]||{}, bh=renderHandles[j]||{};
+            ctx.bezierCurveTo(
+              a.x+(Number(ah.outX)||0), a.y+(Number(ah.outY)||0),
+              b.x+(Number(bh.inX)||0), b.y+(Number(bh.inY)||0),
+              b.x,b.y
+            );
+          }
+        }else{
+          for(let i=1;i<renderPoints.length;i++) ctx.lineTo(renderPoints[i].x,renderPoints[i].y);
+        }
+        if(closedPath) ctx.closePath();
+        if(closedPath && fillEnabled) ctx.fill();
+        if(strokeEnabled) ctx.stroke();
+      }
     } else if(obj.type === 'line'){
       const x1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
       const y1 = eff.y1 !== undefined ? eff.y1 : obj.y1;
@@ -2532,13 +3131,43 @@ ctx.fill();</textarea>
       });
     }
     ctx.restore();
-    if(idx !== undefined && selectedDrawIndices.has(idx)) drawSelectionHighlight(obj);
+    if(!onionSkinRendering && idx !== undefined && selectedDrawIndices.has(idx)){
+      const isolated = getIsolatedGroupInfo();
+      if(isolated && isolated.rootIndex === idx) drawSelectionHighlight(isolated.child);
+      else drawSelectionHighlight(obj);
+    }
+  }
+
+  function calculateGroupBounds(children, timeValue){
+    const list = Array.isArray(children) ? children : [];
+    let x1=Infinity,y1=Infinity,x2=-Infinity,y2=-Infinity;
+    list.forEach(child=>{
+      if(!child || child.enabled === false) return;
+      const bounds = getStandaloneEffectiveBounds(child, timeValue === undefined ? t : timeValue);
+      if(!bounds) return;
+      x1=Math.min(x1,bounds.x1); y1=Math.min(y1,bounds.y1);
+      x2=Math.max(x2,bounds.x2); y2=Math.max(y2,bounds.y2);
+    });
+    if(!Number.isFinite(x1)) return {x1:-20,y1:-20,x2:20,y2:20};
+    return {x1,y1,x2,y2};
   }
 
   function getDrawObjectBounds(obj){
+    if(obj.type === 'group'){
+      if(!obj.groupBounds) obj.groupBounds = calculateGroupBounds(obj.children, 0);
+      return {x1:Number(obj.groupBounds.x1)||0,y1:Number(obj.groupBounds.y1)||0,x2:Number(obj.groupBounds.x2)||0,y2:Number(obj.groupBounds.y2)||0};
+    }
     if(obj.type === 'freehand'){
       const xs = obj.points.map(p=>p.x), ys = obj.points.map(p=>p.y);
-      return { x1:Math.min(...xs), y1:Math.min(...ys), x2:Math.max(...xs), y2:Math.max(...ys) };
+      if(Array.isArray(obj.bezierHandles) && obj.bezierHandles.length === obj.points.length){
+        obj.points.forEach((point,index)=>{
+          const handle=obj.bezierHandles[index]||{};
+          xs.push(point.x+(Number(handle.inX)||0),point.x+(Number(handle.outX)||0));
+          ys.push(point.y+(Number(handle.inY)||0),point.y+(Number(handle.outY)||0));
+        });
+      }
+      const penPad=obj.penStroke?Math.max(1,Number(obj.penWidth||obj.strokeWidth)||32)/2:0;
+      return { x1:Math.min(...xs)-penPad, y1:Math.min(...ys)-penPad, x2:Math.max(...xs)+penPad, y2:Math.max(...ys)+penPad };
     }
     if(obj.type === 'line' || obj.type === 'rect' || obj.type === 'ellipse'){
       return { x1:Math.min(obj.x1,obj.x2), y1:Math.min(obj.y1,obj.y2), x2:Math.max(obj.x1,obj.x2), y2:Math.max(obj.y1,obj.y2) };
@@ -2561,10 +3190,97 @@ ctx.fill();</textarea>
     }
     return { x1:0,y1:0,x2:0,y2:0 };
   }
+  function getIsolatedGroupInfo(){
+    if(!isolatedGroupEdit) return null;
+    const rootIndex = Number(isolatedGroupEdit.rootIndex);
+    const childIndex = Number(isolatedGroupEdit.childIndex);
+    const group = drawObjects[rootIndex];
+    if(!group || group.type !== 'group' || !Array.isArray(group.children) || !group.children[childIndex]){
+      isolatedGroupEdit = null;
+      return null;
+    }
+    return { rootIndex, childIndex, group, child:group.children[childIndex] };
+  }
+
+  function getStandaloneLiveTransform(obj, eff){
+    const b = getDrawObjectBounds(obj);
+    const baseHalfW=(b.x2-b.x1)/2, baseHalfH=(b.y2-b.y1)/2;
+    if(obj.type === 'clipinstance'){
+      return {pivotX:Number(eff.x)||0,pivotY:Number(eff.y)||0,scale:eff.scale===undefined?1:Number(eff.scale)||1,rotation:Number(eff.rotation)||0,halfW:Math.max(6,baseHalfW),halfH:Math.max(6,baseHalfH)};
+    }
+    const basePivotX=(b.x1+b.x2)/2,basePivotY=(b.y1+b.y2)/2;
+    return {pivotX:basePivotX+(Number(eff.tx)||0),pivotY:basePivotY+(Number(eff.ty)||0),scale:eff.tscale===undefined?1:Number(eff.tscale)||1,rotation:Number(eff.trotation)||0,halfW:Math.max(6,baseHalfW),halfH:Math.max(6,baseHalfH)};
+  }
+
+  function getStandaloneEffectiveBounds(obj,timeValue){
+    const sampleTime=timeValue===undefined?t:timeValue;
+    if(obj && obj.type==='group'){
+      const localBounds=calculateGroupBounds(obj.children,sampleTime);
+      const corners=[
+        {x:localBounds.x1,y:localBounds.y1},{x:localBounds.x2,y:localBounds.y1},
+        {x:localBounds.x1,y:localBounds.y2},{x:localBounds.x2,y:localBounds.y2}
+      ].map(point=>groupLocalPointToStage(obj,point,sampleTime));
+      const xs=corners.map(point=>point.x),ys=corners.map(point=>point.y);
+      return {x1:Math.min(...xs),y1:Math.min(...ys),x2:Math.max(...xs),y2:Math.max(...ys)};
+    }
+    const eff=getEffectiveObj(obj,sampleTime);
+    const corners=getTransformedCorners(getStandaloneLiveTransform(obj,eff));
+    const xs=corners.map(point=>point.x),ys=corners.map(point=>point.y);
+    return {x1:Math.min(...xs),y1:Math.min(...ys),x2:Math.max(...xs),y2:Math.max(...ys)};
+  }
+
+  function getGroupChildStageBounds(group,child,timeValue){
+    const sampleTime=timeValue===undefined?t:timeValue;
+    const localBounds=getStandaloneEffectiveBounds(child,sampleTime);
+    const corners=[
+      {x:localBounds.x1,y:localBounds.y1},{x:localBounds.x2,y:localBounds.y1},
+      {x:localBounds.x1,y:localBounds.y2},{x:localBounds.x2,y:localBounds.y2}
+    ].map(point=>groupLocalPointToStage(group,point,sampleTime));
+    const xs=corners.map(point=>point.x),ys=corners.map(point=>point.y);
+    return {x1:Math.min(...xs),y1:Math.min(...ys),x2:Math.max(...xs),y2:Math.max(...ys)};
+  }
+
+  function groupLocalPointToStage(group, point, timeValue){
+    const eff=getEffectiveObj(group,timeValue===undefined?t:timeValue);
+    const bounds=getDrawObjectBounds(group);
+    const baseX=(bounds.x1+bounds.x2)/2,baseY=(bounds.y1+bounds.y2)/2;
+    const tx=Number(eff.tx)||0,ty=Number(eff.ty)||0;
+    const scale=eff.tscale===undefined?1:Number(eff.tscale)||1;
+    const angle=(Number(eff.trotation)||0)*Math.PI/180;
+    const dx=(Number(point.x)||0)-baseX,dy=(Number(point.y)||0)-baseY;
+    return {x:baseX+tx+(dx*Math.cos(angle)-dy*Math.sin(angle))*scale,y:baseY+ty+(dx*Math.sin(angle)+dy*Math.cos(angle))*scale};
+  }
+
+  function stagePointToGroupLocal(group, point, timeValue){
+    const eff=getEffectiveObj(group,timeValue===undefined?t:timeValue);
+    const bounds=getDrawObjectBounds(group);
+    const baseX=(bounds.x1+bounds.x2)/2,baseY=(bounds.y1+bounds.y2)/2;
+    const tx=Number(eff.tx)||0,ty=Number(eff.ty)||0;
+    const scale=Math.max(.00001,Math.abs(eff.tscale===undefined?1:Number(eff.tscale)||1));
+    const angle=-(Number(eff.trotation)||0)*Math.PI/180;
+    const dx=(Number(point.x)||0)-(baseX+tx),dy=(Number(point.y)||0)-(baseY+ty);
+    return {x:baseX+(dx*Math.cos(angle)-dy*Math.sin(angle))/scale,y:baseY+(dx*Math.sin(angle)+dy*Math.cos(angle))/scale};
+  }
+
+  function groupStageDeltaToLocal(group, dx, dy, timeValue){
+    const eff=getEffectiveObj(group,timeValue===undefined?t:timeValue);
+    const scale=Math.max(.00001,Math.abs(eff.tscale===undefined?1:Number(eff.tscale)||1));
+    const angle=-(Number(eff.trotation)||0)*Math.PI/180;
+    return {x:(dx*Math.cos(angle)-dy*Math.sin(angle))/scale,y:(dx*Math.sin(angle)+dy*Math.cos(angle))/scale};
+  }
+
+  function getGroupParentPoseForObject(obj){
+    const isolated=getIsolatedGroupInfo();
+    if(!isolated || isolated.child !== obj) return null;
+    const eff=getEffectiveObj(isolated.group,t);
+    return {group:isolated.group,scale:eff.tscale===undefined?1:Number(eff.tscale)||1,rotation:Number(eff.trotation)||0};
+  }
+
   // Bounds at the object's CURRENT (possibly keyframed) transform — used for
   // hit-testing/selection, as opposed to getDrawObjectBounds' base geometry
   // which is needed for computing the transform's own pivot point.
   function getEffectiveBounds(obj){
+    if(obj && obj.type==='group') return getStandaloneEffectiveBounds(obj,t);
     const eff = getEffectiveObj(obj, t);
     const lt = getLiveTransform(obj, eff);
     const corners = getTransformedCorners(lt);
@@ -2577,6 +3293,7 @@ ctx.fill();</textarea>
     return px >= b.x1-pad && px <= b.x2+pad && py >= b.y1-pad && py <= b.y2+pad;
   }
   function drawSelectionHighlight(obj){
+    if(exportPlayback.active) return;
     const b = getEffectiveBounds(obj);
     ctx.save();
     ctx.strokeStyle = 'rgba(14,156,134,0.9)';
@@ -2742,6 +3459,321 @@ ctx.fill();</textarea>
     }
   }
 
+  function currentSelectedPenStroke(){
+    const selected=getSelectedSingleObject();
+    return selected&&selected.obj&&selected.obj.penStroke?selected:null;
+  }
+
+  function updatePenDraftPreview(){
+    if(!penDraft||!Array.isArray(penDraft.points)) return;
+    penDraft.bezierHandles=makeStablePenHandles(penDraft.points);
+    penDraft.bezierModes=penDraft.points.map(()=> 'smooth');
+    pendingDraw=penDraft;
+  }
+
+  function makePenStrokeObject(start,end){
+    const style=drawStyle();
+    const points=[{x:start.x,y:start.y},{x:end.x,y:end.y}];
+    return {
+      type:'freehand',penStroke:true,points,bezierHandles:makeStablePenHandles(points),bezierModes:['smooth','smooth'],closedPath:false,
+      fillEnabled:false,strokeEnabled:true,strokeColor:style.strokeColor,fillColor:style.fillColor,
+      strokeWidth:penSettings.width,penWidth:penSettings.width,penNibAspect:penSettings.nibAspect,penNibAngle:penSettings.nibAngle,
+      penTaperLength:penSettings.taperLength,penWidthPosition:penSettings.widthPosition,penTaperModel:'continuous-v2',penTaperStart:penSettings.taperStart,penTaperEnd:penSettings.taperEnd,
+      opacity:1,keyframes:[]
+    };
+  }
+
+  function beginPenStrokeDrag(event,startPoint){
+    penDraft=makePenStrokeObject(startPoint,startPoint);
+    updatePenDraftPreview();updateInkSettingsPanel();
+    let moved=false;
+    function move(moveEvent){
+      const point=canvasCoords(moveEvent.clientX,moveEvent.clientY);
+      penDraft.points[1]={x:point.x,y:point.y};
+      moved=Math.hypot(point.x-startPoint.x,point.y-startPoint.y)>2;
+      updatePenDraftPreview();
+    }
+    function up(){
+      window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up);
+      const draft=penDraft;penDraft=null;pendingDraw=null;
+      if(moved&&draft){
+        draft.bezierHandles=makeStablePenHandles(draft.points);
+        draft.bezierModes=draft.points.map(()=> 'smooth');
+        commitDrawObject(draft);penJustFinishedAt=performance.now();
+        logToSandbox('Tapered stroke created. Drag its middle to bend it smoothly; double-click it to add an anchor.');
+      }else renderLayerList();
+    }
+    window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+    event.preventDefault();
+  }
+
+  function finishPenDraft(commitIt){
+    if(!penDraft) return false;
+    const draft=penDraft;penDraft=null;pendingDraw=null;
+    if(commitIt!==false&&draft.points.length>=2&&Math.hypot(draft.points[1].x-draft.points[0].x,draft.points[1].y-draft.points[0].y)>2){
+      draft.bezierHandles=makeStablePenHandles(draft.points);
+      draft.bezierModes=draft.points.map(()=> 'smooth');
+      commitDrawObject(draft);penJustFinishedAt=performance.now();return true;
+    }
+    renderLayerList();return false;
+  }
+
+  function hitTestPenStroke(scenePoint){
+    for(let index=drawObjects.length-1;index>=0;index--){
+      const obj=drawObjects[index];
+      if(!obj||obj.enabled===false||!obj.penStroke||obj.type!=='freehand') continue;
+      const local=scenePointToObjectLocal(obj,scenePoint,t);
+      const hit=closestEditableShapeSegment(obj,local);
+      const eff=getEffectiveObj(obj,t),scale=Math.max(.01,Math.abs(Number(eff.tscale)||1));
+      const threshold=(shapePointSceneThreshold(Math.max(14,(Number(obj.penWidth)||32)*.55))/scale);
+      if(hit&&hit.distance<=threshold) return {index,obj,hit,local};
+    }
+    return null;
+  }
+
+  function refreshStablePenHandles(obj){
+    const pointsNow=currentEditablePointArray(obj).map(point=>({x:point.x,y:point.y}));
+    const handles=makeStablePenHandles(pointsNow);
+    writeBezierHandlesAtCurrentTime(obj,handles);
+    if(!autoKeyframe){obj.bezierModes=pointsNow.map(()=> 'smooth');}
+    return handles;
+  }
+
+  function beginPenSegmentBend(hitResult,startScene){
+    const {index,obj,hit}=hitResult;
+    selectDrawObject(index,false,true);
+    const initialLocal=scenePointToObjectLocal(obj,startScene,t);
+    const baseHandles=currentBezierHandles(obj);
+    const segmentStart=hit.startIndex,segmentEnd=hit.endIndex;
+    const ratio=Math.max(.08,Math.min(.92,Number(hit.ratio)||.5));
+    const influence=Math.max(.08,3*ratio*(1-ratio));
+    let history=false,moved=false;
+    inspectorDragging=true;
+    function move(event){
+      const currentLocal=scenePointToObjectLocal(obj,canvasCoords(event.clientX,event.clientY),t);
+      const dx=currentLocal.x-initialLocal.x,dy=currentLocal.y-initialLocal.y;
+      if(!history&&Math.hypot(dx,dy)>=.35){pushUndo();history=true;}
+      if(!history) return;
+      moved=true;
+      const handles=copyBezierHandles(baseHandles);
+      const shiftX=dx/influence,shiftY=dy/influence;
+      handles[segmentStart].outX=(baseHandles[segmentStart].outX||0)+shiftX;
+      handles[segmentStart].outY=(baseHandles[segmentStart].outY||0)+shiftY;
+      handles[segmentEnd].inX=(baseHandles[segmentEnd].inX||0)+shiftX;
+      handles[segmentEnd].inY=(baseHandles[segmentEnd].inY||0)+shiftY;
+      writeBezierHandlesAtCurrentTime(obj,handles);
+      renderTimeline();renderLayerList();renderPenStrokeHandles(obj);
+    }
+    function up(){
+      window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up);inspectorDragging=false;
+      if(moved) finishObjectEdit(obj);else renderTransformHandles();
+    }
+    window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+  }
+
+  function clearPenStrokeHandles(){
+    overlay.querySelectorAll('.pen-edit-anchor,.pen-edit-control,.pen-edit-bend,.pen-edit-width,.pen-edit-line').forEach(element=>element.remove());
+  }
+
+  function addPenHandleLine(localA,localB,obj){
+    const a=sceneToStagePoint(objectLocalPointToScene(obj,localA,t));
+    const b=sceneToStagePoint(objectLocalPointToScene(obj,localB,t));
+    const length=Math.hypot(b.x-a.x,b.y-a.y),angle=Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI;
+    const line=document.createElement('div');line.className='pen-edit-line';
+    line.style.left=(a.x/W*100)+'%';line.style.top=(a.y/H*100)+'%';line.style.width=(length/W*100)+'%';line.style.transform='rotate('+angle+'deg)';
+    overlay.appendChild(line);
+  }
+
+  function addPenDragHandle(className,localPoint,obj,title,onMove,onStart,onEnd){
+    const scene=objectLocalPointToScene(obj,localPoint,t),display=sceneToStagePoint(scene);
+    const element=document.createElement('div');element.className=className;element.title=title;
+    element.style.left=(display.x/W*100)+'%';element.style.top=(display.y/H*100)+'%';
+    element.addEventListener('mousedown',event=>{
+      event.preventDefault();event.stopPropagation();
+      if(onStart)onStart();
+      inspectorDragging=true;
+      function move(moveEvent){onMove(scenePointToObjectLocal(obj,canvasCoords(moveEvent.clientX,moveEvent.clientY),t),moveEvent);}
+      function up(upEvent){window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up);inspectorDragging=false;if(onEnd)onEnd(upEvent);else finishObjectEdit(obj);}
+      window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+    });
+    overlay.appendChild(element);return element;
+  }
+
+  function penSampleAtFraction(obj,fraction){
+    const points=currentEditablePointArray(obj),handles=currentBezierHandles(obj);
+    const samples=stabilisePenCentrelineSamples(sampleOpenBezierCentreline(points,handles),Number(obj.penWidth)||32);
+    if(!samples.length)return null;
+    const total=samples[samples.length-1].len||0,target=Math.max(0,Math.min(1,fraction))*total;
+    let best=samples[0];for(const sample of samples)if(Math.abs(sample.len-target)<Math.abs(best.len-target))best=sample;
+    return best;
+  }
+
+  function renderPenStrokeHandles(obj){
+    clearPenStrokeHandles();
+    if(exportPlayback.active||stageTool!=='pen'||!obj||!obj.penStroke)return;
+    const selected=getSelectedSingleObject();if(!selected||selected.obj!==obj)return;
+    const points=currentEditablePointArray(obj),handles=currentBezierHandles(obj);
+    if(points.length<2)return;
+
+    points.forEach((point,index)=>{
+      addPenDragHandle('pen-edit-anchor',point,obj,'Stroke anchor — drag to move',local=>{
+        writeEditablePointAtCurrentTime(obj,index,local);renderPenStrokeHandles(obj);renderTimeline();
+      },()=>pushUndo(),()=>{finishObjectEdit(obj);renderPenStrokeHandles(obj);});
+    });
+
+    for(let index=0;index<points.length-1;index++){
+      const next=index+1,a=points[index],b=points[next],ah=handles[index]||{},bh=handles[next]||{};
+      const c1={x:a.x+(Number(ah.outX)||0),y:a.y+(Number(ah.outY)||0)};
+      const c2={x:b.x+(Number(bh.inX)||0),y:b.y+(Number(bh.inY)||0)};
+      addPenHandleLine(a,c1,obj);addPenHandleLine(b,c2,obj);
+      addPenDragHandle('pen-edit-control',c1,obj,'Start tangent — drag to shape the stroke',local=>{
+        const changed=currentBezierHandles(obj);changed[index].outX=local.x-a.x;changed[index].outY=local.y-a.y;writeBezierHandlesAtCurrentTime(obj,changed);renderPenStrokeHandles(obj);renderTimeline();
+      },()=>pushUndo(),()=>{finishObjectEdit(obj);renderPenStrokeHandles(obj);});
+      addPenDragHandle('pen-edit-control',c2,obj,'End tangent — drag to shape the stroke',local=>{
+        const changed=currentBezierHandles(obj);changed[next].inX=local.x-b.x;changed[next].inY=local.y-b.y;writeBezierHandlesAtCurrentTime(obj,changed);renderPenStrokeHandles(obj);renderTimeline();
+      },()=>pushUndo(),()=>{finishObjectEdit(obj);renderPenStrokeHandles(obj);});
+      const mid=cubicBezierPoint(a,c1,c2,b,.5);
+      addPenDragHandle('pen-edit-bend',mid,obj,'Curve handle — drag to bend this segment',local=>{
+        const current=currentBezierHandles(obj),currentC1={x:a.x+(current[index].outX||0),y:a.y+(current[index].outY||0)},currentC2={x:b.x+(current[next].inX||0),y:b.y+(current[next].inY||0)};
+        const now=cubicBezierPoint(a,currentC1,currentC2,b,.5),dx=local.x-now.x,dy=local.y-now.y;
+        current[index].outX+=(dx*4/3);current[index].outY+=(dy*4/3);current[next].inX+=(dx*4/3);current[next].inY+=(dy*4/3);
+        writeBezierHandlesAtCurrentTime(obj,current);renderPenStrokeHandles(obj);renderTimeline();
+      },()=>pushUndo(),()=>{finishObjectEdit(obj);renderPenStrokeHandles(obj);});
+    }
+
+    const effective=getEffectiveObj(obj,t),peak=Math.max(.1,Math.min(.9,Number(effective.penWidthPosition!==undefined?effective.penWidthPosition:obj.penWidthPosition)||.47));
+    const sample=penSampleAtFraction(obj,peak);
+    if(sample){
+      const halfWidth=Math.max(1,Number(effective.penWidth!==undefined?effective.penWidth:obj.penWidth)||32)/2;
+      const normal={x:-sample.ty,y:sample.tx};
+      const centre={x:sample.x,y:sample.y},grip={x:centre.x+normal.x*(halfWidth+15),y:centre.y+normal.y*(halfWidth+15)};
+      addPenHandleLine(centre,grip,obj);
+      addPenDragHandle('pen-edit-width',grip,obj,'Width handle — drag away from the path to change thickness',local=>{
+        const projection=(local.x-centre.x)*normal.x+(local.y-centre.y)*normal.y;
+        const width=Math.max(2,Math.min(240,(Math.abs(projection)-15)*2));
+        setObjectFieldForCurrentTime(obj,'penWidth',width);setObjectFieldForCurrentTime(obj,'strokeWidth',width);obj.penWidth=width;obj.strokeWidth=width;
+        penSettings.width=width;renderPenStrokeHandles(obj);updateInkSettingsPanel('pen');renderTimeline();
+      },()=>pushUndo(),()=>{finishObjectEdit(obj);renderPenStrokeHandles(obj);});
+    }
+  }
+
+  function handlePenMouseDown(event,point){
+    const hit=hitTestPenStroke(point);
+    if(hit){
+      if(event.detail<2) beginPenSegmentBend(hit,point);
+      event.preventDefault();return;
+    }
+    beginPenStrokeDrag(event,point);
+  }
+
+  function applyDrawObjectTransformToContext(context,obj,eff){
+    const bounds=getDrawObjectBounds(obj),pivotX=(bounds.x1+bounds.x2)/2,pivotY=(bounds.y1+bounds.y2)/2;
+    const tx=Number(eff.tx)||0,ty=Number(eff.ty)||0,scale=eff.tscale===undefined?1:(Number(eff.tscale)||1),rotation=(Number(eff.trotation)||0)*Math.PI/180;
+    context.translate(pivotX+tx,pivotY+ty);if(rotation)context.rotate(rotation);if(scale!==1)context.scale(scale,scale);context.translate(-pivotX,-pivotY);
+  }
+
+  function traceFreehandPath(context,points,handles,closed){
+    if(!points||points.length<2) return false;
+    context.beginPath();context.moveTo(points[0].x,points[0].y);
+    const useBezier=Array.isArray(handles)&&handles.length===points.length;
+    const count=closed?points.length:points.length-1;
+    for(let i=0;i<count;i++){
+      const j=(i+1)%points.length,a=points[i],b=points[j];
+      if(useBezier){const ah=handles[i]||{},bh=handles[j]||{};context.bezierCurveTo(a.x+(Number(ah.outX)||0),a.y+(Number(ah.outY)||0),b.x+(Number(bh.inX)||0),b.y+(Number(bh.inY)||0),b.x,b.y);}
+      else context.lineTo(b.x,b.y);
+    }
+    if(closed)context.closePath();return true;
+  }
+
+  function drawFillBarrierObject(context,obj,gap){
+    if(!obj||obj.enabled===false||obj.fillRegion||obj.type==='clipinstance'||obj.type==='text') return;
+    const eff=getEffectiveObj(obj,t);context.save();applyDrawObjectTransformToContext(context,obj,eff);
+    context.strokeStyle='#000';context.fillStyle='#000';context.lineCap='round';context.lineJoin='round';
+    const baseStroke=Math.max(1,Number(eff.strokeWidth!==undefined?eff.strokeWidth:obj.strokeWidth)||1);
+    if(obj.type==='freehand'){
+      const pts=Array.isArray(eff.points)?eff.points:obj.points,handles=Array.isArray(eff.bezierHandles)?eff.bezierHandles:obj.bezierHandles;
+      if(obj.penStroke){
+        if(traceFreehandPath(context,pts,handles,false)){context.lineWidth=Math.max(1,Number(eff.penWidth!==undefined?eff.penWidth:(obj.penWidth||obj.strokeWidth))||28)+gap*2;context.stroke();}
+      }else if((eff.strokeEnabled!==undefined?eff.strokeEnabled:obj.strokeEnabled)!==false){
+        if(traceFreehandPath(context,pts,handles,!!obj.closedPath)){context.lineWidth=baseStroke+gap*2;context.stroke();}
+      }
+    }else if(obj.type==='line'){
+      context.lineWidth=baseStroke+gap*2;context.beginPath();context.moveTo(eff.x1!==undefined?eff.x1:obj.x1,eff.y1!==undefined?eff.y1:obj.y1);context.lineTo(eff.x2!==undefined?eff.x2:obj.x2,eff.y2!==undefined?eff.y2:obj.y2);context.stroke();
+    }else if(obj.type==='rect'){
+      const x1=eff.x1!==undefined?eff.x1:obj.x1,y1=eff.y1!==undefined?eff.y1:obj.y1,x2=eff.x2!==undefined?eff.x2:obj.x2,y2=eff.y2!==undefined?eff.y2:obj.y2;
+      context.lineWidth=baseStroke+gap*2;roundedRectPath(context,Math.min(x1,x2),Math.min(y1,y2),Math.abs(x2-x1),Math.abs(y2-y1),eff.cornerRadius!==undefined?eff.cornerRadius:obj.cornerRadius);context.stroke();
+    }else if(obj.type==='ellipse'){
+      const x1=eff.x1!==undefined?eff.x1:obj.x1,y1=eff.y1!==undefined?eff.y1:obj.y1,x2=eff.x2!==undefined?eff.x2:obj.x2,y2=eff.y2!==undefined?eff.y2:obj.y2;
+      context.lineWidth=baseStroke+gap*2;context.beginPath();context.ellipse((x1+x2)/2,(y1+y2)/2,Math.abs(x2-x1)/2,Math.abs(y2-y1)/2,0,0,Math.PI*2);context.stroke();
+    }
+    context.restore();
+  }
+
+  function simplifyPolylineRdp(pointsInput,tolerance){
+    const points=pointsInput||[];if(points.length<3)return points.slice();
+    const first=points[0],last=points[points.length-1];let best=-1,index=-1;
+    for(let i=1;i<points.length-1;i++){const d=projectPointToSegment(points[i],first,last).distance;if(d>best){best=d;index=i;}}
+    if(best>tolerance){const left=simplifyPolylineRdp(points.slice(0,index+1),tolerance),right=simplifyPolylineRdp(points.slice(index),tolerance);return left.slice(0,-1).concat(right);}
+    return [first,last];
+  }
+
+  function traceFloodRegionBoundary(region,width,height){
+    const edges=[],outgoing=new Map();
+    function add(x1,y1,x2,y2){const edge={x1,y1,x2,y2,used:false};edges.push(edge);const key=x1+','+y1;if(!outgoing.has(key))outgoing.set(key,[]);outgoing.get(key).push(edge);}
+    for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+      const i=y*width+x;if(!region[i])continue;
+      if(y===0||!region[i-width])add(x,y,x+1,y);
+      if(x===width-1||!region[i+1])add(x+1,y,x+1,y+1);
+      if(y===height-1||!region[i+width])add(x+1,y+1,x,y+1);
+      if(x===0||!region[i-1])add(x,y+1,x,y);
+    }
+    if(!edges.length)return [];
+    edges.sort((a,b)=>a.y1-b.y1||a.x1-b.x1);
+    const start=edges[0],path=[{x:start.x1,y:start.y1}];let edge=start,guard=0;
+    const direction=e=>Math.atan2(e.y2-e.y1,e.x2-e.x1);
+    while(edge&&!edge.used&&guard++<edges.length+8){
+      edge.used=true;path.push({x:edge.x2,y:edge.y2});
+      if(edge.x2===start.x1&&edge.y2===start.y1)break;
+      const candidates=(outgoing.get(edge.x2+','+edge.y2)||[]).filter(item=>!item.used);
+      if(!candidates.length)break;
+      const previousAngle=direction(edge);
+      candidates.sort((a,b)=>{
+        const turnA=(direction(a)-previousAngle+Math.PI*4)%(Math.PI*2),turnB=(direction(b)-previousAngle+Math.PI*4)%(Math.PI*2);
+        return turnB-turnA;
+      });
+      edge=candidates[0];
+    }
+    if(path.length>2&&path[0].x===path[path.length-1].x&&path[0].y===path[path.length-1].y)path.pop();
+    return path;
+  }
+
+  function fillEnclosedRegion(scenePoint){
+    const maxRaster=900,scale=Math.min(1,maxRaster/Math.max(W,H)),rw=Math.max(2,Math.ceil(W*scale)),rh=Math.max(2,Math.ceil(H*scale));
+    const raster=document.createElement('canvas');raster.width=rw;raster.height=rh;const rctx=raster.getContext('2d',{alpha:true});
+    rctx.scale(scale,scale);drawObjects.forEach(obj=>drawFillBarrierObject(rctx,obj,fillGapTolerance));
+    const alpha=rctx.getImageData(0,0,rw,rh).data;
+    const barrier=new Uint8Array(rw*rh);for(let i=0;i<barrier.length;i++)barrier[i]=alpha[i*4+3]>20?1:0;
+    const sx=Math.max(0,Math.min(rw-1,Math.floor(scenePoint.x*scale))),sy=Math.max(0,Math.min(rh-1,Math.floor(scenePoint.y*scale))),start=sy*rw+sx;
+    if(barrier[start]){logToSandbox('Click inside the area, not on its boundary.',true);return false;}
+    const region=new Uint8Array(rw*rh),queue=new Int32Array(rw*rh);let head=0,tail=0,touchesEdge=false;queue[tail++]=start;region[start]=1;
+    while(head<tail){const i=queue[head++],x=i%rw,y=(i/rw)|0;if(x===0||y===0||x===rw-1||y===rh-1)touchesEdge=true;
+      if(x>0){const n=i-1;if(!barrier[n]&&!region[n]){region[n]=1;queue[tail++]=n;}}
+      if(x<rw-1){const n=i+1;if(!barrier[n]&&!region[n]){region[n]=1;queue[tail++]=n;}}
+      if(y>0){const n=i-rw;if(!barrier[n]&&!region[n]){region[n]=1;queue[tail++]=n;}}
+      if(y<rh-1){const n=i+rw;if(!barrier[n]&&!region[n]){region[n]=1;queue[tail++]=n;}}
+    }
+    if(touchesEdge){logToSandbox('That area is still open. Increase Close gaps or close the line work.',true);return false;}
+    let contour=traceFloodRegionBoundary(region,rw,rh);if(contour.length<3){logToSandbox('Could not trace a closed fill area.',true);return false;}
+    contour=simplifyPolylineRdp(contour.concat([contour[0]]),1.2).slice(0,-1);
+    if(contour.length>700){const step=Math.ceil(contour.length/700);contour=contour.filter((_,index)=>index%step===0);}
+    const points=contour.map(point=>({x:point.x/scale,y:point.y/scale}));
+    if(points.length<3){logToSandbox('The enclosed region was too small to fill.',true);return false;}
+    pushUndo();selectedDrawIndices.clear();
+    const style=drawStyle(),obj=ensureDrawObjectMetadata({type:'freehand',fillRegion:true,points,closedPath:true,fillEnabled:true,strokeEnabled:false,fillColor:style.fillColor,strokeColor:style.strokeColor,strokeWidth:0,opacity:1,tx:0,ty:0,tscale:1,trotation:0,keyframes:[]});
+    drawObjects.unshift(obj);selectDrawObject(0,false,true);renderLayerList();renderTimeline();
+    logToSandbox('Closed area filled with an editable vector behind the line work.');return true;
+  }
+
   function handleDrawMouseDown(e){
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
     const c = canvasCoords(e.clientX, e.clientY);
@@ -2751,6 +3783,8 @@ ctx.fill();</textarea>
       beginStageTextEntry(c, null);
       return;
     }
+    if(stageTool === 'pen'){ handlePenMouseDown(e,c); return; }
+    if(stageTool === 'fill'){ fillEnclosedRegion(c); return; }
     if(stageTool === 'freehand'){
       freehandPoints = [c];
       pendingDraw = { type:'freehand', points: freehandPoints, strokeColor: style.strokeColor, strokeWidth: style.strokeWidth };
@@ -2803,12 +3837,30 @@ ctx.fill();</textarea>
 
   function activateDrawTool(toolName){
     if(stageTool === 'text' && toolName !== 'text') finishStageTextEntry(true);
+    if(stageTool === 'bcurve' && toolName !== 'bcurve') closeCurveSettingsPanel(false);
+    if(stageTool === 'pen' && toolName !== 'pen' && penDraft) finishPenDraft(true);
+    if((stageTool === 'pen' || stageTool === 'fill') && toolName !== 'pen' && toolName !== 'fill') closeInkSettingsPanel(false);
     stageTool = toolName;
     document.querySelectorAll('.draw-tool[data-tool]').forEach(b=> b.classList.toggle('active', b.dataset.tool === toolName));
     if(stageTool === 'none' && animatePanelOpen) setAnimateSelectionActive(true);
     else if(stageTool !== 'none' && selectShapesMode) setAnimateSelectionActive(false);
     const isRect = stageTool === 'rect';
     document.getElementById('draw-cornerradius-wrap').style.display = isRect ? 'flex' : 'none';
+    if(stageTool==='bcurve'){
+      if(shapePointEditMode) setShapePointEditMode(false);
+      overlay.style.cursor='pointer';
+      openCurveSettingsPanel();
+      const selected=getSelectedSingleObject();
+      if(selected&&shapeCanEditPoints(selected.obj)) beginBezierCurveEdit(selected.index,true);
+      else updateCurveSettingsPanel();
+      return;
+    }
+    if(stageTool==='pen' || stageTool==='fill'){
+      if(shapePointEditMode) setShapePointEditMode(false);
+      openInkSettingsPanel(stageTool);
+      overlay.style.cursor=stageTool==='fill'?'cell':'crosshair';
+      return;
+    }
     updatePlacingUI();
     if(stageTool === 'text') overlay.style.cursor = 'text';
     else if(stageTool !== 'none') overlay.style.cursor = 'crosshair';
@@ -3166,6 +4218,105 @@ ctx.fill();</textarea>
     header.addEventListener('pointercancel', endDrag);
   })();
 
+  function openInkSettingsPanel(mode){
+    const panel=document.getElementById('ink-settings-panel');panel.classList.add('open');bringFloatingPanelToFront(panel);updateInkSettingsPanel(mode);requestAnimationFrame(()=>clampFloatingPanelToViewport(panel));
+  }
+  function closeInkSettingsPanel(changeTool){
+    document.getElementById('ink-settings-panel').classList.remove('open');
+    if(changeTool!==false&&(stageTool==='pen'||stageTool==='fill'))activateDrawTool('none');
+  }
+  function selectedPenOrDraft(){const selected=currentSelectedPenStroke();return penDraft||(selected&&selected.obj)||null;}
+  function updateInkSettingsPanel(mode){
+    mode=mode||stageTool;
+    const penMode=mode==='pen';document.getElementById('ink-settings-title').textContent=penMode?'Tapered Pen':'Fill';
+    document.getElementById('pen-settings-section').style.display=penMode?'block':'none';document.getElementById('fill-settings-section').style.display=penMode?'none':'block';
+    if(penMode){
+      const source=selectedPenOrDraft();
+      const width=source?Number(source.penWidth||source.strokeWidth)||penSettings.width:penSettings.width;
+      const aspect=source?Number(source.penNibAspect)||penSettings.nibAspect:penSettings.nibAspect;
+      const angle=source&&source.penNibAngle!==undefined?Number(source.penNibAngle):penSettings.nibAngle;
+      const taper=source?Number(source.penTaperLength)||penSettings.taperLength:penSettings.taperLength;
+      const widthPosition=source?Number(source.penWidthPosition)||penSettings.widthPosition:penSettings.widthPosition;
+      document.getElementById('pen-width').value=String(Math.round(width));document.getElementById('val-pen-width').textContent=String(Math.round(width));
+      document.getElementById('pen-nib-aspect').value=String(Math.round(aspect*100));document.getElementById('val-pen-nib-aspect').textContent=Math.round(aspect*100)+'%';
+      document.getElementById('pen-nib-angle').value=String(Math.round(angle));document.getElementById('val-pen-nib-angle').textContent=(angle<0?'−':'')+Math.abs(Math.round(angle))+'°';
+      document.getElementById('pen-taper-length').value=String(Math.round(taper*100));document.getElementById('val-pen-taper-length').textContent=Math.round(taper*100)+'%';
+      document.getElementById('pen-width-position').value=String(Math.round(widthPosition*100));document.getElementById('val-pen-width-position').textContent=Math.round(widthPosition*100)+'%';
+      document.getElementById('pen-taper-start').checked=source?source.penTaperStart!==false:penSettings.taperStart;
+      document.getElementById('pen-taper-end').checked=source?source.penTaperEnd!==false:penSettings.taperEnd;
+      document.getElementById('btn-pen-finish').disabled=!penDraft;document.getElementById('btn-pen-cancel').disabled=!penDraft;
+    }else{
+      document.getElementById('fill-gap-tolerance').value=String(fillGapTolerance);document.getElementById('val-fill-gap-tolerance').textContent=fillGapTolerance+' px';
+    }
+  }
+  function applyPenPanelValues(){
+    penSettings={
+      width:Number(document.getElementById('pen-width').value)||32,
+      nibAspect:(Number(document.getElementById('pen-nib-aspect').value)||89)/100,
+      nibAngle:Number(document.getElementById('pen-nib-angle').value)||0,
+      taperLength:(Number(document.getElementById('pen-taper-length').value)||95)/100,
+      widthPosition:(Number(document.getElementById('pen-width-position').value)||47)/100,
+      taperStart:document.getElementById('pen-taper-start').checked,
+      taperEnd:document.getElementById('pen-taper-end').checked
+    };
+    const target=selectedPenOrDraft();
+    if(target){target.penWidth=target.strokeWidth=penSettings.width;target.penNibAspect=penSettings.nibAspect;target.penNibAngle=penSettings.nibAngle;target.penTaperLength=penSettings.taperLength;target.penWidthPosition=penSettings.widthPosition;target.penTaperModel='continuous-v2';target.penTaperStart=penSettings.taperStart;target.penTaperEnd=penSettings.taperEnd;}
+    updateInkSettingsPanel('pen');renderLayerList();const selected=currentSelectedPenStroke();if(selected)renderPenStrokeHandles(selected.obj);
+  }
+  ['pen-width','pen-nib-aspect','pen-nib-angle','pen-taper-length','pen-width-position'].forEach(id=>{
+    const input=document.getElementById(id);
+    input.addEventListener('pointerdown',()=>{if(currentSelectedPenStroke()&&!inkPanelHistoryPushed){pushUndo();inkPanelHistoryPushed=true;}});
+    input.addEventListener('input',applyPenPanelValues);
+    input.addEventListener('change',()=>{inkPanelHistoryPushed=false;finishObjectEdit((currentSelectedPenStroke()||{}).obj);});
+  });
+  ['pen-taper-start','pen-taper-end'].forEach(id=>document.getElementById(id).addEventListener('change',()=>{if(currentSelectedPenStroke())pushUndo();applyPenPanelValues();}));
+  document.getElementById('fill-gap-tolerance').addEventListener('input',event=>{fillGapTolerance=Math.max(0,Math.min(36,Number(event.target.value)||0));document.getElementById('val-fill-gap-tolerance').textContent=fillGapTolerance+' px';});
+  document.getElementById('btn-pen-finish').addEventListener('click',()=>finishPenDraft(true));
+  document.getElementById('btn-pen-cancel').addEventListener('click',()=>finishPenDraft(false));
+  document.getElementById('btn-ink-settings-close').addEventListener('click',()=>closeInkSettingsPanel(true));
+  (function makeInkSettingsDraggable(){
+    const panel=document.getElementById('ink-settings-panel'),header=document.getElementById('ink-settings-header');let drag=null;registerFloatingPanel(panel);
+    header.addEventListener('pointerdown',event=>{if(event.target.closest&&event.target.closest('button'))return;bringFloatingPanelToFront(panel);const rect=panel.getBoundingClientRect();panel.style.left=rect.left+'px';panel.style.top=rect.top+'px';panel.style.right='auto';panel.style.bottom='auto';drag={dx:event.clientX-rect.left,dy:event.clientY-rect.top};header.setPointerCapture&&header.setPointerCapture(event.pointerId);event.preventDefault();});
+    header.addEventListener('pointermove',event=>{if(!drag)return;const margin=8,maxLeft=Math.max(margin,window.innerWidth-panel.offsetWidth-margin),maxTop=Math.max(margin,window.innerHeight-panel.offsetHeight-margin);panel.style.left=Math.max(margin,Math.min(maxLeft,event.clientX-drag.dx))+'px';panel.style.top=Math.max(margin,Math.min(maxTop,event.clientY-drag.dy))+'px';});
+    function end(event){if(!drag)return;drag=null;try{header.releasePointerCapture&&header.releasePointerCapture(event.pointerId);}catch(error){}}
+    header.addEventListener('pointerup',end);header.addEventListener('pointercancel',end);
+  })();
+
+  document.getElementById('btn-curve-settings-close').addEventListener('click',()=>closeCurveSettingsPanel(true));
+  document.getElementById('btn-curve-smooth').addEventListener('click',()=>setSelectedBezierAnchorMode('smooth'));
+  document.getElementById('btn-curve-corner').addEventListener('click',()=>setSelectedBezierAnchorMode('corner'));
+  document.getElementById('btn-curve-reset-handles').addEventListener('click',resetSelectedBezierHandles);
+  document.getElementById('curve-point-count').addEventListener('input',event=>{
+    const obj=currentBezierObject();
+    if(!obj||obj.bezierShapeKind!=='ellipse') return;
+    if(!bezierPointSliderEditing){pushUndo();bezierPointSliderEditing=true;}
+    setBezierEllipsePointCount(obj,event.target.value);
+  });
+  document.getElementById('curve-point-count').addEventListener('change',()=>{bezierPointSliderEditing=false;});
+
+  (function makeCurveSettingsDraggable(){
+    const panel=document.getElementById('curve-settings-panel');
+    const header=document.getElementById('curve-settings-header');
+    let drag=null;
+    registerFloatingPanel(panel);
+    header.addEventListener('pointerdown',event=>{
+      if(event.target.closest&&event.target.closest('button')) return;
+      bringFloatingPanelToFront(panel);
+      const rect=panel.getBoundingClientRect();
+      panel.style.left=rect.left+'px'; panel.style.top=rect.top+'px'; panel.style.right='auto'; panel.style.bottom='auto';
+      drag={dx:event.clientX-rect.left,dy:event.clientY-rect.top};
+      header.setPointerCapture&&header.setPointerCapture(event.pointerId); event.preventDefault();
+    });
+    header.addEventListener('pointermove',event=>{
+      if(!drag) return;
+      const margin=8,maxLeft=Math.max(margin,window.innerWidth-panel.offsetWidth-margin),maxTop=Math.max(margin,window.innerHeight-panel.offsetHeight-margin);
+      panel.style.left=Math.max(margin,Math.min(maxLeft,event.clientX-drag.dx))+'px';
+      panel.style.top=Math.max(margin,Math.min(maxTop,event.clientY-drag.dy))+'px';
+    });
+    function end(event){if(!drag)return;drag=null;try{header.releasePointerCapture&&header.releasePointerCapture(event.pointerId);}catch(error){}}
+    header.addEventListener('pointerup',end); header.addEventListener('pointercancel',end);
+  })();
+
   updateTextPanelPreview();
   document.getElementById('btn-draw-clear').addEventListener('click', ()=>{
     if(drawObjects.length === 0) return;
@@ -3238,18 +4389,23 @@ ctx.fill();</textarea>
 
   // ---------------- Animate panel wiring ----------------
   function updateSelectedCountUI(){
+    const isolated=getIsolatedGroupInfo();
     const el = document.getElementById('selected-count');
     if(el){
       const count = selectedDrawIndices.size;
-      el.textContent = count + (count === 1 ? ' selected' : ' selected');
+      el.textContent = isolated ? ('Editing ' + objectLayerName(isolated.child)) : (count + ' selected');
     }
+    const bar=document.getElementById('group-isolation-bar');
+    const label=document.getElementById('group-isolation-label');
+    if(bar) bar.style.display=isolated?'flex':'none';
+    if(label && isolated) label.textContent=objectLayerName(isolated.group)+' › '+objectLayerName(isolated.child)+' — only this item is selectable and keyframeable';
     updateInspector();
     renderTimeline();
     renderTransformHandles();
   }
   function updatePlacingUI(){
     if(placingClipId) overlay.style.cursor = 'copy';
-    else if(selectShapesMode) overlay.style.cursor = 'pointer';
+    else if(selectShapesMode || stageTool === 'bcurve') overlay.style.cursor = 'pointer';
     else if(stageTool === 'none') overlay.style.cursor = 'crosshair';
   }
   function setAnimateSelectionActive(active, clearSelection){
@@ -3278,6 +4434,66 @@ ctx.fill();</textarea>
     }
   }
 
+  function clampOnionFrameCount(value){
+    return Math.max(0, Math.min(ONION_MAX_FRAMES, Math.round(Number(value) || 0)));
+  }
+
+  function setOnionSkinRange(beforeFrames, afterFrames, options){
+    const nextBefore = clampOnionFrameCount(beforeFrames);
+    const nextAfter = clampOnionFrameCount(afterFrames);
+    const changed = nextBefore !== onionSkinBeforeFrames || nextAfter !== onionSkinAfterFrames;
+    if(changed && !(options && options.skipUndo)) pushUndo();
+    onionSkinBeforeFrames = nextBefore;
+    onionSkinAfterFrames = nextAfter;
+    updateOnionRangeUI();
+    return { before:onionSkinBeforeFrames, after:onionSkinAfterFrames };
+  }
+
+  function updateOnionRangeUI(){
+    const overlayNode = document.getElementById('onion-range-overlay');
+    const beforeBand = document.getElementById('onion-range-before');
+    const afterBand = document.getElementById('onion-range-after');
+    const beforeHandle = document.getElementById('onion-range-before-handle');
+    const afterHandle = document.getElementById('onion-range-after-handle');
+    if(!overlayNode || !beforeBand || !afterBand || !beforeHandle || !afterHandle) return;
+
+    overlayNode.classList.toggle('show', onionSkinEnabled);
+    overlayNode.setAttribute('aria-hidden', onionSkinEnabled ? 'false' : 'true');
+    if(!onionSkinEnabled) return;
+
+    const info = getTimelineFrameInfo();
+    const currentFrame = Math.max(0, Math.min(info.totalFrames, Math.round(t * info.fps)));
+    const beforeFrame = Math.max(0, currentFrame - onionSkinBeforeFrames);
+    const afterFrame = Math.min(info.totalFrames, currentFrame + onionSkinAfterFrames);
+    const currentPct = info.totalFrames ? currentFrame / info.totalFrames * 100 : 0;
+    const beforePct = info.totalFrames ? beforeFrame / info.totalFrames * 100 : 0;
+    const afterPct = info.totalFrames ? afterFrame / info.totalFrames * 100 : 0;
+
+    beforeBand.style.left = beforePct + '%';
+    beforeBand.style.width = Math.max(0, currentPct - beforePct) + '%';
+    afterBand.style.left = currentPct + '%';
+    afterBand.style.width = Math.max(0, afterPct - currentPct) + '%';
+    beforeHandle.style.left = beforePct + '%';
+    afterHandle.style.left = afterPct + '%';
+
+    beforeHandle.title = 'Previous onion range: ' + onionSkinBeforeFrames + ' frame' + (onionSkinBeforeFrames === 1 ? '' : 's') + ' — drag to adjust';
+    afterHandle.title = 'Following onion range: ' + onionSkinAfterFrames + ' frame' + (onionSkinAfterFrames === 1 ? '' : 's') + ' — drag to adjust';
+  }
+
+  function setOnionSkin(enabled){
+    onionSkinEnabled = !!enabled;
+    const btn = document.getElementById('btn-onion-skin');
+    if(btn){
+      btn.classList.toggle('active', onionSkinEnabled);
+      btn.title = onionSkinEnabled
+        ? 'Onion Skin: On — ' + onionSkinBeforeFrames + ' previous / ' + onionSkinAfterFrames + ' following frames. Drag the pink and blue timeline handles to adjust.'
+        : 'Onion Skin: Off — enable it, then drag the pink and blue timeline handles to adjust the visible frame range';
+      btn.setAttribute('aria-label', onionSkinEnabled ? 'Onion Skin: On' : 'Onion Skin: Off');
+      btn.setAttribute('aria-pressed', onionSkinEnabled ? 'true' : 'false');
+    }
+    updateOnionRangeUI();
+  }
+
   // ---------------- Inspector: transform/appearance + keyframing ----------------
   let inspectorDragging = false;
 
@@ -3286,6 +4502,7 @@ ctx.fill();</textarea>
     if(obj.type === 'clipinstance'){
       return {
         time,
+        easing:'linear',
         x: eff.x !== undefined ? eff.x : (obj.x || 0),
         y: eff.y !== undefined ? eff.y : (obj.y || 0),
         scale: eff.scale !== undefined ? eff.scale : (obj.scale === undefined ? 1 : obj.scale),
@@ -3295,6 +4512,7 @@ ctx.fill();</textarea>
     }
     const snapshot = {
       time,
+      easing:'linear',
       tx: eff.tx !== undefined ? eff.tx : (obj.tx || 0),
       ty: eff.ty !== undefined ? eff.ty : (obj.ty || 0),
       tscale: eff.tscale !== undefined ? eff.tscale : (obj.tscale === undefined ? 1 : obj.tscale),
@@ -3310,7 +4528,22 @@ ctx.fill();</textarea>
     if(obj.type === 'freehand'){
       const pts = Array.isArray(eff.points) ? eff.points : obj.points;
       snapshot.points = Array.isArray(pts) ? pts.map(point=>({x:Number(point.x)||0,y:Number(point.y)||0})) : [];
+      const handles = Array.isArray(eff.bezierHandles) ? eff.bezierHandles : obj.bezierHandles;
+      if(Array.isArray(handles)) snapshot.bezierHandles = handles.map(handle=>({
+        inX:Number(handle && handle.inX)||0, inY:Number(handle && handle.inY)||0,
+        outX:Number(handle && handle.outX)||0, outY:Number(handle && handle.outY)||0
+      }));
       snapshot.closedPath = eff.closedPath !== undefined ? !!eff.closedPath : !!obj.closedPath;
+      if(obj.penStroke){
+        snapshot.penWidth=Number(eff.penWidth!==undefined?eff.penWidth:obj.penWidth)||Number(snapshot.strokeWidth)||32;
+        snapshot.penNibAspect=Number(eff.penNibAspect!==undefined?eff.penNibAspect:obj.penNibAspect)||.28;
+        snapshot.penNibAngle=Number(eff.penNibAngle!==undefined?eff.penNibAngle:obj.penNibAngle)||0;
+        snapshot.penTaperLength=Number(eff.penTaperLength!==undefined?eff.penTaperLength:obj.penTaperLength)||.55;
+        snapshot.penWidthPosition=Number(eff.penWidthPosition!==undefined?eff.penWidthPosition:obj.penWidthPosition)||.47;
+        snapshot.penTaperModel='continuous-v2';
+        snapshot.penTaperStart=eff.penTaperStart!==undefined?!!eff.penTaperStart:obj.penTaperStart!==false;
+        snapshot.penTaperEnd=eff.penTaperEnd!==undefined?!!eff.penTaperEnd:obj.penTaperEnd!==false;
+      }
     }
     return snapshot;
   }
@@ -3318,8 +4551,14 @@ ctx.fill();</textarea>
   function upsertObjectKeyframe(obj, keyframe){
     if(!obj.keyframes) obj.keyframes = [];
     const existingIdx = obj.keyframes.findIndex(k => Math.abs(k.time - keyframe.time) < 0.05);
-    if(existingIdx >= 0) obj.keyframes[existingIdx] = keyframe;
-    else obj.keyframes.push(keyframe);
+    if(existingIdx >= 0){
+      const previous = obj.keyframes[existingIdx];
+      keyframe.easing = normalizeKeyframeEasing(previous.easing || keyframe.easing);
+      obj.keyframes[existingIdx] = Object.assign({}, previous, keyframe);
+    }else{
+      keyframe.easing = normalizeKeyframeEasing(keyframe.easing);
+      obj.keyframes.push(keyframe);
+    }
     obj.keyframes.sort((a,b)=>a.time-b.time);
   }
 
@@ -3352,21 +4591,15 @@ ctx.fill();</textarea>
   }
   // ---------------- Transform gizmo: on-canvas move/scale/rotate handles ----------------
   function getLiveTransform(obj, eff){
-    const b = getDrawObjectBounds(obj); // base (untransformed) geometry
-    const baseHalfW = (b.x2-b.x1)/2, baseHalfH = (b.y2-b.y1)/2;
-    if(obj.type === 'clipinstance'){
-      return {
-        pivotX: eff.x, pivotY: eff.y,
-        scale: (eff.scale===undefined?1:eff.scale), rotation: eff.rotation||0,
-        halfW: Math.max(6,baseHalfW), halfH: Math.max(6,baseHalfH)
-      };
-    }
-    const basePivotX = (b.x1+b.x2)/2, basePivotY = (b.y1+b.y2)/2;
-    return {
-      pivotX: basePivotX + (eff.tx||0), pivotY: basePivotY + (eff.ty||0),
-      scale: (eff.tscale===undefined?1:eff.tscale), rotation: eff.trotation||0,
-      halfW: Math.max(6,baseHalfW), halfH: Math.max(6,baseHalfH)
-    };
+    const live=getStandaloneLiveTransform(obj,eff);
+    const parent=getGroupParentPoseForObject(obj);
+    if(!parent) return live;
+    const mapped=groupLocalPointToStage(parent.group,{x:live.pivotX,y:live.pivotY},t);
+    live.pivotX=mapped.x;
+    live.pivotY=mapped.y;
+    live.scale*=parent.scale;
+    live.rotation+=parent.rotation;
+    return live;
   }
   function rotatePoint(x, y, rad){
     const cos = Math.cos(rad), sin = Math.sin(rad);
@@ -3507,13 +4740,18 @@ ctx.fill();</textarea>
     const angle = (Number(eff.trotation)||0) * Math.PI / 180;
     const dx = (point.x - pivotX) * scale;
     const dy = (point.y - pivotY) * scale;
-    return {
+    let mapped = {
       x:pivotX + tx + dx*Math.cos(angle) - dy*Math.sin(angle),
       y:pivotY + ty + dx*Math.sin(angle) + dy*Math.cos(angle)
     };
+    const isolated=getIsolatedGroupInfo();
+    if(isolated && isolated.child===obj) mapped=groupLocalPointToStage(isolated.group,mapped,time);
+    return mapped;
   }
 
   function scenePointToObjectLocal(obj, point, time){
+    const isolated=getIsolatedGroupInfo();
+    if(isolated && isolated.child===obj) point=stagePointToGroupLocal(isolated.group,point,time);
     const eff = getEffectiveObj(obj, time);
     const bounds = getDrawObjectBounds(obj);
     const pivotX = (bounds.x1 + bounds.x2) / 2;
@@ -3563,16 +4801,63 @@ ctx.fill();</textarea>
     return {ratio,point:projected,distance:Math.hypot(point.x-projected.x,point.y-projected.y)};
   }
 
+  function cubicBezierPoint(p0,p1,p2,p3,u){
+    const v=1-u;
+    const v2=v*v,u2=u*u;
+    return {
+      x:v2*v*p0.x+3*v2*u*p1.x+3*v*u2*p2.x+u2*u*p3.x,
+      y:v2*v*p0.y+3*v2*u*p1.y+3*v*u2*p2.y+u2*u*p3.y
+    };
+  }
+
+  function lerpPoint(a,b,u){return{x:a.x+(b.x-a.x)*u,y:a.y+(b.y-a.y)*u};}
+
+  function splitBezierGeometry(pointsInput,handlesInput,segmentIndex,u,closedPath){
+    const points=pointsInput.map(point=>({x:Number(point.x)||0,y:Number(point.y)||0}));
+    const handles=copyBezierHandles(handlesInput);
+    while(handles.length<points.length) handles.push({inX:0,inY:0,outX:0,outY:0});
+    const nextIndex=(segmentIndex+1)%points.length;
+    if(!closedPath && nextIndex===0) return null;
+    const p0=points[segmentIndex],p3=points[nextIndex];
+    const h0=handles[segmentIndex],h3=handles[nextIndex];
+    const p1={x:p0.x+h0.outX,y:p0.y+h0.outY};
+    const p2={x:p3.x+h3.inX,y:p3.y+h3.inY};
+    const q0=lerpPoint(p0,p1,u),q1=lerpPoint(p1,p2,u),q2=lerpPoint(p2,p3,u);
+    const r0=lerpPoint(q0,q1,u),r1=lerpPoint(q1,q2,u);
+    const split=lerpPoint(r0,r1,u);
+    const insertIndex=(closedPath&&segmentIndex===points.length-1)?points.length:segmentIndex+1;
+    handles[segmentIndex]=Object.assign({},h0,{outX:q0.x-p0.x,outY:q0.y-p0.y});
+    handles[nextIndex]=Object.assign({},h3,{inX:q2.x-p3.x,inY:q2.y-p3.y});
+    points.splice(insertIndex,0,split);
+    handles.splice(insertIndex,0,{inX:r0.x-split.x,inY:r0.y-split.y,outX:r1.x-split.x,outY:r1.y-split.y});
+    return {points,handles,insertIndex,nextIndex,point:split};
+  }
+
   function closestEditableShapeSegment(obj,localPoint){
     if(!obj||obj.type!=='freehand') return null;
     const pointsNow=currentEditablePointArray(obj);
     if(!Array.isArray(pointsNow)||pointsNow.length<2) return null;
     const count=obj.closedPath?pointsNow.length:pointsNow.length-1;
+    const handles=currentBezierHandles(obj);
+    const useBezier=Array.isArray(obj.bezierHandles)&&handles.length===pointsNow.length;
     let best=null;
     for(let i=0;i<count;i++){
       const j=(i+1)%pointsNow.length;
-      const hit=projectPointToSegment(localPoint,pointsNow[i],pointsNow[j]);
-      if(!best||hit.distance<best.distance) best={startIndex:i,endIndex:j,insertIndex:i+1,ratio:hit.ratio,point:hit.point,distance:hit.distance};
+      if(useBezier){
+        const a=pointsNow[i],b=pointsNow[j],ah=handles[i]||{},bh=handles[j]||{};
+        const c1={x:a.x+(Number(ah.outX)||0),y:a.y+(Number(ah.outY)||0)};
+        const c2={x:b.x+(Number(bh.inX)||0),y:b.y+(Number(bh.inY)||0)};
+        const samples=36;
+        for(let step=0;step<=samples;step++){
+          const ratio=step/samples;
+          const point=cubicBezierPoint(a,c1,c2,b,ratio);
+          const distance=Math.hypot(localPoint.x-point.x,localPoint.y-point.y);
+          if(!best||distance<best.distance) best={startIndex:i,endIndex:j,insertIndex:i+1,ratio,point,distance,isBezier:true};
+        }
+      }else{
+        const hit=projectPointToSegment(localPoint,pointsNow[i],pointsNow[j]);
+        if(!best||hit.distance<best.distance) best={startIndex:i,endIndex:j,insertIndex:i+1,ratio:hit.ratio,point:hit.point,distance:hit.distance,isBezier:false};
+      }
     }
     return best;
   }
@@ -3593,7 +4878,14 @@ ctx.fill();</textarea>
       if(!Array.isArray(key.points) || key.points.length !== oldLength) return;
       const a=key.points[startIndex], b=key.points[endIndex];
       key.points.splice(insertIndex,0,{x:a.x+(b.x-a.x)*ratio,y:a.y+(b.y-a.y)*ratio});
+      if(Array.isArray(key.bezierHandles) && key.bezierHandles.length === oldLength){
+        key.bezierHandles.splice(insertIndex,0,{inX:0,inY:0,outX:0,outY:0});
+      }
     });
+    if(Array.isArray(obj.bezierHandles) && obj.bezierHandles.length === oldLength){
+      obj.bezierHandles.splice(insertIndex,0,{inX:0,inY:0,outX:0,outY:0});
+      if(Array.isArray(obj.bezierModes)) obj.bezierModes.splice(insertIndex,0,'corner');
+    }
     const db=obj.demBones;
     if(!db) return;
     if(Array.isArray(db.restPoints)&&db.restPoints.length===oldLength){
@@ -3615,7 +4907,10 @@ ctx.fill();</textarea>
   function syncKnownTopologyDelete(obj,index){
     if(Array.isArray(obj.keyframes)) obj.keyframes.forEach(key=>{
       if(Array.isArray(key.points)&&key.points.length>index) key.points.splice(index,1);
+      if(Array.isArray(key.bezierHandles)&&key.bezierHandles.length>index) key.bezierHandles.splice(index,1);
     });
+    if(Array.isArray(obj.bezierHandles)&&obj.bezierHandles.length>index) obj.bezierHandles.splice(index,1);
+    if(Array.isArray(obj.bezierModes)&&obj.bezierModes.length>index) obj.bezierModes.splice(index,1);
     const db=obj.demBones;
     if(!db) return;
     if(Array.isArray(db.restPoints)&&db.restPoints.length>index) db.restPoints.splice(index,1);
@@ -3637,10 +4932,23 @@ ctx.fill();</textarea>
     const oldLength=obj.points.length;
     let insertIndex=hit.insertIndex;
     if(obj.closedPath&&hit.startIndex===oldLength-1) insertIndex=oldLength;
-    const baseA=obj.points[hit.startIndex], baseB=obj.points[hit.endIndex];
-    const basePoint={x:baseA.x+(baseB.x-baseA.x)*hit.ratio,y:baseA.y+(baseB.y-baseA.y)*hit.ratio};
-    obj.points.splice(insertIndex,0,basePoint);
-    syncKnownTopologyInsert(obj,oldLength,hit.startIndex,hit.endIndex,insertIndex,hit.ratio);
+    if(hit.isBezier&&Array.isArray(obj.bezierHandles)&&obj.bezierHandles.length===oldLength){
+      const baseSplit=splitBezierGeometry(obj.points,obj.bezierHandles,hit.startIndex,hit.ratio,!!obj.closedPath);
+      const keySplits=(obj.keyframes||[]).map(key=>{
+        if(!Array.isArray(key.points)||key.points.length!==oldLength) return null;
+        const keyHandles=Array.isArray(key.bezierHandles)&&key.bezierHandles.length===oldLength?key.bezierHandles:obj.bezierHandles;
+        return splitBezierGeometry(key.points,keyHandles,hit.startIndex,hit.ratio,!!obj.closedPath);
+      });
+      syncKnownTopologyInsert(obj,oldLength,hit.startIndex,hit.endIndex,insertIndex,hit.ratio);
+      obj.points=baseSplit.points; obj.bezierHandles=baseSplit.handles;
+      if(Array.isArray(obj.bezierModes) && obj.bezierModes[insertIndex] !== 'smooth') obj.bezierModes[insertIndex]='smooth';
+      (obj.keyframes||[]).forEach((key,index)=>{const split=keySplits[index];if(split){key.points=split.points;key.bezierHandles=split.handles;}});
+    }else{
+      const baseA=obj.points[hit.startIndex], baseB=obj.points[hit.endIndex];
+      const basePoint={x:baseA.x+(baseB.x-baseA.x)*hit.ratio,y:baseA.y+(baseB.y-baseA.y)*hit.ratio};
+      obj.points.splice(insertIndex,0,basePoint);
+      syncKnownTopologyInsert(obj,oldLength,hit.startIndex,hit.endIndex,insertIndex,hit.ratio);
+    }
     shapePointSelectedIndex=insertIndex;
     renderShapePointHandles();
     updateInspector();
@@ -3654,16 +4962,30 @@ ctx.fill();</textarea>
     if(obj.type!=='freehand') convertDrawObjectToEditablePath(obj);
     if(!obj.points||obj.points.length<2) return false;
     pushUndo();
-    const original=obj.points.map(p=>({x:p.x,y:p.y}));
     const closed=!!obj.closedPath;
-    const segmentCount=closed?original.length:original.length-1;
+    const originalLength=obj.points.length;
+    const segmentCount=closed?originalLength:originalLength-1;
     for(let i=segmentCount-1;i>=0;i--){
-      const j=(i+1)%original.length;
+      const j=(i+1)%obj.points.length;
       const oldLength=obj.points.length;
       let insertIndex=i+1;
-      if(closed&&i===original.length-1) insertIndex=oldLength;
-      obj.points.splice(insertIndex,0,{x:(original[i].x+original[j].x)/2,y:(original[i].y+original[j].y)/2});
-      syncKnownTopologyInsert(obj,oldLength,i,j,insertIndex,0.5);
+      if(closed&&i===originalLength-1) insertIndex=oldLength;
+      if(Array.isArray(obj.bezierHandles)&&obj.bezierHandles.length===oldLength){
+        const baseSplit=splitBezierGeometry(obj.points,obj.bezierHandles,i,0.5,closed);
+        const keySplits=(obj.keyframes||[]).map(key=>{
+          if(!Array.isArray(key.points)||key.points.length!==oldLength) return null;
+          const keyHandles=Array.isArray(key.bezierHandles)&&key.bezierHandles.length===oldLength?key.bezierHandles:obj.bezierHandles;
+          return splitBezierGeometry(key.points,keyHandles,i,0.5,closed);
+        });
+        syncKnownTopologyInsert(obj,oldLength,i,j,insertIndex,0.5);
+        obj.points=baseSplit.points; obj.bezierHandles=baseSplit.handles;
+        if(Array.isArray(obj.bezierModes) && obj.bezierModes[insertIndex] !== 'smooth') obj.bezierModes[insertIndex]='smooth';
+        (obj.keyframes||[]).forEach((key,index)=>{const split=keySplits[index];if(split){key.points=split.points;key.bezierHandles=split.handles;}});
+      }else{
+        const a=obj.points[i],b=obj.points[j];
+        obj.points.splice(insertIndex,0,{x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+        syncKnownTopologyInsert(obj,oldLength,i,j,insertIndex,0.5);
+      }
     }
     renderShapePointHandles();updateInspector();renderLayerList();renderTimeline();
     return true;
@@ -3708,7 +5030,7 @@ ctx.fill();</textarea>
 
   function renderShapePointHandles(){
     overlay.querySelectorAll('.shape-point-handle').forEach(el=>el.remove());
-    if(!shapePointEditMode) return;
+    if(exportPlayback.active || !shapePointEditMode) return;
     const obj=currentShapePointEditObject();
     if(!obj||obj.type!=='freehand'||!Array.isArray(obj.points)){setShapePointEditMode(false);return;}
     const visiblePoints=currentEditablePointArray(obj);
@@ -3744,8 +5066,536 @@ ctx.fill();</textarea>
     });
   }
 
+  function makeEllipseBezierGeometry(cx,cy,rx,ry,count){
+    count=Math.max(3,Math.round(Number(count)||3));
+    const points=[];
+    const handles=[];
+    const modes=[];
+    const delta=Math.PI*2/count;
+    const tangentScale=(4/3)*Math.tan(delta/4);
+    for(let i=0;i<count;i++){
+      const angle=i*delta;
+      const point={x:cx+Math.cos(angle)*rx,y:cy+Math.sin(angle)*ry};
+      const dx=-rx*Math.sin(angle)*tangentScale;
+      const dy= ry*Math.cos(angle)*tangentScale;
+      points.push(point);
+      handles.push({inX:-dx,inY:-dy,outX:dx,outY:dy});
+      modes.push('smooth');
+    }
+    return {points,handles,modes};
+  }
+
+  function makeRoundedRectBezierGeometry(source){
+    const x1=Math.min(Number(source.x1)||0,Number(source.x2)||0);
+    const y1=Math.min(Number(source.y1)||0,Number(source.y2)||0);
+    const x2=Math.max(Number(source.x1)||0,Number(source.x2)||0);
+    const y2=Math.max(Number(source.y1)||0,Number(source.y2)||0);
+    const width=x2-x1,height=y2-y1;
+    const radius=Math.max(0,Math.min(Number(source.cornerRadius)||0,width/2,height/2));
+    if(radius<=0.001){
+      return {
+        points:[{x:x1,y:y1},{x:x2,y:y1},{x:x2,y:y2},{x:x1,y:y2}],
+        handles:Array.from({length:4},()=>({inX:0,inY:0,outX:0,outY:0})),
+        modes:Array.from({length:4},()=> 'corner')
+      };
+    }
+    const k=0.5522847498307936;
+    const points=[
+      {x:x1+radius,y:y1},{x:x2-radius,y:y1},{x:x2,y:y1+radius},{x:x2,y:y2-radius},
+      {x:x2-radius,y:y2},{x:x1+radius,y:y2},{x:x1,y:y2-radius},{x:x1,y:y1+radius}
+    ];
+    const handles=Array.from({length:8},()=>({inX:0,inY:0,outX:0,outY:0}));
+    handles[1].outX=k*radius; handles[2].inY=-k*radius;
+    handles[3].outY=k*radius; handles[4].inX=k*radius;
+    handles[5].outX=-k*radius; handles[6].inY=k*radius;
+    handles[7].outY=-k*radius; handles[0].inX=-k*radius;
+    return {points,handles,modes:Array.from({length:8},()=> 'corner')};
+  }
+
+  function copyBezierHandles(handles){
+    return (handles||[]).map(handle=>({
+      inX:Number(handle&&handle.inX)||0,inY:Number(handle&&handle.inY)||0,
+      outX:Number(handle&&handle.outX)||0,outY:Number(handle&&handle.outY)||0
+    }));
+  }
+
+  function convertDrawObjectToBezierPath(obj){
+    if(!shapeCanEditPoints(obj)) return null;
+    ensureDrawObjectMetadata(obj);
+    const originalType=obj.type;
+    let points=[];
+    let handles=[];
+    let modes=[];
+    let closedPath=false;
+    let fillEnabled=false;
+    let shapeKind=obj.bezierShapeKind || obj.originalVectorType || originalType;
+
+    if(originalType==='freehand'){
+      points=(obj.points||[]).map(point=>({x:Number(point.x)||0,y:Number(point.y)||0}));
+      handles=Array.isArray(obj.bezierHandles)&&obj.bezierHandles.length===points.length
+        ? copyBezierHandles(obj.bezierHandles)
+        : points.map(()=>({inX:0,inY:0,outX:0,outY:0}));
+      modes=Array.isArray(obj.bezierModes)&&obj.bezierModes.length===points.length
+        ? obj.bezierModes.map(mode=>mode==='smooth'?'smooth':'corner')
+        : points.map(()=> 'corner');
+      closedPath=!!obj.closedPath;
+      fillEnabled=obj.fillEnabled!==false;
+    }else if(originalType==='line'){
+      points=[{x:Number(obj.x1)||0,y:Number(obj.y1)||0},{x:Number(obj.x2)||0,y:Number(obj.y2)||0}];
+      handles=points.map(()=>({inX:0,inY:0,outX:0,outY:0}));
+      modes=points.map(()=> 'corner');
+      shapeKind='line';
+    }else if(originalType==='rect'){
+      const geometry=makeRoundedRectBezierGeometry(obj);
+      points=geometry.points; handles=geometry.handles; modes=geometry.modes;
+      closedPath=true; fillEnabled=obj.fillEnabled!==false; shapeKind='rect';
+    }else if(originalType==='ellipse'){
+      const cx=((Number(obj.x1)||0)+(Number(obj.x2)||0))/2;
+      const cy=((Number(obj.y1)||0)+(Number(obj.y2)||0))/2;
+      const rx=Math.abs((Number(obj.x2)||0)-(Number(obj.x1)||0))/2;
+      const ry=Math.abs((Number(obj.y2)||0)-(Number(obj.y1)||0))/2;
+      const geometry=makeEllipseBezierGeometry(cx,cy,rx,ry,64);
+      points=geometry.points; handles=geometry.handles; modes=geometry.modes;
+      closedPath=true; fillEnabled=obj.fillEnabled!==false; shapeKind='ellipse';
+    }
+    if(points.length<2) return null;
+
+    obj.originalVectorType=obj.originalVectorType||originalType;
+    obj.type='freehand';
+    obj.points=points;
+    obj.closedPath=closedPath;
+    obj.fillEnabled=fillEnabled;
+    obj.strokeEnabled=obj.strokeEnabled!==false;
+    obj.fillColor=obj.fillColor||obj.color||'#4fe0c4';
+    obj.strokeColor=obj.strokeColor||obj.color||'#1b1f24';
+    obj.strokeWidth=obj.strokeWidth===undefined?4:obj.strokeWidth;
+    obj.opacity=obj.opacity===undefined?1:obj.opacity;
+    obj.bezierHandles=handles;
+    obj.bezierModes=modes;
+    obj.bezierShapeKind=shapeKind;
+    if(shapeKind==='ellipse' && !Number.isFinite(Number(obj.bezierPointLimit))) obj.bezierPointLimit=points.length;
+    if(!Array.isArray(obj.keyframes)) obj.keyframes=[];
+    obj.keyframes.forEach(key=>{
+      delete key.x1; delete key.y1; delete key.x2; delete key.y2; delete key.cornerRadius;
+      if(!Array.isArray(key.points)||key.points.length!==points.length) key.points=points.map(point=>({x:point.x,y:point.y}));
+      if(!Array.isArray(key.bezierHandles)||key.bezierHandles.length!==points.length) key.bezierHandles=copyBezierHandles(handles);
+      key.closedPath=closedPath;
+    });
+    delete obj.x1; delete obj.y1; delete obj.x2; delete obj.y2; delete obj.cornerRadius;
+    ensureDrawObjectMetadata(obj);
+    return obj;
+  }
+
+  function currentBezierObject(){
+    const selected=getSelectedSingleObject();
+    if(!selected||!selected.obj||selected.obj.id!==bezierCurveObjectId) return null;
+    return selected.obj;
+  }
+
+  function currentBezierHandles(obj){
+    const effective=getEffectiveObj(obj,t);
+    const pointsNow=Array.isArray(effective.points)?effective.points:obj.points;
+    const handles=Array.isArray(effective.bezierHandles)?effective.bezierHandles:obj.bezierHandles;
+    if(!Array.isArray(handles)||!Array.isArray(pointsNow)||handles.length!==pointsNow.length){
+      return (pointsNow||[]).map(()=>({inX:0,inY:0,outX:0,outY:0}));
+    }
+    return copyBezierHandles(handles);
+  }
+
+  function writeBezierHandlesAtCurrentTime(obj,handles){
+    if(autoKeyframe){
+      prepareAutoKeyframe(obj);
+      const keyframe=makeObjectKeyframeSnapshot(obj,t);
+      keyframe.bezierHandles=copyBezierHandles(handles);
+      keyframe.time=t;
+      upsertObjectKeyframe(obj,keyframe);
+    }else obj.bezierHandles=copyBezierHandles(handles);
+  }
+
+  function openCurveSettingsPanel(){
+    const panel=document.getElementById('curve-settings-panel');
+    panel.classList.add('open');
+    bringFloatingPanelToFront(panel);
+    requestAnimationFrame(()=>clampFloatingPanelToViewport(panel));
+    updateCurveSettingsPanel();
+  }
+
+  function closeCurveSettingsPanel(changeTool){
+    document.getElementById('curve-settings-panel').classList.remove('open');
+    bezierCurveObjectId=null;
+    overlay.querySelectorAll('.bezier-anchor-handle,.bezier-control-handle,.bezier-handle-line,.pen-edit-anchor,.pen-edit-control,.pen-edit-bend,.pen-edit-width,.pen-edit-line').forEach(element=>element.remove());
+    if(changeTool!==false && stageTool==='bcurve') activateDrawTool('none');
+  }
+
+  function beginBezierCurveEdit(index,recordHistory){
+    if(index<0||index>=drawObjects.length) return false;
+    const obj=drawObjects[index];
+    if(!shapeCanEditPoints(obj)){
+      logToSandbox('The Bezier Curve tool works on lines, rectangles, ellipses and vector drawings.',true);
+      return false;
+    }
+    if(recordHistory!==false && !(obj.type==='freehand'&&Array.isArray(obj.bezierHandles))) pushUndo();
+    const converted=convertDrawObjectToBezierPath(obj);
+    if(!converted) return false;
+    selectedDrawIndices.clear(); selectedDrawIndices.add(index);
+    bezierCurveObjectId=converted.id;
+    bezierSelectedAnchorIndex=Math.max(0,Math.min((converted.points||[]).length-1,bezierSelectedAnchorIndex));
+    shapePointEditMode=false; shapePointAddMode=false; shapePointEditObjectId=null;
+    openCurveSettingsPanel();
+    updateSelectedCountUI();
+    renderLayerList();
+    renderTransformHandles();
+    return true;
+  }
+
+  function bezierControlScenePoint(obj,anchor,handle,which){
+    const offset=which==='in'?{x:Number(handle.inX)||0,y:Number(handle.inY)||0}:{x:Number(handle.outX)||0,y:Number(handle.outY)||0};
+    return objectLocalPointToScene(obj,{x:anchor.x+offset.x,y:anchor.y+offset.y},t);
+  }
+
+  function createBezierHandleLine(fromScene,toScene){
+    const a=sceneToStagePoint(fromScene),b=sceneToStagePoint(toScene);
+    const canvasRect=canvas.getBoundingClientRect();
+    const dx=(b.x-a.x)/W*canvasRect.width;
+    const dy=(b.y-a.y)/H*canvasRect.height;
+    const element=document.createElement('div');
+    element.className='bezier-handle-line';
+    element.style.left=(a.x/W*100)+'%'; element.style.top=(a.y/H*100)+'%';
+    element.style.width=Math.hypot(dx,dy)+'px';
+    element.style.transform='rotate('+Math.atan2(dy,dx)+'rad)';
+    overlay.appendChild(element);
+  }
+
+  function dragBezierAnchor(obj,index,event){
+    event.preventDefault(); event.stopPropagation();
+    pushUndo(); bezierSelectedAnchorIndex=index; inspectorDragging=true;
+    function move(pointerEvent){
+      const localPoint=scenePointToObjectLocal(obj,canvasCoords(pointerEvent.clientX,pointerEvent.clientY),t);
+      writeEditablePointAtCurrentTime(obj,index,localPoint);
+      renderBezierCurveHandles(); updateCurveSettingsPanel(); renderTimeline();
+    }
+    function up(){
+      window.removeEventListener('mousemove',move); window.removeEventListener('mouseup',up);
+      inspectorDragging=false; finishObjectEdit(obj); updateCurveSettingsPanel();
+    }
+    window.addEventListener('mousemove',move); window.addEventListener('mouseup',up);
+  }
+
+  function dragBezierControl(obj,index,which,event){
+    event.preventDefault(); event.stopPropagation();
+    pushUndo(); bezierSelectedAnchorIndex=index; inspectorDragging=true;
+    function move(pointerEvent){
+      const pointsNow=currentEditablePointArray(obj);
+      const anchor=pointsNow[index];
+      if(!anchor) return;
+      const localPoint=scenePointToObjectLocal(obj,canvasCoords(pointerEvent.clientX,pointerEvent.clientY),t);
+      const handles=currentBezierHandles(obj);
+      const dx=localPoint.x-anchor.x,dy=localPoint.y-anchor.y;
+      if(which==='in'){ handles[index].inX=dx; handles[index].inY=dy; }
+      else { handles[index].outX=dx; handles[index].outY=dy; }
+      const mode=(obj.bezierModes&&obj.bezierModes[index])||'corner';
+      if(mode==='smooth'){
+        if(which==='in'){ handles[index].outX=-dx; handles[index].outY=-dy; }
+        else { handles[index].inX=-dx; handles[index].inY=-dy; }
+      }
+      writeBezierHandlesAtCurrentTime(obj,handles);
+      renderBezierCurveHandles(); updateCurveSettingsPanel(); renderTimeline();
+    }
+    function up(){
+      window.removeEventListener('mousemove',move); window.removeEventListener('mouseup',up);
+      inspectorDragging=false; finishObjectEdit(obj); updateCurveSettingsPanel();
+    }
+    window.addEventListener('mousemove',move); window.addEventListener('mouseup',up);
+  }
+
+  function renderBezierCurveHandles(){
+    overlay.querySelectorAll('.bezier-anchor-handle,.bezier-control-handle,.bezier-handle-line,.pen-edit-anchor,.pen-edit-control,.pen-edit-bend,.pen-edit-width,.pen-edit-line').forEach(element=>element.remove());
+    if(exportPlayback.active||stageTool!=='bcurve') return;
+    const obj=currentBezierObject();
+    if(!obj||obj.type!=='freehand') return;
+    const pointsNow=currentEditablePointArray(obj);
+    const handles=currentBezierHandles(obj);
+    if(!pointsNow.length) return;
+    bezierSelectedAnchorIndex=Math.max(0,Math.min(pointsNow.length-1,bezierSelectedAnchorIndex));
+    const selectedAnchor=pointsNow[bezierSelectedAnchorIndex];
+    const selectedHandle=handles[bezierSelectedAnchorIndex]||{inX:0,inY:0,outX:0,outY:0};
+    const suggested=suggestedBezierHandles(obj,pointsNow,bezierSelectedAnchorIndex);
+    const displayHandle={
+      inX:Math.hypot(selectedHandle.inX||0,selectedHandle.inY||0)<0.5?suggested.inX:selectedHandle.inX,
+      inY:Math.hypot(selectedHandle.inX||0,selectedHandle.inY||0)<0.5?suggested.inY:selectedHandle.inY,
+      outX:Math.hypot(selectedHandle.outX||0,selectedHandle.outY||0)<0.5?suggested.outX:selectedHandle.outX,
+      outY:Math.hypot(selectedHandle.outX||0,selectedHandle.outY||0)<0.5?suggested.outY:selectedHandle.outY
+    };
+    const anchorScene=objectLocalPointToScene(obj,selectedAnchor,t);
+    ['in','out'].forEach(which=>{
+      const controlScene=bezierControlScenePoint(obj,selectedAnchor,displayHandle,which);
+      createBezierHandleLine(anchorScene,controlScene);
+      const display=sceneToStagePoint(controlScene);
+      const control=document.createElement('div');
+      control.className='bezier-control-handle';
+      control.style.left=(display.x/W*100)+'%'; control.style.top=(display.y/H*100)+'%';
+      control.title=(which==='in'?'Incoming':'Outgoing')+' Bezier handle — drag to bend';
+      control.addEventListener('mousedown',event=>dragBezierControl(obj,bezierSelectedAnchorIndex,which,event));
+      overlay.appendChild(control);
+    });
+    pointsNow.forEach((point,index)=>{
+      const display=sceneToStagePoint(objectLocalPointToScene(obj,point,t));
+      const anchor=document.createElement('div');
+      anchor.className='bezier-anchor-handle'+(index===bezierSelectedAnchorIndex?' active':'');
+      anchor.style.left=(display.x/W*100)+'%'; anchor.style.top=(display.y/H*100)+'%';
+      anchor.title='Bezier anchor '+(index+1)+' — drag to move';
+      anchor.addEventListener('mousedown',event=>dragBezierAnchor(obj,index,event));
+      anchor.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();bezierSelectedAnchorIndex=index;renderBezierCurveHandles();updateCurveSettingsPanel();});
+      overlay.appendChild(anchor);
+    });
+  }
+
+  function cubicScalarAt(p0,p1,p2,p3,u){
+    const v=1-u;
+    return v*v*v*p0+3*v*v*u*p1+3*v*u*u*p2+u*u*u*p3;
+  }
+
+  function cubicExtremaParameters(p0,p1,p2,p3){
+    const a=-p0+3*p1-3*p2+p3;
+    const b=2*(p0-2*p1+p2);
+    const c=p1-p0;
+    const values=[];
+    if(Math.abs(a)<1e-10){
+      if(Math.abs(b)>1e-10){
+        const u=-c/b;
+        if(u>0&&u<1) values.push(u);
+      }
+      return values;
+    }
+    const discriminant=b*b-4*a*c;
+    if(discriminant<0) return values;
+    const root=Math.sqrt(Math.max(0,discriminant));
+    const u1=(-b+root)/(2*a),u2=(-b-root)/(2*a);
+    if(u1>0&&u1<1) values.push(u1);
+    if(u2>0&&u2<1&&Math.abs(u2-u1)>1e-9) values.push(u2);
+    return values;
+  }
+
+  function bezierGeometryBounds(pointsInput,handlesInput,closedPath){
+    const points=Array.isArray(pointsInput)?pointsInput:[];
+    if(!points.length) return null;
+    const handles=Array.isArray(handlesInput)&&handlesInput.length===points.length
+      ? handlesInput
+      : points.map(()=>({inX:0,inY:0,outX:0,outY:0}));
+    let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+    const include=(x,y)=>{
+      if(!Number.isFinite(x)||!Number.isFinite(y)) return;
+      minX=Math.min(minX,x); minY=Math.min(minY,y);
+      maxX=Math.max(maxX,x); maxY=Math.max(maxY,y);
+    };
+    points.forEach(point=>include(Number(point.x)||0,Number(point.y)||0));
+    const segmentCount=closedPath?points.length:Math.max(0,points.length-1);
+    for(let index=0;index<segmentCount;index++){
+      const next=(index+1)%points.length;
+      const a=points[index],b=points[next];
+      const ah=handles[index]||{},bh=handles[next]||{};
+      const p0x=Number(a.x)||0,p0y=Number(a.y)||0;
+      const p1x=p0x+(Number(ah.outX)||0),p1y=p0y+(Number(ah.outY)||0);
+      const p3x=Number(b.x)||0,p3y=Number(b.y)||0;
+      const p2x=p3x+(Number(bh.inX)||0),p2y=p3y+(Number(bh.inY)||0);
+      const parameters=new Set([
+        ...cubicExtremaParameters(p0x,p1x,p2x,p3x),
+        ...cubicExtremaParameters(p0y,p1y,p2y,p3y)
+      ]);
+      parameters.forEach(u=>include(
+        cubicScalarAt(p0x,p1x,p2x,p3x,u),
+        cubicScalarAt(p0y,p1y,p2y,p3y,u)
+      ));
+    }
+    if(!Number.isFinite(minX)||!Number.isFinite(minY)||!Number.isFinite(maxX)||!Number.isFinite(maxY)) return null;
+    return {x:minX,y:minY,w:Math.max(0,maxX-minX),h:Math.max(0,maxY-minY)};
+  }
+
+  function scaleBezierGeometryToBounds(geometry,targetBounds){
+    if(!geometry||!targetBounds) return geometry;
+    const current=bezierGeometryBounds(geometry.points,geometry.handles,true);
+    if(!current||current.w<1e-9||current.h<1e-9) return geometry;
+    const sx=targetBounds.w/current.w,sy=targetBounds.h/current.h;
+    geometry.points=geometry.points.map(point=>({
+      x:targetBounds.x+(point.x-current.x)*sx,
+      y:targetBounds.y+(point.y-current.y)*sy
+    }));
+    geometry.handles=geometry.handles.map(handle=>({
+      inX:(Number(handle.inX)||0)*sx,
+      inY:(Number(handle.inY)||0)*sy,
+      outX:(Number(handle.outX)||0)*sx,
+      outY:(Number(handle.outY)||0)*sy
+    }));
+    return geometry;
+  }
+
+  function bestFitEllipseGeometry(pointsNow,count,handlesNow){
+    const points=Array.isArray(pointsNow)?pointsNow:[];
+    if(points.length<3) return makeEllipseBezierGeometry(0,0,.5,.5,count);
+    let sourceHandles=Array.isArray(handlesNow)&&handlesNow.length===points.length
+      ? handlesNow
+      : points.map(()=>({inX:0,inY:0,outX:0,outY:0}));
+    let bounds=bezierGeometryBounds(points,sourceHandles,true);
+    if(!bounds||bounds.w<1e-9||bounds.h<1e-9){
+      const xs=points.map(point=>Number(point.x)||0),ys=points.map(point=>Number(point.y)||0);
+      const x1=Math.min(...xs),x2=Math.max(...xs),y1=Math.min(...ys),y2=Math.max(...ys);
+      bounds={x:x1,y:y1,w:Math.max(1,x2-x1),h:Math.max(1,y2-y1)};
+    }
+    const geometry=makeEllipseBezierGeometry(
+      bounds.x+bounds.w/2,
+      bounds.y+bounds.h/2,
+      Math.max(.5,bounds.w/2),
+      Math.max(.5,bounds.h/2),
+      count
+    );
+    // A low-anchor cubic ellipse can otherwise sit slightly inside its source bounds.
+    // Normalising the complete cubic outline keeps the visible width, height and centre fixed.
+    return scaleBezierGeometryToBounds(geometry,bounds);
+  }
+
+  function setBezierEllipsePointCount(obj,count){
+    if(!obj||obj.bezierShapeKind!=='ellipse') return false;
+    const limit=Math.max(3,Math.round(Number(obj.bezierPointLimit)||obj.points.length));
+    count=Math.max(3,Math.min(limit,Math.round(Number(count)||3)));
+
+    // Capture every source pose before replacing the base geometry. This prevents
+    // repeated slider changes from calculating the next ellipse from already reduced anchors.
+    const baseSourcePoints=(obj.points||[]).map(point=>({x:Number(point.x)||0,y:Number(point.y)||0}));
+    const baseSourceHandles=copyBezierHandles(obj.bezierHandles||[]);
+    const keySources=(obj.keyframes||[]).map(key=>({
+      key,
+      points:Array.isArray(key.points)&&key.points.length>=3
+        ? key.points.map(point=>({x:Number(point.x)||0,y:Number(point.y)||0}))
+        : baseSourcePoints.map(point=>({x:point.x,y:point.y})),
+      handles:Array.isArray(key.bezierHandles)&&key.bezierHandles.length===(Array.isArray(key.points)?key.points.length:0)
+        ? copyBezierHandles(key.bezierHandles)
+        : copyBezierHandles(baseSourceHandles)
+    }));
+
+    const baseGeometry=bestFitEllipseGeometry(baseSourcePoints,count,baseSourceHandles);
+    obj.points=baseGeometry.points;
+    obj.bezierHandles=baseGeometry.handles;
+    obj.bezierModes=baseGeometry.modes;
+
+    keySources.forEach(source=>{
+      const geometry=bestFitEllipseGeometry(source.points,count,source.handles);
+      source.key.points=geometry.points;
+      source.key.bezierHandles=geometry.handles;
+      source.key.bezierModes=geometry.modes;
+    });
+
+    if(obj.demBones){
+      obj.demBones.restPoints=obj.points.map(point=>({x:point.x,y:point.y}));
+      obj.demBones.weights=[];
+      obj.demBones.needsRebind=true;
+      logToSandbox('Ellipse point count changed. Rebind Dem Bones if this shape was already rigged.');
+    }
+    bezierSelectedAnchorIndex=Math.max(0,Math.min(count-1,bezierSelectedAnchorIndex));
+    updateCurveSettingsPanel(); renderBezierCurveHandles(); renderTimeline(); renderLayerList();
+    return true;
+  }
+
+  function suggestedBezierHandles(obj,pointsNow,index){
+    const count=pointsNow.length;
+    const point=pointsNow[index];
+    if(!point||count<2) return {inX:-24,inY:0,outX:24,outY:0};
+    const closed=!!obj.closedPath;
+    const previous=index>0?pointsNow[index-1]:(closed?pointsNow[count-1]:null);
+    const next=index<count-1?pointsNow[index+1]:(closed?pointsNow[0]:null);
+    let tangentX=0,tangentY=0,length=24;
+    if(previous&&next){
+      tangentX=next.x-previous.x;tangentY=next.y-previous.y;
+      length=Math.min(Math.hypot(point.x-previous.x,point.y-previous.y),Math.hypot(next.x-point.x,next.y-point.y))/3;
+    }else if(next){
+      tangentX=next.x-point.x;tangentY=next.y-point.y;length=Math.hypot(tangentX,tangentY)/3;
+    }else if(previous){
+      tangentX=point.x-previous.x;tangentY=point.y-previous.y;length=Math.hypot(tangentX,tangentY)/3;
+    }
+    const magnitude=Math.max(.0001,Math.hypot(tangentX,tangentY));
+    length=Math.max(18,Math.min(60,length));
+    return {inX:-tangentX/magnitude*length,inY:-tangentY/magnitude*length,outX:tangentX/magnitude*length,outY:tangentY/magnitude*length};
+  }
+
+  function setSelectedBezierAnchorMode(mode){
+    const obj=currentBezierObject();
+    if(!obj) return;
+    pushUndo();
+    if(!Array.isArray(obj.bezierModes)) obj.bezierModes=obj.points.map(()=> 'corner');
+    const index=Math.max(0,Math.min(obj.points.length-1,bezierSelectedAnchorIndex));
+    obj.bezierModes[index]=mode==='smooth'?'smooth':'corner';
+    if(mode==='smooth'){
+      const pointsNow=currentEditablePointArray(obj);
+      if(pointsNow[index]){
+        const handles=currentBezierHandles(obj);
+        handles[index]=suggestedBezierHandles(obj,pointsNow,index);
+        writeBezierHandlesAtCurrentTime(obj,handles);
+      }
+    }
+    updateCurveSettingsPanel(); renderBezierCurveHandles(); renderTimeline();
+  }
+
+  function resetSelectedBezierHandles(){
+    const obj=currentBezierObject();
+    if(!obj) return;
+    pushUndo();
+    const index=Math.max(0,Math.min(obj.points.length-1,bezierSelectedAnchorIndex));
+    const handles=currentBezierHandles(obj);
+    handles[index]={inX:0,inY:0,outX:0,outY:0};
+    if(!Array.isArray(obj.bezierModes)) obj.bezierModes=obj.points.map(()=> 'corner');
+    obj.bezierModes[index]='corner';
+    writeBezierHandlesAtCurrentTime(obj,handles);
+    updateCurveSettingsPanel(); renderBezierCurveHandles(); renderTimeline();
+  }
+
+  function updateCurveSettingsPanel(){
+    const info=document.getElementById('curve-shape-info');
+    const row=document.getElementById('curve-point-count-row');
+    const slider=document.getElementById('curve-point-count');
+    const value=document.getElementById('val-curve-point-count');
+    const smooth=document.getElementById('btn-curve-smooth');
+    const corner=document.getElementById('btn-curve-corner');
+    const reset=document.getElementById('btn-curve-reset-handles');
+    const obj=currentBezierObject();
+    if(!obj){
+      info.textContent='Select a line, rectangle, ellipse or drawing on the stage.';
+      row.style.display='none'; smooth.disabled=true; corner.disabled=true; reset.disabled=true;
+      return;
+    }
+    const pointCount=(obj.points||[]).length;
+    info.textContent=objectLayerName(obj)+' — '+pointCount+' Bezier anchor'+(pointCount===1?'':'s');
+    smooth.disabled=corner.disabled=reset.disabled=pointCount===0;
+    const mode=(obj.bezierModes&&obj.bezierModes[bezierSelectedAnchorIndex])||'corner';
+    smooth.classList.toggle('active',mode==='smooth');
+    corner.classList.toggle('active',mode!=='smooth');
+    if(obj.bezierShapeKind==='ellipse'){
+      const limit=Math.max(3,Math.round(Number(obj.bezierPointLimit)||pointCount));
+      row.style.display='flex'; slider.min='3'; slider.max=String(limit); slider.value=String(pointCount); value.textContent=String(pointCount);
+      slider.title='Ellipse anchors: minimum 3, maximum '+limit;
+    }else row.style.display='none';
+  }
+
+  function handleBezierCurveStageMouseDown(event){
+    const point=canvasCoords(event.clientX,event.clientY);
+    let hit=-1;
+    for(let index=drawObjects.length-1;index>=0;index--){
+      const obj=drawObjects[index];
+      if(obj.enabled===false||!shapeCanEditPoints(obj)) continue;
+      if(pointInBounds(point.x,point.y,getEffectiveBounds(obj),8)){hit=index;break;}
+    }
+    if(hit>=0){
+      beginBezierCurveEdit(hit,true);
+      event.preventDefault(); event.stopPropagation();
+    }else{
+      document.getElementById('curve-shape-info').textContent='No editable vector under the pointer. Click a line, rectangle, ellipse or drawing.';
+    }
+  }
+
   function renderTransformHandles(){
-    overlay.querySelectorAll('.xform-handle, .xform-rotate-handle').forEach(e=>e.remove());
+    overlay.querySelectorAll('.xform-handle, .xform-rotate-handle, .shape-point-handle, .bezier-anchor-handle, .bezier-control-handle, .bezier-handle-line, .pen-edit-anchor, .pen-edit-control, .pen-edit-bend, .pen-edit-width, .pen-edit-line').forEach(e=>e.remove());
+    if(exportPlayback.active) return;
+    if(stageTool==='bcurve' && currentBezierObject()){ renderBezierCurveHandles(); return; }
+    const penSelection=getSelectedSingleObject();
+    if(stageTool==='pen'&&penSelection&&penSelection.obj&&penSelection.obj.penStroke){renderPenStrokeHandles(penSelection.obj);return;}
     if(shapePointEditMode){ renderShapePointHandles(); return; }
     if(!selectShapesMode) return;
     const sel = getSelectedSingleObject();
@@ -3772,7 +5622,9 @@ ctx.fill();</textarea>
         function onMove(ev){
           const cc = canvasCoords(ev.clientX, ev.clientY);
           const dist = Math.hypot(cc.x-ltStart.pivotX, cc.y-ltStart.pivotY);
-          const newScale = Math.max(0.1, Math.min(6, dist / baseDist));
+          let newScale = Math.max(0.1, Math.min(6, dist / baseDist));
+          const parent=getGroupParentPoseForObject(obj);
+          if(parent) newScale=Math.max(0.1,Math.min(6,newScale/Math.max(.0001,Math.abs(parent.scale))));
           setObjectFieldForCurrentTime(obj, obj.type === 'clipinstance' ? 'scale' : 'tscale', newScale);
           updateInspector();
         }
@@ -3800,7 +5652,9 @@ ctx.fill();</textarea>
       const ltStart = getLiveTransform(obj, getEffectiveObj(obj, t));
       function onMove(ev){
         const cc = canvasCoords(ev.clientX, ev.clientY);
-        const deg = Math.atan2(cc.y-ltStart.pivotY, cc.x-ltStart.pivotX) * 180/Math.PI + 90;
+        let deg = Math.atan2(cc.y-ltStart.pivotY, cc.x-ltStart.pivotX) * 180/Math.PI + 90;
+        const parent=getGroupParentPoseForObject(obj);
+        if(parent) deg-=parent.rotation;
         setObjectFieldForCurrentTime(obj, obj.type === 'clipinstance' ? 'rotation' : 'trotation', deg);
         updateInspector();
       }
@@ -3818,6 +5672,10 @@ ctx.fill();</textarea>
   function renderClipPivotCross(){
     const shell = document.getElementById('canvas-shell');
     let cross = document.getElementById('clip-pivot-cross');
+    if(exportPlayback.active){
+      if(cross) cross.remove();
+      return;
+    }
     if(!editingClipId){
       if(cross) cross.remove();
       return;
@@ -3864,6 +5722,8 @@ ctx.fill();</textarea>
   }
 
   function getSelectedSingleObject(){
+    const isolated=getIsolatedGroupInfo();
+    if(isolated) return {obj:isolated.child,idx:isolated.rootIndex,group:isolated.group,childIndex:isolated.childIndex,isolated:true};
     if(selectedDrawIndices.size !== 1) return null;
     const idx = Array.from(selectedDrawIndices)[0];
     return { obj: drawObjects[idx], idx };
@@ -3877,11 +5737,11 @@ ctx.fill();</textarea>
     section.style.display = 'block';
     const obj = sel.obj;
     const isClip = obj.type === 'clipinstance';
-    document.getElementById('inspector-label').textContent = isClip
-      ? (clips[obj.clipId] ? clips[obj.clipId].name : 'Clip instance')
-      : (obj.type.charAt(0).toUpperCase()+obj.type.slice(1));
-    const canFill = !isClip && (obj.type === 'rect' || obj.type === 'ellipse' || obj.type === 'text' || (obj.type === 'freehand' && obj.closedPath));
-    const canStroke = !isClip;
+    document.getElementById('inspector-label').textContent = sel.isolated
+      ? (objectLayerName(sel.group) + ' › ' + objectLayerName(obj))
+      : (isClip ? (clips[obj.clipId] ? clips[obj.clipId].name : 'Clip instance') : drawObjectTypeLabel(obj.type));
+    const canFill = !isClip && obj.type !== 'group' && (obj.type === 'rect' || obj.type === 'ellipse' || obj.type === 'text' || (obj.type === 'freehand' && obj.closedPath));
+    const canStroke = !isClip && obj.type !== 'group';
     const canRoundCorners = !isClip && obj.type === 'rect';
     document.getElementById('insp-fill-row').style.display = canFill ? 'flex' : 'none';
     document.getElementById('insp-stroke-row').style.display = canStroke ? 'flex' : 'none';
@@ -4070,6 +5930,10 @@ ctx.fill();</textarea>
     setAutoKeyframe(!autoKeyframe);
   });
 
+  document.getElementById('btn-onion-skin').addEventListener('click', ()=>{
+    setOnionSkin(!onionSkinEnabled);
+  });
+
   function renderKeyframeList(obj){
     const list = document.getElementById('keyframe-list');
     if(!list) return;
@@ -4087,7 +5951,8 @@ ctx.fill();</textarea>
       row.className = 'keyframe-row';
       const label = document.createElement('span');
       label.className = 'layer-name';
-      label.textContent = kf.time.toFixed(2) + 's';
+      const easing = getObjectKeyframeEasing(obj,kf);
+      label.textContent = kf.time.toFixed(2) + 's · ' + keyframeEasingLabel(easing);
       const del = document.createElement('button');
       del.className = 'layer-btn del';
       del.textContent = '\u2715';
@@ -4102,9 +5967,81 @@ ctx.fill();</textarea>
       row.appendChild(label);
       row.appendChild(del);
       row.addEventListener('click', ()=>{ t = kf.time; updateInspector(); });
+      row.addEventListener('contextmenu', event=> openKeyframeContextMenu(event, {
+        getEasing:()=>getObjectKeyframeEasing(obj,kf),
+        setEasing:value=>setObjectKeyframeEasing(obj,kf,value),
+        addKey:()=>addObjectKeyAtPlayhead(obj,kf),
+        deleteKey:()=>deleteObjectKey(obj,kf)
+      }));
       list.appendChild(row);
     });
   }
+
+  function refreshGroupBounds(group){
+    if(!group || group.type!=='group') return;
+    group.groupBounds=calculateGroupBounds(group.children,0);
+  }
+
+  function createGroupFromSelection(){
+    if(selectedDrawIndices.size < 2){logToSandbox('Select at least two stage objects to group',true);return false;}
+    const indices=Array.from(selectedDrawIndices).filter(index=>index>=0&&index<drawObjects.length).sort((a,b)=>a-b);
+    if(indices.length<2) return false;
+    pushUndo();
+    const children=indices.map(index=>JSON.parse(JSON.stringify(drawObjects[index])));
+    children.forEach(ensureDrawObjectMetadata);
+    const bounds=calculateGroupBounds(children,t);
+    groupCounter++;
+    const group=ensureDrawObjectMetadata({
+      id:'group-'+groupCounter,
+      type:'group',
+      name:'Group '+groupCounter,
+      children,
+      groupBounds:bounds,
+      tx:0,ty:0,tscale:1,trotation:0,opacity:1,keyframes:[],enabled:true,panelId:'animate'
+    });
+    const insertIndex=indices[0];
+    indices.slice().reverse().forEach(index=>drawObjects.splice(index,1));
+    drawObjects.splice(insertIndex,0,group);
+    selectedDrawIndices.clear();selectedDrawIndices.add(insertIndex);
+    isolatedGroupEdit=null;
+    updateSelectedCountUI();renderLayerList();renderTimeline();renderTransformHandles();
+    logToSandbox('Grouped '+children.length+' objects as "'+group.name+'". Double-click any visible child to edit it; click outside the group to return.');
+    return true;
+  }
+
+  function exitGroupIsolation(){
+    const isolated=getIsolatedGroupInfo();
+    if(!isolated){isolatedGroupEdit=null;return false;}
+    isolatedGroupEdit=null;
+    selectedDrawIndices.clear();selectedDrawIndices.add(isolated.rootIndex);
+    if(shapePointEditMode) setShapePointEditMode(false);
+    bezierCurveObjectId=null;
+    updateSelectedCountUI();renderLayerList();renderTimeline();renderTransformHandles();
+    logToSandbox('Returned to '+objectLayerName(isolated.group)+'.');
+    return true;
+  }
+
+  function enterGroupChildIsolation(rootIndex,stagePoint){
+    const group=drawObjects[rootIndex];
+    if(!group||group.type!=='group'||!Array.isArray(group.children)) return false;
+    const localPoint=stagePointToGroupLocal(group,stagePoint,t);
+    let childIndex=-1;
+    for(let index=group.children.length-1;index>=0;index--){
+      const child=group.children[index];
+      if(child.enabled===false) continue;
+      if(pointInBounds(localPoint.x,localPoint.y,getStandaloneEffectiveBounds(child,t),8)){childIndex=index;break;}
+    }
+    if(childIndex<0) return false;
+    isolatedGroupEdit={rootIndex,childIndex};
+    selectedDrawIndices.clear();selectedDrawIndices.add(rootIndex);
+    routeSelectionToPanel(panelForDrawObject(group.children[childIndex]),true);
+    updateSelectedCountUI();renderLayerList();renderTimeline();renderTransformHandles();
+    return true;
+  }
+
+  const groupSelectedButton=document.getElementById('btn-group-selected');
+  if(groupSelectedButton) groupSelectedButton.addEventListener('click',createGroupFromSelection);
+  document.getElementById('btn-exit-group-isolation').addEventListener('click',exitGroupIsolation);
 
   document.getElementById('btn-convert-to-clip').addEventListener('click', ()=>{
     if(selectedDrawIndices.size === 0){ logToSandbox('Select at least one shape first', true); return; }
@@ -4500,7 +6437,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 80,
+    version: 98,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -4511,6 +6448,12 @@ ctx.fill();</textarea>
     get fps(){
       return Math.max(1, Math.min(120, parseInt(document.getElementById('inp-fps').value, 10) || 30));
     },
+    get onionSkinEnabled(){ return onionSkinEnabled; },
+    get isExporting(){ return exportPlayback.active; },
+    get onionSkinBeforeFrames(){ return onionSkinBeforeFrames; },
+    get onionSkinAfterFrames(){ return onionSkinAfterFrames; },
+    setOnionSkin(enabled){ setOnionSkin(enabled); },
+    setOnionSkinRange(beforeFrames, afterFrames){ return setOnionSkinRange(beforeFrames, afterFrames); },
     get activePanel(){
       const tab = document.querySelector('.devtab.active');
       return tab ? tab.dataset.panel : 'animate';
@@ -4544,6 +6487,8 @@ ctx.fill();</textarea>
     setClipPivot(clipId, x, y){ return moveClipPivotPreserveStage(clipId, x, y); },
     getDrawObjects(){ return drawObjects; },
     getSelectedDrawObjects(){
+      const isolated=getIsolatedGroupInfo();
+      if(isolated) return [isolated.child];
       return Array.from(selectedDrawIndices).map(index=> drawObjects[index]).filter(Boolean);
     },
     getTimelineDuration(){ return timelineDuration; },
@@ -4584,8 +6529,18 @@ ctx.fill();</textarea>
       return true;
     },
     convertDrawObjectToEditablePath(object){ return convertDrawObjectToEditablePath(object); },
+    convertDrawObjectToBezierPath(object){ return convertDrawObjectToBezierPath(object); },
+    beginBezierCurveEdit(index){ return beginBezierCurveEdit(index,true); },
     insertDrawObjectPoint(object, scenePoint){ return insertEditableShapePoint(object, scenePoint, true); },
     subdivideDrawObjectPoints(object){ return subdivideEditableShape(object); },
+    getKeyframeInterpolation(object, keyframe){ return getObjectKeyframeEasing(object, keyframe); },
+    setKeyframeInterpolation(object, keyframe, easing){
+      pushUndo();
+      const result = setObjectKeyframeEasing(object, keyframe, easing);
+      renderTimeline();
+      updateInspector();
+      return result;
+    },
     reloadConfig(){ return loadLukeAnimateConfig(true); }
   };
   window.LukeAnimate = LukeAnimatePluginAPI;
@@ -4831,11 +6786,27 @@ ctx.fill();</textarea>
   function deleteSelectedDrawObjects(){
     finishStageTextEntry(false);
     if(shapePointEditMode) setShapePointEditMode(false);
+    const isolated=getIsolatedGroupInfo();
+    if(isolated){
+      pushUndo();
+      isolated.group.children.splice(isolated.childIndex,1);
+      if(isolated.group.children.length===0){
+        drawObjects.splice(isolated.rootIndex,1);
+        selectedDrawIndices.clear();
+      }else{
+        refreshGroupBounds(isolated.group);
+        selectedDrawIndices.clear();selectedDrawIndices.add(isolated.rootIndex);
+      }
+      isolatedGroupEdit=null;
+      updateSelectedCountUI();renderLayerList();renderTimeline();renderPoints();
+      return true;
+    }
     if(selectedDrawIndices.size === 0) return false;
     pushUndo();
     const indices = Array.from(selectedDrawIndices).filter(i=>i >= 0 && i < drawObjects.length).sort((a,b)=>b-a);
     indices.forEach(index=> drawObjects.splice(index,1));
     selectedDrawIndices.clear();
+    if(stageTool==='bcurve'){bezierCurveObjectId=null;updateCurveSettingsPanel();}
     updateSelectedCountUI();
     renderLayerList();
     renderPoints();
@@ -4854,7 +6825,9 @@ ctx.fill();</textarea>
 
   function selectDrawObject(index, additive, openOwnerPanel){
     if(index < 0 || index >= drawObjects.length) return;
-    const obj = ensureDrawObjectMetadata(drawObjects[index]);
+    const isolated=getIsolatedGroupInfo();
+    const obj = ensureDrawObjectMetadata(isolated && isolated.rootIndex===index ? isolated.child : drawObjects[index]);
+    if(isolated && isolated.rootIndex===index) additive=false;
     if(shapePointEditMode && obj.id !== shapePointEditObjectId) setShapePointEditMode(false);
     if(additive){
       if(selectedDrawIndices.has(index)) selectedDrawIndices.delete(index);
@@ -4871,6 +6844,12 @@ ctx.fill();</textarea>
     if(obj.type === 'text' && document.getElementById('text-settings-panel').classList.contains('open')){
       syncTextPanelFromSelected();
     }
+    if(stageTool==='bcurve' && shapeCanEditPoints(obj) && selectedDrawIndices.has(index)){
+      bezierCurveObjectId=obj.id;
+      updateCurveSettingsPanel();
+      renderBezierCurveHandles();
+    }
+    if(stageTool==='pen') updateInkSettingsPanel('pen');
   }
 
   function effectHitRadius(layer, usesPoint){
@@ -4928,7 +6907,8 @@ ctx.fill();</textarea>
   }
 
   function startObjectStageDrag(index, startCanvas){
-    const obj = drawObjects[index];
+    const isolated=getIsolatedGroupInfo();
+    const obj = isolated && isolated.rootIndex===index ? isolated.child : drawObjects[index];
     if(!obj || panelForDrawObject(obj) !== 'animate') return;
     const isClip = obj.type === 'clipinstance';
     const effStart = getEffectiveObj(obj, t);
@@ -4941,7 +6921,9 @@ ctx.fill();</textarea>
 
     function onMove(ev){
       const cc = canvasCoords(ev.clientX, ev.clientY);
-      const dx = cc.x - startCanvas.x, dy = cc.y - startCanvas.y;
+      let dx = cc.x - startCanvas.x, dy = cc.y - startCanvas.y;
+      const parentInfo=getIsolatedGroupInfo();
+      if(parentInfo && parentInfo.child===obj){const localDelta=groupStageDeltaToLocal(parentInfo.group,dx,dy,t);dx=localDelta.x;dy=localDelta.y;}
       if(!historyPushed && Math.hypot(dx,dy) >= 0.5){
         pushUndo();
         historyPushed = true;
@@ -5006,6 +6988,12 @@ ctx.fill();</textarea>
       return;
     }
 
+    // The Bezier Curve tool selects and edits existing stage vectors; it does not draw a new primitive.
+    if(stageTool === 'bcurve'){
+      handleBezierCurveStageMouseDown(e);
+      return;
+    }
+
     // Drawing tools always win. They work from every panel.
     if(stageTool !== 'none'){
       handleDrawMouseDown(e);
@@ -5031,6 +7019,23 @@ ctx.fill();</textarea>
     }
 
     const c = canvasCoords(e.clientX, e.clientY);
+
+    const isolated=getIsolatedGroupInfo();
+    if(isolated){
+      const groupBounds=getEffectiveBounds(isolated.group);
+      if(!pointInBounds(c.x,c.y,groupBounds,8)){
+        // Clicking away finishes child editing and restores the group as the
+        // single selectable/keyframeable stage object.
+        exitGroupIsolation();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      const childBounds=getGroupChildStageBounds(isolated.group,isolated.child,t);
+      if(pointInBounds(c.x,c.y,childBounds,6)) startObjectStageDrag(isolated.rootIndex,c);
+      e.preventDefault();
+      return;
+    }
 
     // Stage objects are selectable from every panel. Their owning panel opens automatically.
     let hitObjectIndex = -1;
@@ -5100,6 +7105,14 @@ ctx.fill();</textarea>
   overlay.addEventListener('dblclick', (e)=>{
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
     const clickPos = canvasCoords(e.clientX, e.clientY);
+    if(stageTool==='pen'){
+      e.preventDefault();e.stopPropagation();
+      if(performance.now()-penJustFinishedAt<400) return;
+      if(penDraft){finishPenDraft(true);return;}
+      const hit=hitTestPenStroke(clickPos);
+      if(hit){selectDrawObject(hit.index,false,true);if(insertEditableShapePoint(hit.obj,clickPos,true)){if(Array.isArray(hit.obj.bezierModes))hit.obj.bezierModes[shapePointSelectedIndex]='smooth';refreshStablePenHandles(hit.obj);renderTimeline();renderLayerList();logToSandbox('Anchor added to the pen stroke.');}return;}
+      return;
+    }
     for(let i=drawObjects.length-1; i>=0; i--){
       const obj = ensureDrawObjectMetadata(drawObjects[i]);
       if(obj.type !== 'text' || obj.enabled === false) continue;
@@ -5112,10 +7125,28 @@ ctx.fill();</textarea>
         return;
       }
     }
+    if(stageTool !== 'none' || placingClipId) return;
+    const activeIsolation=getIsolatedGroupInfo();
+    if(activeIsolation){
+      if(!pointInBounds(clickPos.x,clickPos.y,getEffectiveBounds(activeIsolation.child),8)) exitGroupIsolation();
+      e.preventDefault();
+      return;
+    }
+    for(let i=drawObjects.length-1;i>=0;i--){
+      const candidate=drawObjects[i];
+      if(!candidate||candidate.type!=='group'||candidate.enabled===false) continue;
+      // enterGroupChildIsolation inverse-maps the click through the group's
+      // current transform, so double-clicking directly over any visible child
+      // works even after the group has moved, scaled, rotated or animated.
+      if(enterGroupChildIsolation(i,clickPos)){
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
     // Double-click a Clip instance to jump straight into its own timeline —
     // works no matter how deep you already are, since it just looks at
     // whatever drawObjects are currently active (main scene or a clip).
-    if(stageTool !== 'none' || placingClipId) return;
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
     const c = canvasCoords(e.clientX, e.clientY);
     for(let i=drawObjects.length-1; i>=0; i--){
@@ -5624,15 +7655,25 @@ ctx.fill();</textarea>
     setZoom(stageZoom + (e.deltaY < 0 ? 0.1 : -0.1));
   }, { passive:false });
 
-  // Ctrl/Cmd + drag pans the stage (grab-and-drag), independent of point editing —
-  // the overlay's own mousedown handler already bails out early when Ctrl/Cmd is held.
+  // Ctrl/Cmd + drag pans only from the stage canvas. The toolbar lives inside
+  // the scrolling stage wrapper, so its transform is counter-scrolled to keep it
+  // permanently visible instead of letting a stage pan drag it off screen.
   (function setupStagePan(){
     const wrap = document.getElementById('stage-wrap');
+    const shell = document.getElementById('canvas-shell');
+    const topbar = document.getElementById('topbar');
     let panning = false, startX = 0, startY = 0, startScrollLeft = 0, startScrollTop = 0;
+
+    function pinToolbar(){
+      if(!topbar) return;
+      topbar.style.transform='translate3d('+wrap.scrollLeft+'px,'+wrap.scrollTop+'px,0)';
+    }
+    pinToolbar();
+    wrap.addEventListener('scroll',pinToolbar,{passive:true});
 
     function updateCursor(e){
       if(panning) return;
-      wrap.style.cursor = (e.ctrlKey || e.metaKey) ? 'grab' : '';
+      wrap.style.cursor = (e.ctrlKey || e.metaKey) && shell.contains(e.target) ? 'grab' : '';
     }
     window.addEventListener('keydown', updateCursorFromKeyEvent);
     window.addEventListener('keyup', updateCursorFromKeyEvent);
@@ -5642,24 +7683,40 @@ ctx.fill();</textarea>
       wrap.style.cursor = (e.ctrlKey || e.metaKey) ? 'grab' : '';
     }
     wrap.addEventListener('mousemove', updateCursor);
+    wrap.addEventListener('dragstart',e=>{
+      if((e.ctrlKey||e.metaKey) && shell.contains(e.target)) e.preventDefault();
+    });
 
     wrap.addEventListener('mousedown', (e)=>{
-      if(!(e.ctrlKey || e.metaKey)) return;
+      if(!(e.ctrlKey || e.metaKey) || !shell.contains(e.target)) return;
       panning = true;
       startX = e.clientX; startY = e.clientY;
       startScrollLeft = wrap.scrollLeft; startScrollTop = wrap.scrollTop;
       wrap.style.cursor = 'grabbing';
+      document.documentElement.style.userSelect='none';
       e.preventDefault();
+      e.stopPropagation();
     });
     window.addEventListener('mousemove', (e)=>{
       if(!panning) return;
       wrap.scrollLeft = startScrollLeft - (e.clientX - startX);
       wrap.scrollTop = startScrollTop - (e.clientY - startY);
-    });
+      pinToolbar();
+      e.preventDefault();
+    }, {passive:false});
     window.addEventListener('mouseup', (e)=>{
       if(!panning) return;
       panning = false;
+      document.documentElement.style.userSelect='';
       wrap.style.cursor = (e.ctrlKey || e.metaKey) ? 'grab' : '';
+      pinToolbar();
+    });
+    window.addEventListener('blur',()=>{
+      if(!panning) return;
+      panning=false;
+      document.documentElement.style.userSelect='';
+      wrap.style.cursor='';
+      pinToolbar();
     });
   })();
 
@@ -5863,7 +7920,12 @@ ctx.fill();</textarea>
       list.appendChild(row);
     });
 
-    drawObjects.forEach((obj, idx)=>{
+    const isolatedLayerInfo=getIsolatedGroupInfo();
+    const objectLayerEntries=isolatedLayerInfo
+      ? [{obj:isolatedLayerInfo.child,idx:isolatedLayerInfo.rootIndex,isolated:true}]
+      : drawObjects.map((obj,idx)=>({obj,idx,isolated:false}));
+    objectLayerEntries.forEach(entry=>{
+      const obj=entry.obj,idx=entry.idx;
       ensureDrawObjectMetadata(obj);
       const row = document.createElement('div');
       row.className = 'layer-row object-layer' + (selectedDrawIndices.has(idx) ? ' active' : '');
@@ -5880,7 +7942,7 @@ ctx.fill();</textarea>
 
       const name = document.createElement('span');
       name.className = 'layer-name' + (obj.enabled === false ? ' off' : '');
-      name.textContent = objectLayerName(obj);
+      name.textContent = entry.isolated ? ('↳ '+objectLayerName(obj)) : objectLayerName(obj);
       name.title = 'Select to open ' + panelForDrawObject(obj);
 
       const visBtn = document.createElement('button');
@@ -5900,7 +7962,7 @@ ctx.fill();</textarea>
       delBtn.textContent = '✕';
       delBtn.addEventListener('click', (e)=>{
         e.stopPropagation();
-        deleteDrawObject(idx);
+        if(entry.isolated) deleteSelectedDrawObjects(); else deleteDrawObject(idx);
       });
 
       row.appendChild(badge);
@@ -6031,18 +8093,42 @@ ctx.fill();</textarea>
     return Math.max(0, Math.min(timelineDuration, Math.round(time * fps) / fps));
   }
 
+  function timelineTimeFromTrackClientX(track, clientX){
+    const rect = track && track.getBoundingClientRect ? track.getBoundingClientRect() : null;
+    if(!rect || rect.width <= 0) return snapTimeToFrame(t);
+    const pointerX = Number(clientX);
+    if(!Number.isFinite(pointerX)) return snapTimeToFrame(t);
+    const fraction = Math.max(0, Math.min(1, (pointerX - rect.left) / rect.width));
+    return snapTimeToFrame(fraction * timelineDuration);
+  }
+
+  function timelineFrameLabelAtTime(time){
+    const snapped = snapTimeToFrame(time);
+    return `Frame ${Math.round(snapped * getTimelineFPS())} · ${snapped.toFixed(3)}s`;
+  }
+
   function addObjectKeyframeDots(track, obj){
     (obj.keyframes || []).forEach(kf=>{
       const dot = document.createElement('div');
+      const easing = getObjectKeyframeEasing(obj, kf);
       dot.className = 'timeline-key-dot';
+      dot.dataset.easing = easing === 'mixed' ? 'linear' : easing;
       dot.style.left = Math.max(0, Math.min(100, (kf.time/timelineDuration)*100)) + '%';
-      dot.title = `Frame ${Math.round(kf.time*getTimelineFPS())} · ${kf.time.toFixed(3)}s — drag to retime`;
+      dot.title = `Frame ${Math.round(kf.time*getTimelineFPS())} · ${kf.time.toFixed(3)}s · ${keyframeEasingLabel(easing)} — drag to retime, right-click for key commands and interpolation`;
+      dot.addEventListener('contextmenu', event=> openKeyframeContextMenu(event, {
+        getEasing:()=>getObjectKeyframeEasing(obj,kf),
+        setEasing:value=>setObjectKeyframeEasing(obj,kf,value),
+        addKey:()=>addObjectKeyAtPlayhead(obj,kf),
+        deleteKey:()=>deleteObjectKey(obj,kf)
+      }));
 
       let moved = false;
       let startX = 0;
       let startTime = kf.time;
       dot.addEventListener('mousedown', (e)=>{
+        if(e.button !== 0) return;
         e.stopPropagation();
+        closeKeyframeContextMenu();
         pushUndo();
         startX = e.clientX;
         startTime = kf.time;
@@ -6070,8 +8156,94 @@ ctx.fill();</textarea>
     });
   }
 
+  function addDemBonesTimelineRows(tracksEl){
+    const seenRigs = new Set();
+    drawObjects.forEach(object=>{
+      const rig = object && object.demBones && object.demBones.rig;
+      if(!rig || !Array.isArray(rig.bones) || seenRigs.has(rig.id || rig)) return;
+      seenRigs.add(rig.id || rig);
+      rig.bones.forEach((bone,boneIndex)=>{
+        if(!Array.isArray(bone.keys)) bone.keys = [];
+        const row = document.createElement('div');
+        row.className = 'timeline-track-row';
+        const name = document.createElement('div');
+        name.className = 'timeline-track-name';
+        name.textContent = 'Bone ' + (bone.name || (boneIndex + 1));
+        name.title = 'Dem Bones animation keys';
+        const track = document.createElement('div');
+        track.className = 'timeline-track';
+        const span = document.createElement('div');
+        span.className = 'timeline-object-span';
+        span.style.opacity = '.42';
+        span.title = bone.keys.length
+          ? `${bone.keys.length} Dem Bones keyframe(s) · right-click anywhere on this row to add another key`
+          : 'No Dem Bones keys · right-click anywhere on this row to add a key';
+        track.appendChild(span);
+        track.addEventListener('contextmenu', event=>{
+          const keyTime = timelineTimeFromTrackClientX(track, event.clientX);
+          openKeyframeContextMenu(event, {
+            addKey:()=>{
+              t = keyTime;
+              addDemBonesKeyAtTime(bone, null, keyTime);
+            },
+            addKeyHint:`Add a Dem Bones key at ${timelineFrameLabelAtTime(keyTime)}`
+          });
+        });
+        bone.keys.forEach(key=>{
+          const dot = document.createElement('div');
+          const easing = normalizeKeyframeEasing(key.easing);
+          dot.className = 'timeline-key-dot';
+          dot.dataset.easing = easing;
+          dot.style.left = Math.max(0, Math.min(100, (key.time/timelineDuration)*100)) + '%';
+          dot.title = `Frame ${Math.round(key.time*getTimelineFPS())} · ${Number(key.time).toFixed(3)}s · ${keyframeEasingLabel(easing)} — drag to retime, right-click for key commands and interpolation`;
+          dot.addEventListener('contextmenu', event=> openKeyframeContextMenu(event, {
+            getEasing:()=>normalizeKeyframeEasing(key.easing),
+            setEasing:value=>{ key.easing = normalizeKeyframeEasing(value); },
+            addKey:()=>addDemBonesKeyAtPlayhead(bone,key),
+            deleteKey:()=>deleteDemBonesKey(bone,key)
+          }));
+          let moved = false;
+          let startX = 0;
+          let startTime = Number(key.time) || 0;
+          dot.addEventListener('mousedown', event=>{
+            if(event.button !== 0) return;
+            event.stopPropagation();
+            closeKeyframeContextMenu();
+            pushUndo();
+            startX = event.clientX;
+            startTime = Number(key.time) || 0;
+            const trackWidth = track.getBoundingClientRect().width || 1;
+            function onMove(moveEvent){
+              moved = true;
+              const dt = ((moveEvent.clientX - startX) / trackWidth) * timelineDuration;
+              key.time = snapTimeToFrame(startTime + dt);
+              bone.keys.sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
+              renderTimeline();
+              updateInspector();
+            }
+            function onUp(){
+              window.removeEventListener('mousemove', onMove);
+              window.removeEventListener('mouseup', onUp);
+              if(!moved){
+                t = Number(key.time) || 0;
+                updateInspector();
+              }
+            }
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+          });
+          track.appendChild(dot);
+        });
+        row.appendChild(name);
+        row.appendChild(track);
+        tracksEl.appendChild(row);
+      });
+    });
+  }
+
   function renderTimeline(){
     renderFrameRuler();
+    updateOnionRangeUI();
     const tracksEl = document.getElementById('timeline-tracks');
     tracksEl.innerHTML = '';
 
@@ -6149,7 +8321,12 @@ ctx.fill();</textarea>
     });
 
     normalizeAllDrawObjects();
-    drawObjects.forEach((obj, idx)=>{
+    const isolatedTimelineInfo=getIsolatedGroupInfo();
+    const timelineObjectEntries=isolatedTimelineInfo
+      ? [{obj:isolatedTimelineInfo.child,idx:isolatedTimelineInfo.rootIndex,isolated:true}]
+      : drawObjects.map((obj,idx)=>({obj,idx,isolated:false}));
+    timelineObjectEntries.forEach(entry=>{
+      const obj=entry.obj,idx=entry.idx;
       const row = document.createElement('div');
       row.className = 'timeline-track-row';
       const name = document.createElement('div');
@@ -6170,12 +8347,26 @@ ctx.fill();</textarea>
         selectDrawObject(idx, e.shiftKey, true);
       });
       track.appendChild(span);
+      track.addEventListener('contextmenu', event=>{
+        const keyTime = timelineTimeFromTrackClientX(track, event.clientX);
+        openKeyframeContextMenu(event, {
+          addKey:()=>{
+            t = keyTime;
+            addObjectKeyAtTime(obj, null, keyTime);
+            selectedDrawIndices.clear();
+            selectedDrawIndices.add(idx);
+            updateSelectedCountUI();
+          },
+          addKeyHint:`Add a key to ${objectLayerName(obj)} at ${timelineFrameLabelAtTime(keyTime)}`
+        });
+      });
       addObjectKeyframeDots(track, obj);
       row.appendChild(name);
       row.appendChild(track);
       row.addEventListener('click', (e)=> selectDrawObject(idx, e.shiftKey, true));
       tracksEl.appendChild(row);
     });
+    addDemBonesTimelineRows(tracksEl);
   }
 
   function scrubToClientX(clientX){
@@ -6207,7 +8398,47 @@ ctx.fill();</textarea>
 
   document.getElementById('timeline-ruler').addEventListener('mousedown', beginTimelineScrub);
   document.getElementById('timeline-playhead-handle').addEventListener('mousedown', beginTimelineScrub);
-  document.getElementById('inp-fps').addEventListener('change', renderTimeline);
+
+  function beginOnionRangeDrag(event, side){
+    event.preventDefault();
+    event.stopPropagation();
+    playing = false;
+    stopAudioIfLoaded();
+    const ruler = document.getElementById('timeline-ruler');
+    const rect = ruler.getBoundingClientRect();
+    const info = getTimelineFrameInfo();
+    const currentFrame = Math.max(0, Math.min(info.totalFrames, Math.round(t * info.fps)));
+    const originalBefore = onionSkinBeforeFrames;
+    const originalAfter = onionSkinAfterFrames;
+    let historyPushed = false;
+
+    function onMove(ev){
+      const frac = Math.max(0, Math.min(1, (ev.clientX - rect.left) / Math.max(1, rect.width)));
+      const targetFrame = Math.round(frac * info.totalFrames);
+      let before = originalBefore;
+      let after = originalAfter;
+      if(side === 'before') before = clampOnionFrameCount(currentFrame - targetFrame);
+      else after = clampOnionFrameCount(targetFrame - currentFrame);
+      if(!historyPushed && (before !== onionSkinBeforeFrames || after !== onionSkinAfterFrames)){
+        pushUndo();
+        historyPushed = true;
+      }
+      onionSkinBeforeFrames = before;
+      onionSkinAfterFrames = after;
+      updateOnionRangeUI();
+      setOnionSkin(true);
+    }
+    function onUp(){
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  document.getElementById('onion-range-before-handle').addEventListener('mousedown', e=> beginOnionRangeDrag(e, 'before'));
+  document.getElementById('onion-range-after-handle').addEventListener('mousedown', e=> beginOnionRangeDrag(e, 'after'));
+  document.getElementById('inp-fps').addEventListener('change', ()=>{ renderTimeline(); updateOnionRangeUI(); });
   window.addEventListener('resize', renderTimeline);
 
   function syncTimelineDuration(newDuration){
@@ -6558,6 +8789,376 @@ ctx.fill();</textarea>
     return `rgb(${r},${g},${bl})`;
   }
 
+  const KEYFRAME_INTERPOLATIONS = [
+    { value:'linear', label:'Linear', hint:'Constant speed between keys' },
+    { value:'ease-in', label:'Slow Out', hint:'Starts slowly, then accelerates' },
+    { value:'ease-out', label:'Slow In', hint:'Slows down into the next key' },
+    { value:'ease-in-out', label:'Slow Out / Slow In', hint:'Slow at both ends of the movement' },
+    { value:'hold', label:'Hold', hint:'No tween; jump at the next key' }
+  ];
+
+  function normalizeKeyframeEasing(value){
+    const key = String(value || 'linear').toLowerCase();
+    return KEYFRAME_INTERPOLATIONS.some(item=>item.value===key) ? key : 'linear';
+  }
+
+  function keyframeEasingLabel(value){
+    if(value === 'mixed') return 'Mixed';
+    const item = KEYFRAME_INTERPOLATIONS.find(entry=>entry.value===normalizeKeyframeEasing(value));
+    return item ? item.label : 'Linear';
+  }
+
+  function applyKeyframeEasing(frac, easing){
+    const value = Math.max(0, Math.min(1, Number(frac) || 0));
+    if(value <= 0 || value >= 1) return value;
+    switch(normalizeKeyframeEasing(easing)){
+      case 'ease-in': return value * value;
+      case 'ease-out': return 1 - Math.pow(1 - value, 2);
+      case 'ease-in-out': return value < 0.5 ? 2 * value * value : 1 - Math.pow(-2 * value + 2, 2) / 2;
+      case 'hold': return 0;
+      default: return value;
+    }
+  }
+
+  function getObjectKeyframeEasing(obj, keyframe){
+    if(!keyframe) return 'linear';
+    if(keyframe._lukeAnimateStickRigKey && obj && obj._lukeAnimateStickRig){
+      const data = obj._lukeAnimateStickRig;
+      const frame = String(Math.max(1, Math.round(Number(keyframe._stickRigSourceFrame) || 1)));
+      const channels = Array.isArray(keyframe._stickRigChannels) ? keyframe._stickRigChannels : [];
+      const values = channels.map(channelName=>{
+        const channel = data.channels && data.channels[channelName];
+        return normalizeKeyframeEasing(channel && channel.easing ? channel.easing[frame] : keyframe.easing);
+      });
+      const unique = Array.from(new Set(values));
+      if(unique.length > 1) return 'mixed';
+      if(unique.length === 1) return unique[0];
+    }
+    return normalizeKeyframeEasing(keyframe.easing);
+  }
+
+  function setObjectKeyframeEasing(obj, keyframe, easing){
+    const normalized = normalizeKeyframeEasing(easing);
+    if(!keyframe) return normalized;
+    keyframe.easing = normalized;
+    if(keyframe._lukeAnimateStickRigKey && obj && obj._lukeAnimateStickRig){
+      const data = obj._lukeAnimateStickRig;
+      const frame = String(Math.max(1, Math.round(Number(keyframe._stickRigSourceFrame) || 1)));
+      const channels = Array.isArray(keyframe._stickRigChannels) ? keyframe._stickRigChannels : [];
+      channels.forEach(channelName=>{
+        const channel = data.channels && data.channels[channelName];
+        if(channel){
+          if(!channel.easing) channel.easing = {};
+          channel.easing[frame] = normalized;
+        }
+      });
+    }
+    return normalized;
+  }
+
+  function timelineFrameOneBasedAt(time){
+    return Math.max(1, Math.round(snapTimeToFrame(time) * getTimelineFPS()) + 1);
+  }
+
+  function currentTimelineFrameOneBased(){
+    return timelineFrameOneBasedAt(t);
+  }
+
+  function stickRigChannelsAtFrame(data, frame){
+    const found = [];
+    ['move','scale','rotate'].forEach(channelName=>{
+      const channel = data && data.channels && data.channels[channelName];
+      if(channel && channel.keys && channel.keys[String(frame)]) found.push(channelName);
+    });
+    return found;
+  }
+
+  function rebuildStickRigCompiledKeys(obj){
+    const marker = '_lukeAnimateStickRigKey';
+    const data = obj && obj._lukeAnimateStickRig;
+    if(!data || !data.channels) return false;
+    const external = Array.isArray(obj.keyframes) ? obj.keyframes.filter(key=>!key[marker]) : [];
+    const frameSet = new Set();
+    ['move','scale','rotate'].forEach(channelName=>{
+      const channel = data.channels[channelName];
+      if(!channel || !channel.keys) return;
+      Object.keys(channel.keys).forEach(frame=>{
+        const numeric = Math.max(1, Math.round(Number(frame) || 1));
+        frameSet.add(numeric);
+      });
+    });
+    const fps = getTimelineFPS();
+    const compiled = Array.from(frameSet).sort((a,b)=>a-b).map(frame=>{
+      const pose = getEffectiveObj(obj, (frame - 1) / fps);
+      const channels = stickRigChannelsAtFrame(data, frame);
+      const easingValues = channels.map(channelName=>{
+        const channel = data.channels[channelName];
+        return normalizeKeyframeEasing(channel && channel.easing ? channel.easing[String(frame)] : 'linear');
+      });
+      const uniqueEasing = Array.from(new Set(easingValues));
+      return {
+        time:(frame - 1) / fps,
+        easing:uniqueEasing.length === 1 ? uniqueEasing[0] : 'linear',
+        x:Number(pose && pose.x) || 0,
+        y:Number(pose && pose.y) || 0,
+        scale:Math.max(0.01, Number(pose && pose.scale) || 1),
+        rotation:Number(pose && pose.rotation) || 0,
+        [marker]:true,
+        _stickRigSourceFrame:frame,
+        _stickRigChannels:channels
+      };
+    });
+    obj.keyframes = external.concat(compiled).sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
+    return true;
+  }
+
+  function addObjectKeyAtTime(obj, sourceKeyframe, requestedTime){
+    if(!obj) return false;
+    const keyTime = snapTimeToFrame(Number.isFinite(Number(requestedTime)) ? Number(requestedTime) : t);
+    const isStickRigSource = !!(sourceKeyframe && sourceKeyframe._lukeAnimateStickRigKey && obj._lukeAnimateStickRig);
+    const isStickRigTrack = !!(!sourceKeyframe && obj._lukeAnimateStickRig);
+    if((isStickRigSource || isStickRigTrack) && obj._lukeAnimateStickRig){
+      const data = obj._lukeAnimateStickRig;
+      if(!data.channels) data.channels = {};
+      const sourceChannels = isStickRigSource && Array.isArray(sourceKeyframe._stickRigChannels) && sourceKeyframe._stickRigChannels.length
+        ? sourceKeyframe._stickRigChannels.slice()
+        : ['move','scale','rotate'];
+      const frame = timelineFrameOneBasedAt(keyTime);
+      const key = String(frame);
+      const pose = getEffectiveObj(obj, keyTime);
+      const sourceEasing = sourceKeyframe ? getObjectKeyframeEasing(obj, sourceKeyframe) : 'linear';
+      sourceChannels.forEach(channelName=>{
+        if(!data.channels[channelName]) data.channels[channelName] = {keys:{}, easing:{}};
+        const channel = data.channels[channelName];
+        if(!channel.keys) channel.keys = {};
+        if(!channel.easing) channel.easing = {};
+        if(channelName === 'move') channel.keys[key] = {x:Number(pose.x)||0, y:Number(pose.y)||0};
+        else if(channelName === 'scale') channel.keys[key] = {scale:Math.max(0.01, Number(pose.scale)||1)};
+        else if(channelName === 'rotate') channel.keys[key] = {rotation:Number(pose.rotation)||0};
+        channel.easing[key] = sourceEasing === 'mixed' ? 'linear' : normalizeKeyframeEasing(sourceEasing);
+      });
+      rebuildStickRigCompiledKeys(obj);
+      return true;
+    }
+    const keyframe = makeObjectKeyframeSnapshot(obj, keyTime);
+    keyframe.time = keyTime;
+    keyframe.easing = sourceKeyframe ? normalizeKeyframeEasing(sourceKeyframe.easing) : 'linear';
+    upsertObjectKeyframe(obj, keyframe);
+    return true;
+  }
+
+  function addObjectKeyAtPlayhead(obj, sourceKeyframe){
+    return addObjectKeyAtTime(obj, sourceKeyframe, t);
+  }
+
+  function deleteObjectKey(obj, keyframe){
+    if(!obj || !keyframe) return false;
+    if(keyframe._lukeAnimateStickRigKey && obj._lukeAnimateStickRig){
+      const data = obj._lukeAnimateStickRig;
+      const frame = Math.max(1, Math.round(Number(keyframe._stickRigSourceFrame) || 1));
+      const channels = Array.isArray(keyframe._stickRigChannels) && keyframe._stickRigChannels.length
+        ? keyframe._stickRigChannels.slice()
+        : stickRigChannelsAtFrame(data, frame);
+      channels.forEach(channelName=>{
+        const channel = data.channels && data.channels[channelName];
+        if(!channel) return;
+        if(channel.keys) delete channel.keys[String(frame)];
+        if(channel.easing) delete channel.easing[String(frame)];
+      });
+      rebuildStickRigCompiledKeys(obj);
+      return true;
+    }
+    const before = Array.isArray(obj.keyframes) ? obj.keyframes.length : 0;
+    obj.keyframes = (obj.keyframes || []).filter(key=>key !== keyframe);
+    return obj.keyframes.length !== before;
+  }
+
+  function demBonesPoseAtTime(bone, time){
+    const base = Object.assign({dx:0,dy:0,rotation:0,easing:'linear'}, bone && bone.basePose ? bone.basePose : {});
+    const keys = ((bone && bone.keys) || []).slice().sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
+    if(!keys.length) return base;
+    if(time <= Number(keys[0].time || 0)){
+      if(Number(keys[0].time || 0) <= 0.0001) return Object.assign({}, keys[0]);
+      const ratio = applyKeyframeEasing(time / Math.max(0.0001, Number(keys[0].time)||0.0001), base.easing || 'linear');
+      return {
+        dx:(Number(base.dx)||0)+((Number(keys[0].dx)||0)-(Number(base.dx)||0))*ratio,
+        dy:(Number(base.dy)||0)+((Number(keys[0].dy)||0)-(Number(base.dy)||0))*ratio,
+        rotation:(Number(base.rotation)||0)+((Number(keys[0].rotation)||0)-(Number(base.rotation)||0))*ratio,
+        easing:normalizeKeyframeEasing(keys[0].easing)
+      };
+    }
+    if(time >= Number(keys[keys.length-1].time || 0)) return Object.assign({}, keys[keys.length-1]);
+    for(let index=0; index<keys.length-1; index++){
+      const a = keys[index], b = keys[index+1];
+      if(time >= Number(a.time||0) && time <= Number(b.time||0)){
+        const ratio = applyKeyframeEasing((time-Number(a.time||0))/Math.max(0.0001,Number(b.time||0)-Number(a.time||0)), a.easing || 'linear');
+        return {
+          dx:(Number(a.dx)||0)+((Number(b.dx)||0)-(Number(a.dx)||0))*ratio,
+          dy:(Number(a.dy)||0)+((Number(b.dy)||0)-(Number(a.dy)||0))*ratio,
+          rotation:(Number(a.rotation)||0)+((Number(b.rotation)||0)-(Number(a.rotation)||0))*ratio,
+          easing:normalizeKeyframeEasing(a.easing)
+        };
+      }
+    }
+    return base;
+  }
+
+  function addDemBonesKeyAtTime(bone, sourceKey, requestedTime){
+    if(!bone) return false;
+    if(!Array.isArray(bone.keys)) bone.keys = [];
+    const keyTime = snapTimeToFrame(Number.isFinite(Number(requestedTime)) ? Number(requestedTime) : t);
+    const pose = demBonesPoseAtTime(bone, keyTime);
+    const tolerance = 0.5 / getTimelineFPS();
+    let key = bone.keys.find(item=>Math.abs((Number(item.time)||0)-keyTime) <= tolerance);
+    const next = {
+      time:keyTime,
+      dx:Number(pose.dx)||0,
+      dy:Number(pose.dy)||0,
+      rotation:Number(pose.rotation)||0,
+      easing:normalizeKeyframeEasing(sourceKey && sourceKey.easing ? sourceKey.easing : pose.easing)
+    };
+    if(key) Object.assign(key,next);
+    else bone.keys.push(next);
+    bone.keys.sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
+    return true;
+  }
+
+  function addDemBonesKeyAtPlayhead(bone, sourceKey){
+    return addDemBonesKeyAtTime(bone, sourceKey, t);
+  }
+
+  function deleteDemBonesKey(bone, key){
+    if(!bone || !key || !Array.isArray(bone.keys)) return false;
+    const before = bone.keys.length;
+    bone.keys = bone.keys.filter(item=>item !== key);
+    return bone.keys.length !== before;
+  }
+
+  function refreshAfterKeyframeMenuAction(){
+    renderTimeline();
+    const selected = getSelectedSingleObject();
+    if(selected) renderKeyframeList(selected.obj);
+    updateInspector();
+  }
+
+  let keyframeContextMenu = null;
+  let keyframeContextTarget = null;
+
+  function ensureKeyframeContextMenu(){
+    if(keyframeContextMenu) return keyframeContextMenu;
+    const menu = document.createElement('div');
+    menu.className = 'keyframe-context-menu';
+    menu.id = 'keyframe-context-menu';
+    menu.hidden = true;
+    menu.setAttribute('role','menu');
+    document.body.appendChild(menu);
+    keyframeContextMenu = menu;
+    return menu;
+  }
+
+  function closeKeyframeContextMenu(){
+    if(keyframeContextMenu) keyframeContextMenu.hidden = true;
+    keyframeContextTarget = null;
+  }
+
+  function openKeyframeContextMenu(event, target){
+    event.preventDefault();
+    event.stopPropagation();
+    const menu = ensureKeyframeContextMenu();
+    keyframeContextTarget = target;
+    const current = typeof target.getEasing === 'function' ? target.getEasing() : 'linear';
+    menu.innerHTML = '';
+
+    function appendAction(labelText, hintText, callback, danger){
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'keyframe-context-item' + (danger ? ' danger' : '');
+      button.setAttribute('role','menuitem');
+      const icon = document.createElement('span');
+      icon.className = 'keyframe-context-check';
+      icon.textContent = labelText === 'Add Key' ? '+' : '×';
+      const text = document.createElement('span');
+      const label = document.createElement('span');
+      label.className = 'keyframe-context-label';
+      label.textContent = labelText;
+      const hint = document.createElement('span');
+      hint.className = 'keyframe-context-hint';
+      hint.textContent = hintText;
+      text.appendChild(label);
+      text.appendChild(hint);
+      button.appendChild(icon);
+      button.appendChild(text);
+      button.addEventListener('click', ()=>{
+        pushUndo();
+        callback();
+        closeKeyframeContextMenu();
+        refreshAfterKeyframeMenuAction();
+      });
+      menu.appendChild(button);
+    }
+
+    const hasAddAction = typeof target.addKey === 'function';
+    const hasDeleteAction = typeof target.deleteKey === 'function';
+    const hasInterpolation = typeof target.setEasing === 'function';
+    if(hasAddAction){
+      appendAction('Add Key', target.addKeyHint || 'Add this channel at the current playhead', target.addKey, false);
+    }
+    if(hasDeleteAction){
+      appendAction('Delete Key', target.deleteKeyHint || 'Delete the keyframe that was right-clicked', target.deleteKey, true);
+    }
+    if((hasAddAction || hasDeleteAction) && hasInterpolation){
+      const separator = document.createElement('div');
+      separator.className = 'keyframe-context-separator';
+      menu.appendChild(separator);
+    }
+
+    if(hasInterpolation){
+      const title = document.createElement('div');
+      title.className = 'keyframe-context-title';
+      title.textContent = 'Interpolation after this key';
+      menu.appendChild(title);
+      KEYFRAME_INTERPOLATIONS.forEach(item=>{
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'keyframe-context-item' + (current === item.value ? ' active' : '');
+      button.setAttribute('role','menuitemradio');
+      button.setAttribute('aria-checked', current === item.value ? 'true' : 'false');
+      const check = document.createElement('span');
+      check.className = 'keyframe-context-check';
+      check.textContent = current === item.value ? '✓' : '';
+      const text = document.createElement('span');
+      const label = document.createElement('span');
+      label.className = 'keyframe-context-label';
+      label.textContent = item.label;
+      const hint = document.createElement('span');
+      hint.className = 'keyframe-context-hint';
+      hint.textContent = item.hint;
+      text.appendChild(label);
+      text.appendChild(hint);
+      button.appendChild(check);
+      button.appendChild(text);
+      button.addEventListener('click', ()=>{
+        pushUndo();
+        target.setEasing(item.value);
+        closeKeyframeContextMenu();
+        refreshAfterKeyframeMenuAction();
+      });
+        menu.appendChild(button);
+      });
+    }
+    menu.hidden = false;
+    const margin = 8;
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = Math.max(margin, Math.min(window.innerWidth - rect.width - margin, event.clientX)) + 'px';
+    menu.style.top = Math.max(margin, Math.min(window.innerHeight - rect.height - margin, event.clientY)) + 'px';
+  }
+
+  document.addEventListener('mousedown', event=>{
+    if(keyframeContextMenu && !keyframeContextMenu.hidden && !keyframeContextMenu.contains(event.target)) closeKeyframeContextMenu();
+  }, true);
+  document.addEventListener('keydown', event=>{ if(event.key === 'Escape') closeKeyframeContextMenu(); });
+  window.addEventListener('blur', closeKeyframeContextMenu);
+
   // Generic keyframe interpolator — works for any object of {time, ...numeric
   // or color fields}. colorKeys lists which fields should be color-lerped
   // rather than number-lerped.
@@ -6578,16 +9179,24 @@ ctx.fill();</textarea>
         }
       }
     }
+    frac = applyKeyframeEasing(frac, a && a.easing);
     const result = {};
     const keys = new Set([...Object.keys(a||{}), ...Object.keys(b||{})]);
     keys.forEach(k=>{
-      if(k === 'time') return;
+      if(k === 'time' || k === 'easing') return;
       const av = a[k];
       const bv = b[k] !== undefined ? b[k] : av;
       if(k === 'points' && Array.isArray(av) && Array.isArray(bv) && av.length === bv.length){
         result.points = av.map((point,index)=>({
           x:(Number(point.x)||0)+((Number(bv[index].x)||0)-(Number(point.x)||0))*frac,
           y:(Number(point.y)||0)+((Number(bv[index].y)||0)-(Number(point.y)||0))*frac
+        }));
+      }else if(k === 'bezierHandles' && Array.isArray(av) && Array.isArray(bv) && av.length === bv.length){
+        result.bezierHandles = av.map((handle,index)=>({
+          inX:(Number(handle.inX)||0)+((Number(bv[index].inX)||0)-(Number(handle.inX)||0))*frac,
+          inY:(Number(handle.inY)||0)+((Number(bv[index].inY)||0)-(Number(handle.inY)||0))*frac,
+          outX:(Number(handle.outX)||0)+((Number(bv[index].outX)||0)-(Number(handle.outX)||0))*frac,
+          outY:(Number(handle.outY)||0)+((Number(bv[index].outY)||0)-(Number(handle.outY)||0))*frac
         }));
       }else if(colorKeys.includes(k)) result[k] = lerpColor(av, bv, frac);
       else if(typeof av === 'number') result[k] = av + ((typeof bv === 'number' ? bv : av) - av) * frac;
@@ -7379,7 +9988,7 @@ ctx.fill();</textarea>
   }
 
   function drawPathGuide(){
-    if(samples.length < 2 || !editMode) return;
+    if(exportPlayback.active || samples.length < 2 || !editMode) return;
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,0.12)';
     ctx.lineWidth = 1;
@@ -7388,6 +9997,98 @@ ctx.fill();</textarea>
     if(closed) ctx.closePath();
     ctx.stroke();
     ctx.restore();
+  }
+
+  // ---------------- onion skinning ----------------
+  // Draw an adjustable evaluated frame range before and after the current playhead position.
+  // The ghosts are rendered directly from the real scene evaluator, so normal
+  // keys, nested Clips, StickRig and Dem Bones all use their actual poses.
+  // Onion frames are stage-only previews and are deliberately excluded from
+  // WebM export.
+  function cloneOnionState(value){
+    if(value === undefined) return undefined;
+    try{
+      if(typeof structuredClone === 'function') return structuredClone(value);
+    }catch(error){}
+    try{ return JSON.parse(JSON.stringify(value)); }
+    catch(error){ return value; }
+  }
+
+  function captureOnionLayerStates(){
+    const records = [];
+    const seen = new Set();
+    const capture = sceneLayers=>{
+      (sceneLayers || []).forEach(layer=>{
+        if(!layer || seen.has(layer)) return;
+        seen.add(layer);
+        records.push({ layer, state:cloneOnionState(layer.state) });
+      });
+    };
+    capture(layers);
+    Object.values(clips).forEach(clip=> capture(clip && clip.layers));
+    return records;
+  }
+
+  function restoreOnionLayerStates(records){
+    (records || []).forEach(record=>{
+      if(record && record.layer) record.layer.state = cloneOnionState(record.state) || {};
+    });
+  }
+
+  function onionFrameTime(frameOffset){
+    const fps = Math.max(1, getTimelineFPS());
+    const step = 1 / fps;
+    const sampleTime = t + frameOffset * step;
+    // Onion ranges stop at the project boundaries even when playback looping is on.
+    // That keeps the timeline handles and the visible ghosts describing the same range.
+    if(sampleTime < 0 || sampleTime > timelineDuration) return null;
+    return sampleTime;
+  }
+
+  function renderOneOnionFrame(sampleTime, filterValue){
+    if(sampleTime === null || sampleTime === undefined) return;
+    const savedTime = t;
+    const stateRecords = captureOnionLayerStates();
+    onionSkinRendering = true;
+    t = sampleTime;
+    ctx.save();
+    ctx.filter = filterValue;
+    ctx.globalCompositeOperation = 'source-over';
+    try{
+      renderSceneLayers(true);
+      renderDrawObjects();
+    }finally{
+      ctx.restore();
+      t = savedTime;
+      onionSkinRendering = false;
+      restoreOnionLayerStates(stateRecords);
+    }
+  }
+
+  function onionOpacityPercent(index, count, nearestOpacity, farthestOpacity){
+    if(count <= 1) return nearestOpacity;
+    const distance = (index - 1) / (count - 1);
+    return Math.round(nearestOpacity + (farthestOpacity - nearestOpacity) * distance);
+  }
+
+  function renderOnionSkins(){
+    if(!onionSkinEnabled || exportPlayback.active || timelineDuration <= 0) return;
+    const savedTime = t;
+
+    // Draw farthest ghosts first and nearest ghosts last. This keeps the frame
+    // nearest the playhead most legible while still revealing the full range.
+    for(let offset = onionSkinBeforeFrames; offset >= 1; offset--){
+      const sampleTime = onionFrameTime(-offset);
+      const opacity = onionOpacityPercent(offset, Math.max(1, onionSkinBeforeFrames), 34, 8);
+      renderOneOnionFrame(sampleTime, 'opacity(' + opacity + '%) sepia(1) saturate(7) hue-rotate(292deg)');
+      t = savedTime;
+    }
+    for(let offset = onionSkinAfterFrames; offset >= 1; offset--){
+      const sampleTime = onionFrameTime(offset);
+      const opacity = onionOpacityPercent(offset, Math.max(1, onionSkinAfterFrames), 30, 7);
+      renderOneOnionFrame(sampleTime, 'opacity(' + opacity + '%) sepia(1) saturate(6) hue-rotate(160deg)');
+      t = savedTime;
+    }
   }
 
   // ---------------- main render loop ----------------
@@ -7428,6 +10129,7 @@ ctx.fill();</textarea>
     }
     const frameInfo = getTimelineFrameInfo();
     const currentFrame = Math.max(0, Math.min(frameInfo.totalFrames, Math.round(t * frameInfo.fps)));
+    if(onionSkinEnabled) updateOnionRangeUI();
     const readout = document.getElementById('time-readout');
     if(readout) readout.textContent = 'F ' + currentFrame + ' / ' + frameInfo.totalFrames + ' · ' + t.toFixed(2) + 's / ' + timelineDuration.toFixed(2) + 's';
     const inspTimeEl = document.getElementById('insp-current-time');
@@ -7465,6 +10167,7 @@ ctx.fill();</textarea>
     if(editingClipId) ctx.translate(clipEditViewOffset.x, clipEditViewOffset.y);
     drawPathGuide();
 
+    renderOnionSkins();
     renderSceneLayers(false);
 
     renderDrawObjects();
@@ -7549,17 +10252,68 @@ ctx.fill();</textarea>
         ctx.restore(); // pairs with the fade-alpha save
       });
     }
-    if(!isNested && !hasPath && !hasPointLayer && anyEnabledLayer && drawObjects.length === 0 && !pendingDraw){
-      ctx.save();
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.font = '14px Inter, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Click on the canvas to place a point (add a 2nd for a path/curve)', W/2, H/2);
-      ctx.restore();
-    }
   }
 
   // ---------------- recording ----------------
+  // WebM export temporarily switches the editor into a clean-stage state. This
+  // removes every selection and edit guide before recording while preserving the
+  // user's exact selection/tool state so it can be restored afterwards.
+  function beginCleanWebMExportView(){
+    if(exportPlayback.uiSnapshot) return exportPlayback.uiSnapshot;
+    exportPlayback.uiSnapshot = {
+      selectedIndices: Array.from(selectedDrawIndices),
+      selectShapesMode,
+      shapePointEditMode,
+      shapePointAddMode,
+      shapePointEditObjectId,
+      shapePointSelectedIndex,
+      bezierCurveObjectId,
+      bezierSelectedAnchorIndex,
+      curvePanelOpen:document.getElementById('curve-settings-panel').classList.contains('open'),
+      inkPanelOpen:document.getElementById('ink-settings-panel').classList.contains('open'),
+      stageTool,
+      overlayCursor: overlay.style.cursor
+    };
+
+    selectedDrawIndices.clear();
+    selectShapesMode = false;
+    shapePointEditMode = false;
+    shapePointAddMode = false;
+    shapePointEditObjectId = null;
+    overlay.querySelectorAll('.xform-handle, .xform-rotate-handle, .shape-point-handle, .bezier-anchor-handle, .bezier-control-handle, .bezier-handle-line').forEach(el=>el.remove());
+    const pivotCross = document.getElementById('clip-pivot-cross');
+    if(pivotCross) pivotCross.remove();
+    updateSelectedCountUI();
+    renderLayerList();
+    return exportPlayback.uiSnapshot;
+  }
+
+  function restoreCleanWebMExportView(){
+    const snapshot = exportPlayback.uiSnapshot;
+    exportPlayback.uiSnapshot = null;
+    if(!snapshot) return;
+
+    selectedDrawIndices.clear();
+    (snapshot.selectedIndices || []).forEach(index=>{
+      if(index >= 0 && index < drawObjects.length) selectedDrawIndices.add(index);
+    });
+    selectShapesMode = !!snapshot.selectShapesMode;
+    shapePointEditMode = !!snapshot.shapePointEditMode;
+    shapePointAddMode = !!snapshot.shapePointAddMode;
+    shapePointEditObjectId = snapshot.shapePointEditObjectId || null;
+    shapePointSelectedIndex = Number.isFinite(Number(snapshot.shapePointSelectedIndex)) ? Number(snapshot.shapePointSelectedIndex) : 0;
+    bezierCurveObjectId = snapshot.bezierCurveObjectId || null;
+    bezierSelectedAnchorIndex = Number.isFinite(Number(snapshot.bezierSelectedAnchorIndex)) ? Number(snapshot.bezierSelectedAnchorIndex) : 0;
+    stageTool = snapshot.stageTool || 'none';
+    document.getElementById('curve-settings-panel').classList.toggle('open',!!snapshot.curvePanelOpen);
+    document.getElementById('ink-settings-panel').classList.toggle('open',!!snapshot.inkPanelOpen);
+    overlay.style.cursor = snapshot.overlayCursor || (selectShapesMode ? 'pointer' : (stageTool === 'none' ? 'crosshair' : 'crosshair'));
+    updateSelectedCountUI();
+    renderLayerList();
+    renderTransformHandles();
+    renderClipPivotCross();
+  }
+
   let mediaRecorder = null;
   let chunks = [];
   const btnRecord = document.getElementById('btn-record');
@@ -7631,10 +10385,12 @@ ctx.fill();</textarea>
       const restorePlaying = exportPlayback.previousPlaying;
       const restoreTime = exportPlayback.previousTime;
       exportPlayback.active = false;
+      exportPlayback.startPending = false;
       exportPlayback.videoTrack = null;
       playing = restorePlaying;
       t = restoreTime;
       lastFrame = performance.now();
+      restoreCleanWebMExportView();
 
       const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
       const url = URL.createObjectURL(blob);
@@ -7655,40 +10411,67 @@ ctx.fill();</textarea>
     exportPlayback.previousTime = t;
     exportPlayback.duration = duration;
     exportPlayback.fps = fps;
-    exportPlayback.startedAt = performance.now();
     exportPlayback.videoTrack = canvasVideoTrack;
-    exportPlayback.active = true;
+    exportPlayback.startPending = true;
 
-    // Export always starts from the beginning and drives its own clock. Preview
-    // playback is temporarily paused to avoid applying two time advances at once.
+    // Remove every editor-only visual before the capture begins. The selection
+    // and point-editing state are restored after MediaRecorder stops.
+    beginCleanWebMExportView();
+    exportPlayback.active = true;
     playing = false;
     t = 0;
-    lastFrame = exportPlayback.startedAt;
     layers.forEach(l => l.state = {}); // clean ripple/etc state for a fresh loop
-    mediaRecorder.start();
-    if(usingAudio) playAudioIfLoaded();
     btnRecord.disabled = true;
     if(btnExportWebMTop){ btnExportWebMTop.disabled = true; btnExportWebMTop.textContent = 'Exporting…'; }
-    btnStop.disabled = false;
+    btnStop.disabled = true;
     recIndicator.classList.add('on');
     downloadLink.classList.remove('show');
+    recTime.textContent = `PREPARING CLEAN STAGE…`;
 
-    const startedAt = exportPlayback.startedAt;
-    const tick = ()=>{
-      if(!mediaRecorder || mediaRecorder.state !== 'recording') return;
-      const elapsed = (performance.now()-startedAt)/1000;
-      recTime.textContent = `SAVING ${elapsed.toFixed(1)}s / ${duration}s`;
-      if(elapsed >= duration){
-        mediaRecorder.stop();
-        return;
-      }
+    // Wait for the normal render loop to draw at least one completely clean frame
+    // before MediaRecorder starts. This prevents a stale selection box or bone
+    // overlay from becoming the first frame of the WebM.
+    requestAnimationFrame(()=> requestAnimationFrame(()=>{
+      if(!mediaRecorder || !exportPlayback.active || !exportPlayback.startPending) return;
+      exportPlayback.startedAt = performance.now();
+      lastFrame = exportPlayback.startedAt;
+      exportPlayback.startPending = false;
+      mediaRecorder.start();
+      if(usingAudio) playAudioIfLoaded();
+      btnStop.disabled = false;
+
+      const startedAt = exportPlayback.startedAt;
+      const tick = ()=>{
+        if(!mediaRecorder || mediaRecorder.state !== 'recording') return;
+        const elapsed = (performance.now()-startedAt)/1000;
+        recTime.textContent = `SAVING ${elapsed.toFixed(1)}s / ${duration}s`;
+        if(elapsed >= duration){
+          mediaRecorder.stop();
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
       requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
+    }));
   });
 
   btnStop.addEventListener('click', ()=>{
-    if(mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+    if(mediaRecorder && mediaRecorder.state === 'recording'){
+      mediaRecorder.stop();
+      return;
+    }
+    if(exportPlayback.startPending){
+      exportPlayback.startPending = false;
+      exportPlayback.active = false;
+      exportPlayback.videoTrack = null;
+      playing = exportPlayback.previousPlaying;
+      t = exportPlayback.previousTime;
+      restoreCleanWebMExportView();
+      btnRecord.disabled = false;
+      if(btnExportWebMTop){ btnExportWebMTop.disabled = false; btnExportWebMTop.textContent = 'Export WebM'; }
+      btnStop.disabled = true;
+      recIndicator.classList.remove('on');
+    }
   });
 
   // ---------------- init ----------------
@@ -7698,6 +10481,7 @@ ctx.fill();</textarea>
   normalizeAllDrawObjects();
   renderPoints();
   setAutoKeyframe(false);
+  setOnionSkin(false);
   refreshAllUIFromLayer(activeLayer());
   renderLayerList();
   renderPointList();
