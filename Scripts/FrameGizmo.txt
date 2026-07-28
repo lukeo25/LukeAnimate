@@ -1,0 +1,764 @@
+/*
+  Luke Animate Frame Gizmo GPT v1.0
+  Config-loaded Animate tool for named goto-and-stop Clip poses.
+
+  Config entry:
+  {
+    "id": "FrameGizmo",
+    "label": "Frame Gizmo",
+    "description": "Drive a Stop Clip between named internal keyframes with a keyframeable lever.",
+    "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.svg",
+    "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/FrameGizmo.txt",
+    "action": "animate",
+    "F_Screen": 0
+  }
+*/
+(function(){
+  "use strict";
+
+  const PLUGIN_ID = "lukeanimate-frame-gizmo";
+  const PANEL_ID = "lukeanimate-frame-gizmo-panel";
+  const STYLE_ID = "lukeanimate-frame-gizmo-style";
+  const VERSION = "1.0";
+  const TOOL_GROUP_ID = String(group && group.id ? group.id : "animate");
+  const TOOL_ITEM_ID = String(item && (item.id || item.label) ? (item.id || item.label) : "FrameGizmo");
+  const TOOL_ICON_URL = String(item && item.iconUrl ? item.iconUrl : "https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.svg");
+  const GIZMO_TYPE = "framegizmo";
+  const STOP_SPACING = 30;
+  const GIZMO_WIDTH = 236;
+  const GIZMO_TOP = 42;
+  const GIZMO_BOTTOM = 24;
+
+  if(!LukeAnimate || typeof LukeAnimate.getDrawObjects !== "function" || typeof LukeAnimate.registerObjectEvaluator !== "function"){
+    throw new Error("Frame Gizmo requires Luke Animate v104 or later.");
+  }
+  if(Number(LukeAnimate.version || 0) < 104){
+    throw new Error("Frame Gizmo requires Luke Animate v104 or later.");
+  }
+
+  function setToolSelected(active){
+    if(typeof LukeAnimate.setConfiguredToolActive === "function"){
+      LukeAnimate.setConfiguredToolActive(TOOL_GROUP_ID, TOOL_ITEM_ID, !!active);
+    }
+  }
+
+  const existingPanel = document.getElementById(PANEL_ID);
+  if(existingPanel){
+    existingPanel.classList.add("open");
+    existingPanel.style.display = "flex";
+    setToolSelected(true);
+    if(typeof LukeAnimate.setSelectionInspectorSuppressed === "function") LukeAnimate.setSelectionInspectorSuppressed(PLUGIN_ID, true);
+    LukeAnimate.bringFloatingPanelToFront(existingPanel);
+    LukeAnimate.clampFloatingPanelToViewport(existingPanel);
+    return;
+  }
+
+  const state = {
+    panel:null,
+    activeGizmoId:"",
+    candidateSignature:"",
+    gizmoSignature:"",
+    targetInstanceId:"",
+    draftLabels:[],
+    drag:null,
+    pollTimer:null,
+    lastFrame:-1
+  };
+
+  function number(value, fallback){
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function clamp(value, minimum, maximum){
+    return Math.max(minimum, Math.min(maximum, value));
+  }
+
+  function escapeHtml(value){
+    return String(value == null ? "" : value)
+      .replace(/&/g,"&amp;")
+      .replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;")
+      .replace(/'/g,"&#39;");
+  }
+
+  function deepClone(value){
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function allSceneObjects(){
+    const result=[];
+    function visit(object){
+      if(!object) return;
+      result.push(object);
+      if(object.type === "group" && Array.isArray(object.children)) object.children.forEach(visit);
+    }
+    (LukeAnimate.getDrawObjects() || []).forEach(visit);
+    return result;
+  }
+
+  function findObjectById(id){
+    return allSceneObjects().find(object=>String(object.id || "") === String(id || "")) || null;
+  }
+
+  function gizmos(){
+    return allSceneObjects().filter(object=>object && object.type === GIZMO_TYPE);
+  }
+
+  function clipsOnStageWithKeys(){
+    const clips = LukeAnimate.getClips ? LukeAnimate.getClips() : {};
+    return allSceneObjects().filter(object=>{
+      if(!object || object.type !== "clipinstance" || !clips[object.clipId]) return false;
+      const times = LukeAnimate.getClipInternalKeyframeTimes(object.clipId);
+      return Array.isArray(times) && times.length > 0;
+    }).map(object=>({
+      instance:object,
+      clip:clips[object.clipId],
+      times:LukeAnimate.getClipInternalKeyframeTimes(object.clipId)
+    }));
+  }
+
+  function objectName(object){
+    if(!object) return "Unknown object";
+    return String(object.name || object.identifier || object.id || "Object");
+  }
+
+  function candidateLabel(candidate){
+    const clipName = candidate.clip && candidate.clip.name ? candidate.clip.name : candidate.instance.clipId;
+    const instanceName = objectName(candidate.instance);
+    return instanceName === clipName ? clipName : instanceName + " — " + clipName;
+  }
+
+  function frameFromTime(time){
+    return typeof LukeAnimate.timeToFrame === "function"
+      ? LukeAnimate.timeToFrame(time)
+      : Math.max(1,Math.round(number(time,0) * Math.max(1,number(LukeAnimate.fps,30))) + 1);
+  }
+
+  function timeFromFrame(frame){
+    return typeof LukeAnimate.frameToTime === "function"
+      ? LukeAnimate.frameToTime(frame)
+      : (Math.max(1,Math.round(number(frame,1)))-1)/Math.max(1,number(LukeAnimate.fps,30));
+  }
+
+  function synchronisedLabels(clipId, times){
+    const existing = LukeAnimate.getClipFrameLabels ? LukeAnimate.getClipFrameLabels(clipId) : [];
+    const byFrame = new Map();
+    (existing || []).forEach(label=>{
+      const frame = Math.max(1,Math.round(number(label.frame,frameFromTime(label.time))));
+      if(!byFrame.has(frame)) byFrame.set(frame,label);
+    });
+    return (times || []).map(time=>{
+      const frame=frameFromTime(time);
+      const old=byFrame.get(frame);
+      return {
+        frame,
+        time:timeFromFrame(frame),
+        name:String(old && old.name ? old.name : "Frame " + frame)
+      };
+    });
+  }
+
+  function validateLabels(labels){
+    const names=new Set();
+    for(const label of labels){
+      const name=String(label && label.name || "").trim();
+      if(!name) return "Every internal keyframe needs a name.";
+      const key=name.toLowerCase();
+      if(names.has(key)) return "Stop names must be unique.";
+      names.add(key);
+    }
+    return "";
+  }
+
+  function selectedCandidate(){
+    const id=String(state.targetInstanceId || "");
+    return clipsOnStageWithKeys().find(candidate=>String(candidate.instance.id)===id) || null;
+  }
+
+  function activeGizmo(){
+    const direct=findObjectById(state.activeGizmoId);
+    if(direct && direct.type===GIZMO_TYPE) return direct;
+    const selected=(LukeAnimate.getSelectedDrawObjects ? LukeAnimate.getSelectedDrawObjects() : []).find(object=>object && object.type===GIZMO_TYPE);
+    if(selected){ state.activeGizmoId=selected.id; return selected; }
+    const first=gizmos()[0] || null;
+    if(first) state.activeGizmoId=first.id;
+    return first;
+  }
+
+  function stopCount(gizmo){
+    return Math.max(1,Array.isArray(gizmo && gizmo.stops) ? gizmo.stops.length : 0);
+  }
+
+  function gizmoHeight(gizmo){
+    return GIZMO_TOP + GIZMO_BOTTOM + Math.max(1,stopCount(gizmo)-1) * STOP_SPACING;
+  }
+
+  function refreshEditorBounds(gizmo){
+    if(!gizmo) return;
+    const x=number(gizmo.x,80), y=number(gizmo.y,80);
+    gizmo.editorBounds={x1:x,y1:y,x2:x+GIZMO_WIDTH,y2:y+gizmoHeight(gizmo)};
+  }
+
+  function heldStopIndex(gizmo,time){
+    let index=clamp(Math.round(number(gizmo && gizmo.stopIndex,0)),0,stopCount(gizmo)-1);
+    const keys=(Array.isArray(gizmo && gizmo.keyframes)?gizmo.keyframes:[])
+      .filter(key=>Number.isFinite(Number(key.time)))
+      .slice().sort((a,b)=>number(a.time,0)-number(b.time,0));
+    for(const key of keys){
+      if(number(key.time,0) <= number(time,0) + 0.000001){
+        if(key.stopIndex !== undefined) index=clamp(Math.round(number(key.stopIndex,index)),0,stopCount(gizmo)-1);
+      }else break;
+    }
+    return index;
+  }
+
+  function currentStop(gizmo,time){
+    const index=heldStopIndex(gizmo,time);
+    const stops=Array.isArray(gizmo && gizmo.stops)?gizmo.stops:[];
+    return {index,stop:stops[index] || null};
+  }
+
+  function findControllingGizmo(clipInstance){
+    return gizmos().find(gizmo=>gizmo.enabled !== false && String(gizmo.targetObjectId || "")===String(clipInstance && clipInstance.id || "")) || null;
+  }
+
+  LukeAnimate.registerObjectPanelOwner(GIZMO_TYPE,"animate");
+  LukeAnimate.registerObjectEvaluator(PLUGIN_ID,function(object,time,effective){
+    if(!object) return effective;
+    if(object.type===GIZMO_TYPE){
+      refreshEditorBounds(object);
+      const current=currentStop(object,time);
+      return Object.assign({},effective,{stopIndex:current.index,stopName:current.stop ? current.stop.name : ""});
+    }
+    if(object.type==="clipinstance"){
+      const controller=findControllingGizmo(object);
+      if(!controller) return effective;
+      const current=currentStop(controller,time);
+      if(!current.stop) return effective;
+      return Object.assign({},effective,{
+        clipStopTime:number(current.stop.time,0),
+        clipStopFrame:Math.max(1,Math.round(number(current.stop.frame,frameFromTime(current.stop.time)))),
+        clipStopName:String(current.stop.name || "")
+      });
+    }
+    return effective;
+  });
+
+  function scenePointFromEvent(event){
+    const canvas=LukeAnimate.canvas;
+    const rect=canvas.getBoundingClientRect();
+    const stage={
+      x:(event.clientX-rect.left)*canvas.width/Math.max(1,rect.width),
+      y:(event.clientY-rect.top)*canvas.height/Math.max(1,rect.height)
+    };
+    return LukeAnimate.stageToScenePoint ? LukeAnimate.stageToScenePoint(stage) : stage;
+  }
+
+  function stopY(gizmo,index){
+    return number(gizmo.y,80)+GIZMO_TOP+index*STOP_SPACING;
+  }
+
+  function pivotPoint(gizmo){
+    return {x:number(gizmo.x,80)+35,y:number(gizmo.y,80)+gizmoHeight(gizmo)/2};
+  }
+
+  function leverPoint(gizmo,index){
+    return {x:number(gizmo.x,80)+101,y:stopY(gizmo,index)};
+  }
+
+  function hitGizmo(point){
+    const list=gizmos().slice().reverse();
+    for(const gizmo of list){
+      refreshEditorBounds(gizmo);
+      const b=gizmo.editorBounds;
+      if(point.x>=b.x1-8 && point.x<=b.x2+8 && point.y>=b.y1-8 && point.y<=b.y2+8) return gizmo;
+    }
+    return null;
+  }
+
+  function nearestStopIndex(gizmo,sceneY){
+    return clamp(Math.round((sceneY-(number(gizmo.y,80)+GIZMO_TOP))/STOP_SPACING),0,stopCount(gizmo)-1);
+  }
+
+  function setStatus(message,type){
+    if(!state.panel) return;
+    const node=state.panel.querySelector("[data-fg-status]");
+    if(!node) return;
+    node.textContent=String(message || "");
+    node.className="fg-status"+(type?" "+type:"");
+    if(type==="bad") LukeAnimate.warn(message);
+    else if(message) LukeAnimate.log(message);
+  }
+
+  function setGizmoStop(gizmo,index,announce){
+    if(!gizmo || !Array.isArray(gizmo.stops) || !gizmo.stops.length) return;
+    const next=clamp(Math.round(number(index,0)),0,gizmo.stops.length-1);
+    if(typeof LukeAnimate.setObjectFieldForCurrentTime === "function"){
+      LukeAnimate.setObjectFieldForCurrentTime(gizmo,"stopIndex",next,{easing:"hold"});
+    }else{
+      LukeAnimate.pushUndo();
+      gizmo.stopIndex=next;
+      LukeAnimate.refreshUI();
+    }
+    const stop=gizmo.stops[next];
+    if(announce) setStatus("“"+stop.name+"” set at frame "+LukeAnimate.getCurrentFrame()+"."+(LukeAnimate.getAutoKeyframe() ? " A hold key was recorded." : " Auto Keyframe is off."),"good");
+    renderPanelLever();
+  }
+
+  function ensureStyle(){
+    if(document.getElementById(STYLE_ID)) return;
+    const style=document.createElement("style");
+    style.id=STYLE_ID;
+    style.textContent=`
+      #${PANEL_ID}{position:fixed;top:76px;right:362px;width:410px;max-width:calc(100vw - 16px);height:min(760px,calc(100vh - 92px));display:flex;flex-direction:column;background:rgba(255,255,255,.99);border:1px solid #c8ced6;border-radius:11px;box-shadow:0 18px 52px rgba(0,0,0,.28);overflow:hidden;color:#25313d;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;z-index:2200}
+      #${PANEL_ID} *{box-sizing:border-box}
+      #${PANEL_ID} .fg-head{display:flex;align-items:center;gap:9px;padding:9px 10px;background:#f0f2f5;border-bottom:1px solid #d4d9df;cursor:move;user-select:none}
+      #${PANEL_ID} .fg-icon{width:34px;height:34px;object-fit:contain;background:#626a74;border-radius:7px;padding:4px}
+      #${PANEL_ID} .fg-title{flex:1;min-width:0}
+      #${PANEL_ID} .fg-title strong{display:block;font-size:13px;color:#183c39}
+      #${PANEL_ID} .fg-title span{display:block;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;margin-top:1px}
+      #${PANEL_ID} .fg-frame{padding:5px 8px;border:1px solid #b7bec7;border-radius:999px;background:#fff;font:10px Consolas,monospace;color:#4b5563;white-space:nowrap}
+      #${PANEL_ID} .fg-frame b{color:#0e9c86}
+      #${PANEL_ID} .fg-close{width:28px;height:28px;padding:0;border:1px solid #c7cdd4;border-radius:7px;background:#fff;color:#4b5563;font-size:16px;cursor:pointer}
+      #${PANEL_ID} .fg-body{flex:1;min-height:0;overflow:auto;padding:10px 10px 90px;background:#eef0f3}
+      #${PANEL_ID} .fg-section{background:#fff;border:1px solid #ccd2d9;border-radius:10px;padding:10px;margin-bottom:9px}
+      #${PANEL_ID} .fg-section h3{margin:0 0 8px;font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:#687587}
+      #${PANEL_ID} .fg-row{display:grid;grid-template-columns:108px minmax(0,1fr);gap:8px;align-items:center;margin-bottom:8px}
+      #${PANEL_ID} .fg-row:last-child{margin-bottom:0}
+      #${PANEL_ID} label{font-size:10px;color:#687587}
+      #${PANEL_ID} select,#${PANEL_ID} input[type=text]{width:100%;min-width:0;padding:6px 7px;border:1px solid #bec6cf;border-radius:7px;background:#fff;color:#26323e;font-size:11px}
+      #${PANEL_ID} button{font:inherit;border:1px solid #bcc4cd;border-radius:7px;background:#f1f3f5;color:#374151;padding:7px 8px;cursor:pointer}
+      #${PANEL_ID} button:hover{border-color:#0e9c86;color:#087565}
+      #${PANEL_ID} button.primary{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}
+      #${PANEL_ID} button.danger{background:#fff4f2;border-color:#e1a39e;color:#a7332d}
+      #${PANEL_ID} button:disabled{opacity:.42;cursor:default}
+      #${PANEL_ID} .fg-buttons{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+      #${PANEL_ID} .fg-name-list{display:flex;flex-direction:column;gap:6px}
+      #${PANEL_ID} .fg-name-row{display:grid;grid-template-columns:66px minmax(0,1fr);gap:7px;align-items:center}
+      #${PANEL_ID} .fg-frame-chip{text-align:center;padding:5px;border:1px solid #d1d6dc;border-radius:999px;background:#f7f8fa;color:#566273;font:10px Consolas,monospace}
+      #${PANEL_ID} .fg-empty{padding:13px;border:1px dashed #afb7c1;border-radius:8px;color:#6b7280;text-align:center;font-size:11px;line-height:1.5}
+      #${PANEL_ID} .fg-stop-buttons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px}
+      #${PANEL_ID} .fg-stop-buttons button{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      #${PANEL_ID} .fg-stop-buttons button.active{background:#8f245e;border-color:#8f245e;color:#fff;font-weight:700}
+      #${PANEL_ID} .fg-lever{position:relative;height:170px;border:1px solid #cbd1d8;border-radius:9px;background:#f8f9fa;overflow:hidden}
+      #${PANEL_ID} .fg-lever-rail{position:absolute;left:39px;top:18px;bottom:18px;width:5px;border-radius:4px;background:#7d8792}
+      #${PANEL_ID} .fg-lever-arm{position:absolute;left:41px;top:50%;height:5px;transform-origin:left center;background:#1d2731;border-radius:4px}
+      #${PANEL_ID} .fg-lever-pivot{position:absolute;left:31px;top:calc(50% - 10px);width:20px;height:20px;border-radius:50%;background:#1d2731;border:4px solid #fff;box-shadow:0 0 0 1px #1d2731}
+      #${PANEL_ID} .fg-panel-stop{position:absolute;left:104px;right:10px;height:24px;display:flex;align-items:center;gap:7px;font-size:10px;color:#536071}
+      #${PANEL_ID} .fg-panel-stop::before{content:"";width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid #7d8792;flex:0 0 12px}
+      #${PANEL_ID} .fg-panel-stop.active::before{background:#0e9c86;border-color:#0e9c86}
+      #${PANEL_ID} .fg-status{position:absolute;left:10px;right:10px;bottom:10px;min-height:42px;padding:8px 10px;border:1px solid #c6cdd5;border-radius:8px;background:#fff;color:#566273;font-size:10px;line-height:1.35}
+      #${PANEL_ID} .fg-status.good{border-color:#86cdbc;color:#087565;background:#effaf7}
+      #${PANEL_ID} .fg-status.bad{border-color:#e2a09b;color:#a7332d;background:#fff5f3}
+      #${PANEL_ID} .fg-hint{font-size:10px;line-height:1.45;color:#6b7280;margin:0}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function makePanel(){
+    ensureStyle();
+    const panel=document.createElement("section");
+    panel.id=PANEL_ID;
+    panel.className="open";
+    panel.innerHTML=`
+      <div class="fg-head" data-fg-drag>
+        <img class="fg-icon" src="${escapeHtml(TOOL_ICON_URL)}" alt="">
+        <div class="fg-title"><strong>Frame Gizmo</strong><span>Named Stop Clip Controller · v${VERSION}</span></div>
+        <div class="fg-frame">Frame <b data-fg-frame>1</b></div>
+        <button class="fg-close" type="button" data-fg-close title="Close Frame Gizmo">×</button>
+      </div>
+      <div class="fg-body">
+        <div class="fg-section">
+          <h3>Stop Clip</h3>
+          <div class="fg-row"><label for="fg-target">Clip on stage</label><select id="fg-target"></select></div>
+          <div class="fg-buttons"><button type="button" data-fg-refresh>Refresh Clips</button><button type="button" class="primary" data-fg-add>Add Frame Gizmo</button></div>
+        </div>
+        <div class="fg-section">
+          <h3>Named Internal Keyframes</h3>
+          <div class="fg-name-list" data-fg-names></div>
+          <div style="margin-top:8px"><button type="button" data-fg-save-names style="width:100%">Save Keyframe Names</button></div>
+        </div>
+        <div class="fg-section">
+          <h3>Gizmo</h3>
+          <div class="fg-row"><label for="fg-gizmo">Active gizmo</label><select id="fg-gizmo"></select></div>
+          <div class="fg-lever" data-fg-panel-lever></div>
+          <div class="fg-stop-buttons" data-fg-stop-buttons></div>
+          <div class="fg-buttons" style="margin-top:8px"><button type="button" data-fg-reassociate>Use Selected Clip</button><button type="button" class="danger" data-fg-delete>Delete Gizmo</button></div>
+        </div>
+        <div class="fg-section"><p class="fg-hint">Every stop is a named internal Clip keyframe. Turn on Auto Keyframe, move the main playhead, then move the lever to record a goto-and-stop pose for lips, hands, eyes or other replacement animation.</p></div>
+      </div>
+      <div class="fg-status" data-fg-status>Choose a Clip instance that contains internal keyframes.</div>
+    `;
+    document.body.appendChild(panel);
+    LukeAnimate.registerFloatingPanel(panel);
+    LukeAnimate.bringFloatingPanelToFront(panel);
+    LukeAnimate.clampFloatingPanelToViewport(panel);
+    state.panel=panel;
+
+    const head=panel.querySelector("[data-fg-drag]");
+    head.addEventListener("pointerdown",event=>{
+      if(event.target.closest("button")) return;
+      const rect=panel.getBoundingClientRect();
+      const offsetX=event.clientX-rect.left,offsetY=event.clientY-rect.top;
+      function move(moveEvent){
+        panel.style.left=(moveEvent.clientX-offsetX)+"px";
+        panel.style.top=(moveEvent.clientY-offsetY)+"px";
+        panel.style.right="auto";
+        LukeAnimate.clampFloatingPanelToViewport(panel);
+      }
+      function up(){window.removeEventListener("pointermove",move,true);window.removeEventListener("pointerup",up,true);}
+      window.addEventListener("pointermove",move,true);
+      window.addEventListener("pointerup",up,true);
+    });
+
+    panel.querySelector("[data-fg-close]").addEventListener("click",()=>{
+      panel.classList.remove("open");
+      panel.style.display="none";
+      setToolSelected(false);
+      if(typeof LukeAnimate.setSelectionInspectorSuppressed === "function") LukeAnimate.setSelectionInspectorSuppressed(PLUGIN_ID,false);
+    });
+    panel.querySelector("[data-fg-refresh]").addEventListener("click",()=>refreshCandidates(true));
+    panel.querySelector("#fg-target").addEventListener("change",event=>{
+      state.targetInstanceId=event.target.value || "";
+      loadDraftLabels();
+      renderNameRows();
+    });
+    panel.querySelector("[data-fg-save-names]").addEventListener("click",saveNames);
+    panel.querySelector("[data-fg-add]").addEventListener("click",addGizmo);
+    panel.querySelector("#fg-gizmo").addEventListener("change",event=>{
+      state.activeGizmoId=event.target.value || "";
+      const gizmo=activeGizmo();
+      if(gizmo){ state.targetInstanceId=String(gizmo.targetObjectId || ""); LukeAnimate.selectDrawObject(gizmo); }
+      refreshCandidates(false);
+      loadDraftLabels();
+      renderPanelLever();
+    });
+    panel.querySelector("[data-fg-delete]").addEventListener("click",deleteActiveGizmo);
+    panel.querySelector("[data-fg-reassociate]").addEventListener("click",reassociateActiveGizmo);
+    return panel;
+  }
+
+  function refreshCandidates(force){
+    if(!state.panel) return;
+    const candidates=clipsOnStageWithKeys();
+    const signature=candidates.map(candidate=>candidate.instance.id+":"+candidate.instance.clipId+":"+candidate.times.map(frameFromTime).join(",")).join("|");
+    const select=state.panel.querySelector("#fg-target");
+    if(force || signature!==state.candidateSignature){
+      state.candidateSignature=signature;
+      const previous=state.targetInstanceId || select.value;
+      select.innerHTML="";
+      if(!candidates.length){
+        const option=document.createElement("option");
+        option.value="";option.textContent="No keyed Clips on this stage";select.appendChild(option);
+        state.targetInstanceId="";
+      }else{
+        candidates.forEach(candidate=>{
+          const option=document.createElement("option");
+          option.value=String(candidate.instance.id);
+          option.textContent=candidateLabel(candidate);
+          select.appendChild(option);
+        });
+        state.targetInstanceId=candidates.some(candidate=>String(candidate.instance.id)===String(previous)) ? String(previous) : String(candidates[0].instance.id);
+        select.value=state.targetInstanceId;
+      }
+      loadDraftLabels();
+      renderNameRows();
+    }
+    refreshGizmoSelect(force);
+  }
+
+  function loadDraftLabels(){
+    const candidate=selectedCandidate();
+    state.draftLabels=candidate ? synchronisedLabels(candidate.instance.clipId,candidate.times) : [];
+  }
+
+  function renderNameRows(){
+    if(!state.panel) return;
+    const host=state.panel.querySelector("[data-fg-names]");
+    host.innerHTML="";
+    if(!state.draftLabels.length){
+      host.innerHTML='<div class="fg-empty">The selected Clip must contain at least one internal object, StickRig or Dem Bones keyframe.</div>';
+      return;
+    }
+    state.draftLabels.forEach((label,index)=>{
+      const row=document.createElement("div");
+      row.className="fg-name-row";
+      row.innerHTML='<div class="fg-frame-chip">Frame '+label.frame+'</div><input type="text" value="'+escapeHtml(label.name)+'" aria-label="Name for internal frame '+label.frame+'">';
+      row.querySelector("input").addEventListener("input",event=>{state.draftLabels[index].name=event.target.value;});
+      host.appendChild(row);
+    });
+  }
+
+  function saveNames(){
+    const candidate=selectedCandidate();
+    if(!candidate){setStatus("Choose a keyed Clip instance first.","bad");return false;}
+    const problem=validateLabels(state.draftLabels);
+    if(problem){setStatus(problem,"bad");return false;}
+    LukeAnimate.setClipFrameLabels(candidate.instance.clipId,state.draftLabels);
+    candidate.clip.stopClip=true;
+    gizmos().filter(gizmo=>gizmo.targetClipId===candidate.instance.clipId).forEach(gizmo=>{
+      gizmo.stops=deepClone(state.draftLabels);
+      gizmo.stopIndex=clamp(Math.round(number(gizmo.stopIndex,0)),0,Math.max(0,gizmo.stops.length-1));
+      refreshEditorBounds(gizmo);
+    });
+    LukeAnimate.refreshUI();
+    renderPanelLever();
+    setStatus(state.draftLabels.length+" named stops saved to “"+candidate.clip.name+"”.","good");
+    return true;
+  }
+
+  function defaultGizmoPosition(candidate){
+    const effective=LukeAnimate.getEffectiveObject(candidate.instance,LukeAnimate.time) || candidate.instance;
+    const x=number(effective.x,80)+90;
+    const y=number(effective.y,80)-Math.max(50,(GIZMO_TOP+GIZMO_BOTTOM+(state.draftLabels.length-1)*STOP_SPACING)/2);
+    return {x:clamp(x,20,Math.max(20,LukeAnimate.width-GIZMO_WIDTH-20)),y:clamp(y,20,Math.max(20,LukeAnimate.height-160))};
+  }
+
+  function addGizmo(){
+    const candidate=selectedCandidate();
+    if(!candidate){setStatus("Choose a Clip instance that contains internal keyframes.","bad");return;}
+    const problem=validateLabels(state.draftLabels);
+    if(problem){setStatus(problem,"bad");return;}
+    if(!saveNames()) return;
+    const duplicate=gizmos().find(gizmo=>String(gizmo.targetObjectId)===String(candidate.instance.id));
+    if(duplicate){
+      state.activeGizmoId=duplicate.id;
+      LukeAnimate.selectDrawObject(duplicate);
+      refreshGizmoSelect(true);
+      renderPanelLever();
+      setStatus("That Clip instance already has a Frame Gizmo.","bad");
+      return;
+    }
+    const position=defaultGizmoPosition(candidate);
+    const gizmo={
+      type:GIZMO_TYPE,
+      name:"Frame Gizmo — "+candidate.clip.name,
+      panelId:"animate",
+      editorOnly:true,
+      enabled:true,
+      x:position.x,
+      y:position.y,
+      tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,opacity:1,
+      targetObjectId:candidate.instance.id,
+      targetClipId:candidate.instance.clipId,
+      stops:deepClone(state.draftLabels),
+      stopIndex:0,
+      keyframeFields:["stopIndex"],
+      forceHoldKeyframes:true,
+      keyframes:[]
+    };
+    refreshEditorBounds(gizmo);
+    LukeAnimate.addDrawObject(gizmo,"animate");
+    state.activeGizmoId=gizmo.id;
+    LukeAnimate.selectDrawObject(gizmo);
+    refreshGizmoSelect(true);
+    renderPanelLever();
+    setStatus("Frame Gizmo added for “"+candidate.clip.name+"”. Turn on Auto Keyframe and move its lever.","good");
+  }
+
+  function refreshGizmoSelect(force){
+    if(!state.panel) return;
+    const list=gizmos();
+    const signature=list.map(gizmo=>gizmo.id+":"+gizmo.targetObjectId+":"+stopCount(gizmo)).join("|");
+    if(!force && signature===state.gizmoSignature) return;
+    state.gizmoSignature=signature;
+    const select=state.panel.querySelector("#fg-gizmo");
+    const previous=state.activeGizmoId || select.value;
+    select.innerHTML="";
+    if(!list.length){
+      const option=document.createElement("option");option.value="";option.textContent="No Frame Gizmos";select.appendChild(option);state.activeGizmoId="";
+    }else{
+      list.forEach(gizmo=>{
+        const target=findObjectById(gizmo.targetObjectId);
+        const option=document.createElement("option");option.value=gizmo.id;option.textContent=gizmo.name+(target?"":" — target missing");select.appendChild(option);
+      });
+      state.activeGizmoId=list.some(gizmo=>gizmo.id===previous)?previous:list[0].id;
+      select.value=state.activeGizmoId;
+    }
+    renderPanelLever();
+  }
+
+  function renderPanelLever(){
+    if(!state.panel) return;
+    const host=state.panel.querySelector("[data-fg-panel-lever]");
+    const buttons=state.panel.querySelector("[data-fg-stop-buttons]");
+    const gizmo=activeGizmo();
+    host.innerHTML="";buttons.innerHTML="";
+    if(!gizmo || !Array.isArray(gizmo.stops) || !gizmo.stops.length){
+      host.innerHTML='<div class="fg-empty" style="margin:18px">Add or select a Frame Gizmo.</div>';
+      return;
+    }
+    const current=currentStop(gizmo,LukeAnimate.time);
+    const count=gizmo.stops.length;
+    const panelHeight=Math.max(150,36+(count-1)*28);
+    host.style.height=panelHeight+"px";
+    const rail=document.createElement("div");rail.className="fg-lever-rail";host.appendChild(rail);
+    const pivot=document.createElement("div");pivot.className="fg-lever-pivot";host.appendChild(pivot);
+    const usable=panelHeight-36;
+    const yFor=index=>18+(count<=1?usable/2:index*usable/(count-1));
+    const selectedY=yFor(current.index);
+    const pivotX=41,pivotY=panelHeight/2,endX=102;
+    const dx=endX-pivotX,dy=selectedY-pivotY;
+    const arm=document.createElement("div");arm.className="fg-lever-arm";arm.style.width=Math.hypot(dx,dy)+"px";arm.style.transform="rotate("+(Math.atan2(dy,dx)*180/Math.PI)+"deg)";host.appendChild(arm);
+    gizmo.stops.forEach((stop,index)=>{
+      const row=document.createElement("div");row.className="fg-panel-stop"+(index===current.index?" active":"");row.style.top=(yFor(index)-12)+"px";row.textContent=stop.name+" · F"+stop.frame;host.appendChild(row);
+      const button=document.createElement("button");button.type="button";button.className=index===current.index?"active":"";button.textContent=stop.name;button.title="Show named Clip frame “"+stop.name+"” (frame "+stop.frame+")";button.addEventListener("click",()=>setGizmoStop(gizmo,index,true));buttons.appendChild(button);
+    });
+  }
+
+  function removeObjectFromTree(id){
+    function removeFrom(list){
+      if(!Array.isArray(list)) return false;
+      const index=list.findIndex(object=>String(object && object.id || "")===String(id));
+      if(index>=0){list.splice(index,1);return true;}
+      for(const object of list){if(object && object.type==="group" && removeFrom(object.children)) return true;}
+      return false;
+    }
+    return removeFrom(LukeAnimate.getDrawObjects());
+  }
+
+  function deleteActiveGizmo(){
+    const gizmo=activeGizmo();
+    if(!gizmo){setStatus("There is no Frame Gizmo to delete.","bad");return;}
+    LukeAnimate.pushUndo();
+    removeObjectFromTree(gizmo.id);
+    state.activeGizmoId="";
+    LukeAnimate.refreshUI();
+    refreshGizmoSelect(true);
+    setStatus("Frame Gizmo deleted. The Clip and its named frames were not deleted.","good");
+  }
+
+  function reassociateActiveGizmo(){
+    const gizmo=activeGizmo();
+    const candidate=selectedCandidate();
+    if(!gizmo || !candidate){setStatus("Select both an active Frame Gizmo and a keyed Clip instance.","bad");return;}
+    const problem=validateLabels(state.draftLabels);
+    if(problem){setStatus(problem,"bad");return;}
+    saveNames();
+    LukeAnimate.pushUndo();
+    gizmo.targetObjectId=candidate.instance.id;
+    gizmo.targetClipId=candidate.instance.clipId;
+    gizmo.name="Frame Gizmo — "+candidate.clip.name;
+    gizmo.stops=deepClone(state.draftLabels);
+    gizmo.stopIndex=clamp(Math.round(number(gizmo.stopIndex,0)),0,Math.max(0,gizmo.stops.length-1));
+    refreshEditorBounds(gizmo);
+    LukeAnimate.refreshUI();
+    refreshGizmoSelect(true);
+    setStatus("The active gizmo now controls “"+candidate.clip.name+"”.","good");
+  }
+
+  LukeAnimate.registerStageOverlayRenderer(PLUGIN_ID,function(context){
+    gizmos().forEach(gizmo=>{
+      if(gizmo.enabled===false) return;
+      refreshEditorBounds(gizmo);
+      const current=currentStop(gizmo,LukeAnimate.time);
+      const origin=LukeAnimate.sceneToStagePoint ? LukeAnimate.sceneToStagePoint({x:number(gizmo.x,80),y:number(gizmo.y,80)}) : {x:gizmo.x,y:gizmo.y};
+      const x=origin.x,y=origin.y;
+      const height=gizmoHeight(gizmo);
+      const pivot={x:x+35,y:y+height/2};
+      const selectedY=y+GIZMO_TOP+current.index*STOP_SPACING;
+      context.save();
+      context.globalAlpha=.96;
+      context.fillStyle="rgba(255,255,255,.94)";
+      context.strokeStyle=state.activeGizmoId===gizmo.id?"#0e9c86":"#737d88";
+      context.lineWidth=1.5;
+      context.beginPath();context.roundRect(x,y,GIZMO_WIDTH,height,9);context.fill();context.stroke();
+      context.fillStyle="#3f4b58";context.font="bold 11px Arial";context.textBaseline="middle";context.fillText("FRAME GIZMO",x+10,y+17);
+      const target=findObjectById(gizmo.targetObjectId);
+      context.font="10px Arial";context.fillStyle="#687587";context.fillText(target?objectName(target):"Missing Clip",x+10,y+31);
+      context.strokeStyle="#7c8792";context.lineWidth=4;context.lineCap="round";
+      context.beginPath();context.moveTo(pivot.x,pivot.y);context.lineTo(x+101,selectedY);context.stroke();
+      context.fillStyle="#1f2933";context.beginPath();context.arc(pivot.x,pivot.y,9,0,Math.PI*2);context.fill();
+      context.fillStyle="#0e9c86";context.beginPath();context.arc(x+101,selectedY,8,0,Math.PI*2);context.fill();
+      gizmo.stops.forEach((stop,index)=>{
+        const sy=y+GIZMO_TOP+index*STOP_SPACING;
+        context.fillStyle=index===current.index?"#0e9c86":"#fff";context.strokeStyle=index===current.index?"#0e9c86":"#7c8792";context.lineWidth=2;
+        context.beginPath();context.arc(x+118,sy,6,0,Math.PI*2);context.fill();context.stroke();
+        context.fillStyle=index===current.index?"#183c39":"#536071";context.font=(index===current.index?"bold ":"")+"10px Arial";context.fillText(String(stop.name||("Frame "+stop.frame)),x+131,sy);
+      });
+      context.restore();
+    });
+  });
+
+  function canvasPointerDown(event){
+    if(event.button!==0 || event.ctrlKey || event.metaKey || event.altKey) return;
+    const point=scenePointFromEvent(event);
+    const gizmo=hitGizmo(point);
+    if(!gizmo) return;
+    event.preventDefault();event.stopPropagation();
+    state.activeGizmoId=gizmo.id;
+    LukeAnimate.selectDrawObject(gizmo);
+    refreshGizmoSelect(true);
+    const x=number(gizmo.x,80),y=number(gizmo.y,80);
+    const current=currentStop(gizmo,LukeAnimate.time);
+    const lever=leverPoint(gizmo,current.index);
+    const onLever=Math.hypot(point.x-lever.x,point.y-lever.y)<=18 || point.x>=x+86;
+    if(onLever){
+      state.drag={mode:"lever",gizmoId:gizmo.id};
+      setGizmoStop(gizmo,nearestStopIndex(gizmo,point.y),false);
+    }else{
+      state.drag={mode:"move",gizmoId:gizmo.id,startX:point.x,startY:point.y,originX:x,originY:y,undo:false};
+    }
+    LukeAnimate.canvas.setPointerCapture && LukeAnimate.canvas.setPointerCapture(event.pointerId);
+  }
+
+  function canvasPointerMove(event){
+    if(!state.drag) return;
+    const gizmo=findObjectById(state.drag.gizmoId);
+    if(!gizmo){state.drag=null;return;}
+    const point=scenePointFromEvent(event);
+    event.preventDefault();event.stopPropagation();
+    if(state.drag.mode==="lever"){
+      const next=nearestStopIndex(gizmo,point.y);
+      const current=currentStop(gizmo,LukeAnimate.time).index;
+      if(next!==current) setGizmoStop(gizmo,next,false);
+    }else{
+      if(!state.drag.undo){LukeAnimate.pushUndo();state.drag.undo=true;}
+      gizmo.x=state.drag.originX+(point.x-state.drag.startX);
+      gizmo.y=state.drag.originY+(point.y-state.drag.startY);
+      refreshEditorBounds(gizmo);
+      LukeAnimate.refreshUI();
+    }
+  }
+
+  function canvasPointerUp(event){
+    if(!state.drag) return;
+    const gizmo=findObjectById(state.drag.gizmoId);
+    const mode=state.drag.mode;
+    state.drag=null;
+    if(gizmo && mode==="lever"){
+      const current=currentStop(gizmo,LukeAnimate.time);
+      const stop=current.stop;
+      if(stop) setStatus("“"+stop.name+"” set at frame "+LukeAnimate.getCurrentFrame()+"."+(LukeAnimate.getAutoKeyframe() ? " A hold key was recorded." : " Auto Keyframe is off."),"good");
+      renderPanelLever();
+    }
+    try{LukeAnimate.canvas.releasePointerCapture && LukeAnimate.canvas.releasePointerCapture(event.pointerId);}catch(error){}
+  }
+
+  LukeAnimate.canvas.addEventListener("pointerdown",canvasPointerDown,true);
+  window.addEventListener("pointermove",canvasPointerMove,true);
+  window.addEventListener("pointerup",canvasPointerUp,true);
+
+  function poll(){
+    const frame=LukeAnimate.getCurrentFrame ? LukeAnimate.getCurrentFrame() : frameFromTime(LukeAnimate.time);
+    if(frame!==state.lastFrame){
+      state.lastFrame=frame;
+      const node=state.panel && state.panel.querySelector("[data-fg-frame]");
+      if(node) node.textContent=String(frame);
+      renderPanelLever();
+    }
+    refreshCandidates(false);
+    const selected=(LukeAnimate.getSelectedDrawObjects ? LukeAnimate.getSelectedDrawObjects() : []).find(object=>object && object.type===GIZMO_TYPE);
+    if(selected && selected.id!==state.activeGizmoId){state.activeGizmoId=selected.id;refreshGizmoSelect(true);}
+  }
+
+  makePanel();
+  setToolSelected(true);
+  if(typeof LukeAnimate.setSelectionInspectorSuppressed === "function") LukeAnimate.setSelectionInspectorSuppressed(PLUGIN_ID,true);
+  refreshCandidates(true);
+  refreshGizmoSelect(true);
+  state.pollTimer=setInterval(poll,180);
+  setStatus("Choose a keyed Clip, name its internal pose frames, then add the Frame Gizmo.","");
+})();
