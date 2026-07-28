@@ -1,21 +1,39 @@
 {
   "title": "Luke Animate",
-  "version": 1,
+  "version": 6,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
       "id": "animate",
       "label": "Animate",
       "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg",
-      "sectionLabel": "Configured Scripts",
+      "sectionLabel": "Animate Tools",
       "items": [
         {
-          "id": "animate_placeholder",
-          "label": "Animate Placeholder",
-          "description": "Placeholder external script for the Animate panel.",
-          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/AnimatePlaceholder.txt",
-          "action": "script",
+          "id": "StickRig",
+          "label": "StickRig",
+          "description": "Animate selected Luke Animate Clips with move, scale, rotation and opacity keys.",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Stick.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/StickRig.txt",
+          "action": "animate",
+          "F_Screen": 0
+        },
+        {
+          "id": "DemBones",
+          "label": "Dem Bones",
+          "description": "Create, bind and animate vector bones directly in Luke Animate.",
+          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Bone.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DemBones.txt",
+          "action": "animate",
+          "F_Screen": 0
+        },
+        {
+          "id": "FrameGizmo",
+          "label": "Frame Gizmo",
+          "description": "Drive a Stop Clip between named internal keyframes with a keyframeable goto-and-stop lever.",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/FrameGizmo.txt",
+          "action": "animate",
           "F_Screen": 0
         }
       ]
@@ -23,104 +41,38 @@
     {
       "id": "particles",
       "label": "Particles & Effects",
-      "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Particles.svg",
-      "sectionLabel": "Configured Scripts",
-      "items": [
-        {
-          "id": "particles_placeholder",
-          "label": "Particles & Effects Placeholder",
-          "description": "Placeholder external script for the Particles & Effects panel.",
-          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Particles.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/ParticlesPlaceholder.txt",
-          "action": "script",
-          "F_Screen": 0
-        }
-      ]
+      "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg",
+      "items": []
     },
     {
       "id": "behaviours",
       "label": "Behaviours",
       "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Behaviours.svg",
-      "sectionLabel": "Configured Scripts",
-      "items": [
-        {
-          "id": "behaviours_placeholder",
-          "label": "Behaviours Placeholder",
-          "description": "Placeholder external script for the Behaviours panel.",
-          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Behaviours.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/BehavioursPlaceholder.txt",
-          "action": "script",
-          "F_Screen": 0
-        }
-      ]
+      "items": []
     },
     {
       "id": "type",
       "label": "Type",
       "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Type.svg",
-      "sectionLabel": "Configured Scripts",
-      "items": [
-        {
-          "id": "type_placeholder",
-          "label": "Type Placeholder",
-          "description": "Placeholder external script for the Type panel.",
-          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Type.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/TypePlaceholder.txt",
-          "action": "script",
-          "F_Screen": 0
-        }
-      ]
+      "items": []
     },
     {
       "id": "import",
       "label": "Import / Export",
       "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Import.svg",
-      "sectionLabel": "Configured Scripts",
-      "items": [
-        {
-          "id": "import_placeholder",
-          "label": "Import / Export Placeholder",
-          "description": "Placeholder external script for the Import / Export panel.",
-          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Import.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/ImportPlaceholder.txt",
-          "action": "script",
-          "F_Screen": 0
-        }
-      ]
+      "items": []
     },
     {
       "id": "tools",
       "label": "Tools",
       "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Tools.svg",
-      "sectionLabel": "Configured Scripts",
-      "items": [
-        {
-          "id": "tools_placeholder",
-          "label": "Tools Placeholder",
-          "description": "Placeholder external script for the Tools panel.",
-          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Tools.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/ToolsPlaceholder.txt",
-          "action": "script",
-          "F_Screen": 0
-        }
-      ]
+      "items": []
     },
     {
       "id": "sandbox",
       "label": "Sandbox",
       "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Sandbox.svg",
-      "sectionLabel": "Configured Scripts",
-      "items": [
-        {
-          "id": "sandbox_placeholder",
-          "label": "Sandbox Placeholder",
-          "description": "Placeholder external script for the Sandbox panel.",
-          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Sandbox.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/SandboxPlaceholder.txt",
-          "action": "script",
-          "F_Screen": 0
-        }
-      ]
+      "items": []
     }
   ]
 }
