@@ -1,9 +1,8 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v98</title>
+<title>Luke Animate v107</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -52,13 +51,62 @@
       #f5f6f8;
     background-size:40px 40px;
   }
-  #canvas-shell{
+  #stage-workspace{
     position:relative;
-    margin:auto; /* centers the shell while still leaving equal, reachable scroll room on every side when zoomed */
+    display:grid;
+    grid-template-columns:24px auto;
+    grid-template-rows:24px auto;
+    align-items:start;
+    justify-items:start;
+    margin:auto;
+    max-width:100%;
+    max-height:100%;
+  }
+  #stage-workspace.rulers-hidden{grid-template-columns:0 auto;grid-template-rows:0 auto;}
+  #stage-workspace.rulers-hidden #ruler-corner,
+  #stage-workspace.rulers-hidden .stage-ruler{display:none;}
+  #ruler-corner{
+    grid-column:1; grid-row:1;
+    width:24px; height:24px;
+    background:#f7f8fa;
+    border-right:1px solid #c8cdd4;
+    border-bottom:1px solid #c8cdd4;
+    position:relative; z-index:6;
+  }
+  #ruler-corner::after{
+    content:''; position:absolute; left:6px; top:6px; width:10px; height:10px;
+    border-left:2px solid #8a929d; border-top:2px solid #8a929d;
+  }
+  .stage-ruler{
+    display:block;
+    background:#f7f8fa;
+    position:relative;
+    z-index:6;
+    user-select:none;
+    touch-action:none;
+  }
+  #horizontal-ruler{grid-column:2;grid-row:1;height:24px;cursor:ns-resize;border-bottom:1px solid #c8cdd4;}
+  #vertical-ruler{grid-column:1;grid-row:2;width:24px;cursor:ew-resize;border-right:1px solid #c8cdd4;}
+  #canvas-shell{
+    grid-column:2; grid-row:2;
+    position:relative;
+    margin:0;
     max-width:100%;
     max-height:100%;
     box-shadow:0 0 0 1px var(--line), 0 20px 60px rgba(0,0,0,.5);
   }
+  #guide-layer{
+    position:absolute; inset:0; z-index:5; pointer-events:none; overflow:hidden;
+  }
+  .stage-guide{position:absolute;pointer-events:auto;background:#11a8d8;box-shadow:0 0 0 1px rgba(255,255,255,.45);}
+  .stage-guide.vertical{top:0;bottom:0;width:1px;cursor:ew-resize;}
+  .stage-guide.horizontal{left:0;right:0;height:1px;cursor:ns-resize;}
+  .stage-guide::after{content:'';position:absolute;}
+  .stage-guide.vertical::after{left:-5px;top:0;width:11px;height:100%;}
+  .stage-guide.horizontal::after{left:0;top:-5px;width:100%;height:11px;}
+  .stage-guide:hover,.stage-guide.dragging{background:#e23586;box-shadow:0 0 0 1px rgba(255,255,255,.75);}
+  .toolbar-check{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;font-size:11px;color:var(--text-dim);cursor:pointer;user-select:none;}
+  .toolbar-check input{margin:0;accent-color:var(--accent);}
   #fx-canvas{
     display:block; background:transparent; position:relative; z-index:2;
     max-width:100%; max-height:calc(100vh - 230px); /* never let it grow taller than the space actually left for it */
@@ -148,6 +196,13 @@
     border-radius:3px; border:2px solid #0c0d0e; background:#ffffff;
     cursor:nwse-resize; z-index:7; pointer-events:auto;
   }
+  .xform-axis-handle{
+    position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px;
+    border-radius:3px; border:2px solid #0c0d0e; background:#ffffff;
+    z-index:8; pointer-events:auto;
+  }
+  .xform-axis-handle[data-axis="x"]{cursor:ew-resize;}
+  .xform-axis-handle[data-axis="y"]{cursor:ns-resize;}
   .xform-rotate-handle{
     position:absolute; width:14px; height:14px; margin:-7px 0 0 -7px;
     border-radius:50%; border:2px solid #0c0d0e; background:var(--accent);
@@ -480,6 +535,7 @@
     border:1px solid var(--line);
     border-radius:9px;
   }
+  #devpanel-animate > .config-extension-group{ margin-top:10px; margin-bottom:4px; }
   .config-extension-heading{
     display:flex;
     align-items:center;
@@ -875,6 +931,16 @@
   }
   .timeline-frame-label.first{ transform:none; }
   .timeline-frame-label.last{ transform:translateX(-100%); }
+  .timeline-frame-name-marker{
+    position:absolute; bottom:1px; transform:translateX(-50%);
+    max-width:96px; padding:1px 4px; border-radius:4px;
+    background:var(--accent); color:#fff; border:1px solid rgba(12,13,14,.72);
+    font-family:var(--mono); font-size:8px; line-height:10px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    pointer-events:none; z-index:3;
+  }
+  .timeline-frame-name-marker.first{transform:none;}
+  .timeline-frame-name-marker.last{transform:translateX(-100%);}
   .timeline-track-row{
     display:flex; align-items:center; gap:6px; margin-bottom:3px;
     width:max-content; min-width:100%;
@@ -1011,6 +1077,37 @@
     background:var(--accent-dim); border-radius:5px; border:2px solid var(--panel-2);
   }
   #timeline-dock .timeline-wrap::-webkit-scrollbar-thumb:hover{ background:var(--accent); }
+
+  #clip-frame-names-section{
+    margin-top:12px; padding-top:12px; border-top:1px solid var(--line);
+  }
+  .clip-frame-name-head{
+    display:flex; align-items:center; gap:8px; margin-bottom:7px;
+  }
+  .clip-frame-name-head strong{
+    flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:11px; color:var(--text);
+  }
+  #clip-frame-name-list{
+    display:flex; flex-direction:column; gap:4px; max-height:280px; overflow:auto;
+    padding:2px 2px 2px 0;
+  }
+  .clip-frame-name-row{
+    display:grid; grid-template-columns:48px minmax(0,1fr); gap:6px; align-items:center;
+  }
+  .clip-frame-number{
+    height:28px; padding:0 5px; border:1px solid var(--line); border-radius:6px;
+    background:var(--panel-2); color:var(--text-dim); font:10px var(--mono); cursor:pointer;
+  }
+  .clip-frame-name-row.current .clip-frame-number{
+    border-color:var(--accent); background:rgba(14,156,134,.14); color:var(--accent);
+    font-weight:700;
+  }
+  .clip-frame-name-input{
+    min-width:0; height:28px; padding:4px 7px; border:1px solid var(--line);
+    border-radius:6px; background:#fff; color:var(--text); font-size:10px;
+  }
+  .clip-frame-name-input:not(:placeholder-shown){border-color:rgba(14,156,134,.6);}
 </style>
 </head>
 <body>
@@ -1021,6 +1118,9 @@
     <div class="brand">LUKE <b>ANIMATE</b></div>
     <div style="display:flex;gap:6px;pointer-events:auto;margin-left:14px;flex:0 0 auto;">
       <button class="btn small" id="btn-stage-settings" style="flex:0 0 auto;" title="Open stage settings">⚙ Stage</button>
+      <label class="toolbar-check" title="Show or hide the stage rulers"><input type="checkbox" id="chk-show-rulers" checked>Rulers</label>
+      <label class="toolbar-check" title="Show or hide stored stage guides"><input type="checkbox" id="chk-show-guides" checked>Guides</label>
+      <label class="toolbar-check" title="Snap moved and newly drawn objects to visible ruler guides"><input type="checkbox" id="chk-snap-guides" checked>Snap to Guides</label>
       <button class="btn small primary" id="btn-export-webm-top" style="flex:0 0 auto;" title="Export the current animation as a WebM file">Export WebM</button>
       <button class="btn small" id="btn-undo" style="flex:0 0 auto;" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
       <button class="btn small" id="btn-redo" style="flex:0 0 auto;" disabled title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
@@ -1280,11 +1380,16 @@
     <button class="btn small" id="btn-clip-back">← Back</button>
     <span id="clip-breadcrumb-text">Main Scene</span>
   </div>
-  <div id="canvas-shell">
-    <img id="ref-image" alt="">
-    <canvas id="fx-canvas" width="960" height="540"></canvas>
-    <div id="edit-overlay"></div>
-    <div id="stage-text-editor" contenteditable="true" spellcheck="true" aria-label="Type text on stage"></div>
+  <div id="stage-workspace">
+    <div id="ruler-corner" title="Drag from a ruler to create a guide"></div>
+    <canvas id="horizontal-ruler" class="stage-ruler" width="960" height="24" title="Drag downward to create a horizontal guide"></canvas>
+    <canvas id="vertical-ruler" class="stage-ruler" width="24" height="540" title="Drag right to create a vertical guide"></canvas>
+    <div id="canvas-shell">
+      <img id="ref-image" alt="">
+      <canvas id="fx-canvas" width="960" height="540"></canvas>
+      <div id="edit-overlay"><div id="guide-layer" aria-label="Stage guides"></div></div>
+      <div id="stage-text-editor" contenteditable="true" spellcheck="true" aria-label="Type text on stage"></div>
+    </div>
   </div>
 </div>
 <div id="zoom-controls">
@@ -1674,6 +1779,15 @@
       <div class="hint" style="padding:0 0 8px;">Double-click a Clip on the stage to jump straight inside it — or use <b>Edit</b> below. Either way its Path/Layers/Timeline take over the main UI, with a breadcrumb (← Back) to get out. <b>+ Instance</b> places another copy of that clip on the stage you're currently in.</div>
       <div id="clip-library" style="display:flex;flex-direction:column;gap:6px;"></div>
 
+      <div id="clip-frame-names-section" style="display:none;">
+        <div class="clip-frame-name-head">
+          <strong id="clip-frame-name-title">Clip Frames</strong>
+          <span class="audio-filename" id="clip-frame-name-count">0</span>
+        </div>
+        <div class="hint" style="padding:0 0 7px;">Click a frame number to go to it. Type a name beside it, or double-click/right-click a frame in the timeline to open the naming popup.</div>
+        <div id="clip-frame-name-list"></div>
+      </div>
+
       <div id="inspector-section" style="display:none;">
         <div class="group" style="padding:14px 0 0;border-bottom:none;">
           <h2>Selected: <span id="inspector-label" style="color:var(--text);text-transform:none;letter-spacing:0;font-weight:400;">—</span></h2>
@@ -1681,6 +1795,8 @@
         <div class="row"><label>Position X</label><input type="number" id="insp-x" style="flex:1;"></div>
         <div class="row"><label>Position Y</label><input type="number" id="insp-y" style="flex:1;"></div>
         <div class="row"><label>Scale</label><input type="range" id="insp-scale" min="0.1" max="3" step="0.05" value="1"><span class="val" id="val-insp-scale">1.0</span></div>
+        <div class="row" style="display:none;"><label>Scale X</label><input type="range" id="insp-scale-x" min="0.1" max="5" step="0.05" value="1"><span class="val" id="val-insp-scale-x">1.0</span></div>
+        <div class="row" style="display:none;"><label>Scale Y</label><input type="range" id="insp-scale-y" min="0.1" max="5" step="0.05" value="1"><span class="val" id="val-insp-scale-y">1.0</span></div>
         <div class="row"><label>Rotation</label><input type="range" id="insp-rotation" min="-180" max="180" step="1" value="0"><span class="val" id="val-insp-rotation">0</span></div>
         <div class="row"><label>Opacity</label><input type="range" id="insp-opacity" min="0" max="100" step="1" value="100"><span class="val" id="val-insp-opacity">100</span></div>
         <div class="row" id="insp-fill-row"><label>Fill</label><input type="color" id="insp-fill" value="#4fe0c4"><label class="toggle-line" style="flex:0 0 auto;"><input type="checkbox" id="insp-fill-enabled" checked> Visible</label></div>
@@ -1876,6 +1992,11 @@ ctx.fill();</textarea>
   let stageColor = '#ffffff';
   let stageZoom = 1;
   const MIN_ZOOM = 0.25, MAX_ZOOM = 3;
+  let stageGuides = { vertical:[], horizontal:[] };
+  let snapToGuides = true;
+  let rulersVisible = true;
+  let guidesVisible = true;
+  const GUIDE_SNAP_PIXELS = 8;
   let stageTool = 'none'; // 'none'|'freehand'|'bcurve'|'pen'|'fill'|'line'|'rect'|'ellipse'|'text'
   let drawObjects = [];   // static SVG-like shapes/text stamped onto the canvas
   let pendingDraw = null; // in-progress shape being dragged out, for live preview
@@ -1926,6 +2047,7 @@ ctx.fill();</textarea>
   const contextStack = []; // for entering/exiting "editing a clip" sessions
   let editingClipId = null; // null = editing the main scene
   let clipEditViewOffset = { x:0, y:0 }; // screen-space view offset used only while editing inside a Clip
+  let clipFrameNameListSignature = '';
   let selectShapesMode = false; // active in Animate only while the Select tool is chosen
   let shapePointEditMode = false; // edit the actual vector outline of one selected shape
   let shapePointAddMode = false;  // next click on an outline inserts a point
@@ -1993,6 +2115,106 @@ ctx.fill();</textarea>
     return { x:(dx * cos - dy * sin) * s, y:(dx * sin + dy * cos) * s };
   }
 
+  function rotateScaleDeltaAxes(dx,dy,scaleX,scaleY,rotation){
+    const sx=Number.isFinite(Number(scaleX))?Number(scaleX):1;
+    const sy=Number.isFinite(Number(scaleY))?Number(scaleY):1;
+    const rad=(Number(rotation)||0)*Math.PI/180;
+    const cos=Math.cos(rad),sin=Math.sin(rad);
+    const localX=dx*sx,localY=dy*sy;
+    return {x:localX*cos-localY*sin,y:localX*sin+localY*cos};
+  }
+
+  // Uniform scale remains backwards-compatible. Scale X/Y are independent
+  // multipliers layered on top of it, so existing projects and tools continue
+  // to work while objects can also be stretched on either axis.
+  function getObjectScaleAxes(obj,eff){
+    eff=eff||obj||{};
+    const isClip=!!(obj&&obj.type==='clipinstance');
+    const uniformRaw=isClip?(eff.scale!==undefined?eff.scale:obj.scale):(eff.tscale!==undefined?eff.tscale:obj.tscale);
+    const uniform=Number.isFinite(Number(uniformRaw))?Number(uniformRaw):1;
+    const xRaw=isClip?(eff.scaleX!==undefined?eff.scaleX:obj.scaleX):(eff.tscaleX!==undefined?eff.tscaleX:obj.tscaleX);
+    const yRaw=isClip?(eff.scaleY!==undefined?eff.scaleY:obj.scaleY):(eff.tscaleY!==undefined?eff.tscaleY:obj.tscaleY);
+    const axisX=Number.isFinite(Number(xRaw))?Number(xRaw):1;
+    const axisY=Number.isFinite(Number(yRaw))?Number(yRaw):1;
+    return {uniform,axisX,axisY,x:uniform*axisX,y:uniform*axisY};
+  }
+
+
+  // Resolve a Clip instance's internal time once so rendering, selection bounds
+  // and transform handles all evaluate the exact same frame.
+  function clipInstanceLocalTime(obj, eff, parentTime){
+    const clip = obj && clips[obj.clipId];
+    if(!clip) return 0;
+    const duration = Math.max(0.1, Number(clip.timelineDuration) || 0.1);
+    const requestedStopTime = Number(eff && eff.clipStopTime);
+    if(Number.isFinite(requestedStopTime)) return Math.max(0, Math.min(duration, requestedStopTime));
+    let localTime = (Number(parentTime) || 0) + (Number(obj.timeOffset) || 0);
+    if(clip.loopTimeline) localTime = ((localTime % duration) + duration) % duration;
+    else localTime = Math.max(0, Math.min(duration, localTime));
+    return localTime;
+  }
+
+  const clipBoundsEvaluationStack = new Set();
+
+  // Return the real local-space visual bounds of a Clip definition. This
+  // replaces the old fixed 120 x 120 placeholder that let the transform box
+  // move independently of the visible Clip artwork.
+  function getClipContentLocalBounds(clip, timeValue){
+    const pivot = ensureClipPivot(clip);
+    const fallback = { x1:pivot.x-40, y1:pivot.y-40, x2:pivot.x+40, y2:pivot.y+40 };
+    if(!clip) return fallback;
+    const stackKey = String(clip.id || clip.name || 'clip');
+    if(clipBoundsEvaluationStack.has(stackKey)) return fallback;
+    clipBoundsEvaluationStack.add(stackKey);
+    let x1=Infinity,y1=Infinity,x2=-Infinity,y2=-Infinity;
+    const includeBounds = bounds=>{
+      if(!bounds) return;
+      const values=[bounds.x1,bounds.y1,bounds.x2,bounds.y2].map(Number);
+      if(!values.every(Number.isFinite)) return;
+      x1=Math.min(x1,values[0]); y1=Math.min(y1,values[1]);
+      x2=Math.max(x2,values[2]); y2=Math.max(y2,values[3]);
+    };
+    try{
+      (clip.drawObjects || []).forEach(child=>{
+        if(!child || child.enabled === false) return;
+        ensureDrawObjectMetadata(child);
+        if(child.type === 'clipinstance'){
+          const nestedClip = clips[child.clipId];
+          const childEff = getEffectiveObj(child, timeValue);
+          if(!nestedClip){ includeBounds(getStandaloneEffectiveBounds(child,timeValue)); return; }
+          const nestedTime = clipInstanceLocalTime(child, childEff, timeValue);
+          const nestedBounds = getClipContentLocalBounds(nestedClip, nestedTime);
+          const nestedPivot = ensureClipPivot(nestedClip);
+          const axes = getObjectScaleAxes(child, childEff);
+          const angle = (Number(childEff.rotation)||0) * Math.PI / 180;
+          const cos=Math.cos(angle),sin=Math.sin(angle);
+          const corners=[
+            {x:nestedBounds.x1,y:nestedBounds.y1},{x:nestedBounds.x2,y:nestedBounds.y1},
+            {x:nestedBounds.x1,y:nestedBounds.y2},{x:nestedBounds.x2,y:nestedBounds.y2}
+          ].map(point=>{
+            const dx=(point.x-nestedPivot.x)*axes.x;
+            const dy=(point.y-nestedPivot.y)*axes.y;
+            return {
+              x:(Number(childEff.x)||0)+dx*cos-dy*sin,
+              y:(Number(childEff.y)||0)+dx*sin+dy*cos
+            };
+          });
+          includeBounds({
+            x1:Math.min(...corners.map(point=>point.x)),
+            y1:Math.min(...corners.map(point=>point.y)),
+            x2:Math.max(...corners.map(point=>point.x)),
+            y2:Math.max(...corners.map(point=>point.y))
+          });
+          return;
+        }
+        includeBounds(getStandaloneEffectiveBounds(child,timeValue));
+      });
+    }finally{
+      clipBoundsEvaluationStack.delete(stackKey);
+    }
+    return Number.isFinite(x1) ? {x1,y1,x2,y2} : fallback;
+  }
+
   function mainSceneDrawObjects(){
     if(contextStack.length) return contextStack[0].data.drawObjects || [];
     return drawObjects;
@@ -2003,12 +2225,14 @@ ctx.fill();</textarea>
     const snapshots = Array.isArray(instance.keyframes)
       ? instance.keyframes.map(kf=>({ kf, effective:getEffectiveObj(instance, Number(kf.time) || 0) }))
       : [];
-    const baseDelta = rotateScaleDelta(dx, dy, instance.scale === undefined ? 1 : instance.scale, instance.rotation || 0);
+    const baseAxes=getObjectScaleAxes(instance,instance);
+    const baseDelta = rotateScaleDeltaAxes(dx,dy,baseAxes.x,baseAxes.y,instance.rotation||0);
     instance.x = Number(instance.x || 0) + baseDelta.x;
     instance.y = Number(instance.y || 0) + baseDelta.y;
     snapshots.forEach(entry=>{
       const eff = entry.effective || instance;
-      const delta = rotateScaleDelta(dx, dy, eff.scale === undefined ? 1 : eff.scale, eff.rotation || 0);
+      const axes=getObjectScaleAxes(instance,eff);
+      const delta = rotateScaleDeltaAxes(dx,dy,axes.x,axes.y,eff.rotation||0);
       entry.kf.x = Number(eff.x || 0) + delta.x;
       entry.kf.y = Number(eff.y || 0) + delta.y;
     });
@@ -2193,6 +2417,15 @@ ctx.fill();</textarea>
       if(m) drawObjectCounter = Math.max(drawObjectCounter, parseInt(m[1],10) || 0);
     }
     if(obj.enabled === undefined) obj.enabled = true;
+    if(obj.type === 'clipinstance'){
+      if(obj.scale === undefined) obj.scale = 1;
+      if(obj.scaleX === undefined) obj.scaleX = 1;
+      if(obj.scaleY === undefined) obj.scaleY = 1;
+    }else{
+      if(obj.tscale === undefined) obj.tscale = 1;
+      if(obj.tscaleX === undefined) obj.tscaleX = 1;
+      if(obj.tscaleY === undefined) obj.tscaleY = 1;
+    }
     if(obj.type === 'text'){
       if(obj.fillEnabled === undefined) obj.fillEnabled = true;
       if(obj.strokeEnabled === undefined) obj.strokeEnabled = Math.max(0, Number(obj.strokeWidth) || 0) > 0;
@@ -2221,6 +2454,8 @@ ctx.fill();</textarea>
       if(obj.tx === undefined) obj.tx = 0;
       if(obj.ty === undefined) obj.ty = 0;
       if(obj.tscale === undefined) obj.tscale = 1;
+      if(obj.tscaleX === undefined) obj.tscaleX = 1;
+      if(obj.tscaleY === undefined) obj.tscaleY = 1;
       if(obj.trotation === undefined) obj.trotation = 0;
       if(obj.opacity === undefined) obj.opacity = 1;
       if(!Array.isArray(obj.keyframes)) obj.keyframes = [];
@@ -2316,7 +2551,13 @@ ctx.fill();</textarea>
       onionSkinEnabled,
       onionSkinBeforeFrames,
       onionSkinAfterFrames,
+      stageGuides: JSON.parse(JSON.stringify(stageGuides)),
+      snapToGuides,
+      rulersVisible,
+      guidesVisible,
       drawObjects: JSON.parse(JSON.stringify(drawObjects)),
+      clips: JSON.parse(JSON.stringify(clips)),
+      clipCounter,
       behaviours: behaviours.map(b=>({ id:b.id, name:b.name, code:b.code, enabled:b.enabled })),
       targetPoints: targetPoints.map(pt=>({id:pt.id,name:pt.name,x:pt.x,y:pt.y})),
       activeIndex,
@@ -2345,8 +2586,21 @@ ctx.fill();</textarea>
     loopTimeline = snap.loopTimeline !== undefined ? snap.loopTimeline : loopTimeline;
     onionSkinBeforeFrames = Math.max(0, Math.min(ONION_MAX_FRAMES, Math.round(Number(snap.onionSkinBeforeFrames !== undefined ? snap.onionSkinBeforeFrames : onionSkinBeforeFrames) || 0)));
     onionSkinAfterFrames = Math.max(0, Math.min(ONION_MAX_FRAMES, Math.round(Number(snap.onionSkinAfterFrames !== undefined ? snap.onionSkinAfterFrames : onionSkinAfterFrames) || 0)));
+    stageGuides = normalizeStageGuides(snap.stageGuides);
+    snapToGuides = snap.snapToGuides !== undefined ? !!snap.snapToGuides : true;
+    rulersVisible = snap.rulersVisible !== undefined ? !!snap.rulersVisible : true;
+    guidesVisible = snap.guidesVisible !== undefined ? !!snap.guidesVisible : true;
+    syncGuideControls();
     drawObjects = snap.drawObjects ? JSON.parse(JSON.stringify(snap.drawObjects)) : [];
     normalizeAllDrawObjects();
+    // Clips are project content, not transient UI. Preserve definitions, named
+    // frame labels, nested content and external tool metadata through save/load
+    // and undo/redo. Older projects without a clips field remain valid.
+    if(snap.clips && typeof snap.clips === 'object'){
+      Object.keys(clips).forEach(id=> delete clips[id]);
+      Object.entries(JSON.parse(JSON.stringify(snap.clips))).forEach(([id,clip])=>{ clips[id]=clip; });
+      clipCounter = Math.max(Number(snap.clipCounter)||0, ...Object.keys(clips).map(id=>{ const m=String(id).match(/clip-(\d+)/); return m?Number(m[1])||0:0; }));
+    }
     selectedDrawIndices.clear();
     isolatedGroupEdit = null;
     bezierCurveObjectId = null;
@@ -2382,6 +2636,8 @@ ctx.fill();</textarea>
     renderPoints();
     if(typeof renderBehaviourList === 'function') renderBehaviourList();
     if(typeof renderLayerBehaviourSelect === 'function') renderLayerBehaviourSelect();
+    if(typeof renderClipLibrary === 'function') renderClipLibrary();
+    if(typeof renderClipFrameNameList === 'function') renderClipFrameNameList();
     updateUndoButtons();
   }
 
@@ -2667,6 +2923,205 @@ ctx.fill();</textarea>
     });
   }
 
+  // ---------------- rulers, guides and snapping ----------------
+  function normalizeStageGuides(value){
+    const source=value&&typeof value==='object'?value:{};
+    const clean=list=>(Array.isArray(list)?list:[]).map(Number).filter(Number.isFinite);
+    return {vertical:clean(source.vertical),horizontal:clean(source.horizontal)};
+  }
+
+  function applyRulerGuideVisibility(){
+    const workspace=document.getElementById('stage-workspace');
+    const guideLayer=document.getElementById('guide-layer');
+    if(workspace) workspace.classList.toggle('rulers-hidden',!rulersVisible);
+    if(guideLayer) guideLayer.style.display=(!exportPlayback.active&&guidesVisible)?'block':'none';
+  }
+
+  function syncGuideControls(){
+    const snapCheckbox=document.getElementById('chk-snap-guides');
+    const rulersCheckbox=document.getElementById('chk-show-rulers');
+    const guidesCheckbox=document.getElementById('chk-show-guides');
+    if(snapCheckbox) snapCheckbox.checked=!!snapToGuides;
+    if(rulersCheckbox) rulersCheckbox.checked=!!rulersVisible;
+    if(guidesCheckbox) guidesCheckbox.checked=!!guidesVisible;
+    applyRulerGuideVisibility();
+  }
+
+  function guideSnapThreshold(axis){
+    const rect=canvas.getBoundingClientRect();
+    const scale=axis==='x'?(rect.width/Math.max(1,W)):(rect.height/Math.max(1,H));
+    return GUIDE_SNAP_PIXELS/Math.max(.0001,scale);
+  }
+
+  function nearestGuide(value,list,threshold){
+    let best=null,bestDistance=Infinity;
+    (list||[]).forEach(guide=>{
+      const distance=Math.abs(Number(guide)-value);
+      if(distance<=threshold&&distance<bestDistance){best=Number(guide);bestDistance=distance;}
+    });
+    return best;
+  }
+
+  function snapScenePointToGuides(point,axes){
+    if(!snapToGuides||!guidesVisible||!point) return {x:Number(point&&point.x)||0,y:Number(point&&point.y)||0};
+    const allowX=!axes||axes==='both'||axes==='x';
+    const allowY=!axes||axes==='both'||axes==='y';
+    let x=Number(point.x)||0,y=Number(point.y)||0;
+    if(allowX){const guide=nearestGuide(x,stageGuides.vertical,guideSnapThreshold('x'));if(guide!==null)x=guide;}
+    if(allowY){const guide=nearestGuide(y,stageGuides.horizontal,guideSnapThreshold('y'));if(guide!==null)y=guide;}
+    return {x,y};
+  }
+
+  function snapBoundsDeltaToGuides(bounds,dx,dy){
+    if(!snapToGuides||!guidesVisible||!bounds) return {dx,dy};
+    const xs=[bounds.x1+dx,(bounds.x1+bounds.x2)/2+dx,bounds.x2+dx];
+    const ys=[bounds.y1+dy,(bounds.y1+bounds.y2)/2+dy,bounds.y2+dy];
+    let adjustX=0,adjustY=0,bestX=Infinity,bestY=Infinity;
+    const thresholdX=guideSnapThreshold('x'),thresholdY=guideSnapThreshold('y');
+    xs.forEach(value=>stageGuides.vertical.forEach(guide=>{const delta=Number(guide)-value,absolute=Math.abs(delta);if(absolute<=thresholdX&&absolute<bestX){bestX=absolute;adjustX=delta;}}));
+    ys.forEach(value=>stageGuides.horizontal.forEach(guide=>{const delta=Number(guide)-value,absolute=Math.abs(delta);if(absolute<=thresholdY&&absolute<bestY){bestY=absolute;adjustY=delta;}}));
+    return {dx:dx+adjustX,dy:dy+adjustY};
+  }
+
+  function chooseRulerMajorStep(sceneUnitsPerPixel){
+    const target=Math.max(.0001,sceneUnitsPerPixel*70);
+    const power=Math.pow(10,Math.floor(Math.log10(target)));
+    for(const multiplier of [1,2,5,10]){const step=power*multiplier;if(step>=target)return step;}
+    return power*10;
+  }
+
+  function prepareRulerCanvas(ruler,cssWidth,cssHeight){
+    const dpr=Math.max(1,window.devicePixelRatio||1);
+    const width=Math.max(1,Math.round(cssWidth));
+    const height=Math.max(1,Math.round(cssHeight));
+    ruler.style.width=width+'px';ruler.style.height=height+'px';
+    const pixelWidth=Math.max(1,Math.round(width*dpr)),pixelHeight=Math.max(1,Math.round(height*dpr));
+    if(ruler.width!==pixelWidth)ruler.width=pixelWidth;
+    if(ruler.height!==pixelHeight)ruler.height=pixelHeight;
+    const context=ruler.getContext('2d');context.setTransform(dpr,0,0,dpr,0,0);context.clearRect(0,0,width,height);
+    return {context,width,height};
+  }
+
+  function renderStageRulers(){
+    const horizontal=document.getElementById('horizontal-ruler'),vertical=document.getElementById('vertical-ruler');
+    if(!horizontal||!vertical)return;
+    applyRulerGuideVisibility();
+    if(!rulersVisible)return;
+    const rect=canvas.getBoundingClientRect();
+    if(rect.width<1||rect.height<1)return;
+    const h=prepareRulerCanvas(horizontal,rect.width,24),v=prepareRulerCanvas(vertical,24,rect.height);
+    const start=stageToScenePoint({x:0,y:0});
+    const xScale=rect.width/W,yScale=rect.height/H;
+    const xMajor=chooseRulerMajorStep(1/xScale),xMinor=xMajor/5;
+    const yMajor=chooseRulerMajorStep(1/yScale),yMinor=yMajor/5;
+    function base(context,width,height){context.fillStyle='#f7f8fa';context.fillRect(0,0,width,height);context.strokeStyle='#7f8791';context.fillStyle='#59616b';context.lineWidth=1;context.font='10px Inter,Segoe UI,sans-serif';}
+    base(h.context,h.width,h.height);
+    const firstX=Math.floor(start.x/xMinor)*xMinor,lastX=start.x+W;
+    for(let value=firstX,index=0;value<=lastX+xMinor*.5;value+=xMinor,index++){
+      const stageX=sceneToStagePoint({x:value,y:0}).x,px=stageX*xScale;
+      if(px<-.5||px>h.width+.5)continue;
+      const major=Math.abs(value/xMajor-Math.round(value/xMajor))<1e-5;
+      h.context.beginPath();h.context.moveTo(Math.round(px)+.5,h.height);h.context.lineTo(Math.round(px)+.5,h.height-(major?12:6));h.context.stroke();
+      if(major)h.context.fillText(String(Math.round(value*100)/100),px+3,10);
+    }
+    base(v.context,v.width,v.height);
+    const firstY=Math.floor(start.y/yMinor)*yMinor,lastY=start.y+H;
+    for(let value=firstY,index=0;value<=lastY+yMinor*.5;value+=yMinor,index++){
+      const stageY=sceneToStagePoint({x:0,y:value}).y,py=stageY*yScale;
+      if(py<-.5||py>v.height+.5)continue;
+      const major=Math.abs(value/yMajor-Math.round(value/yMajor))<1e-5;
+      v.context.beginPath();v.context.moveTo(v.width,Math.round(py)+.5);v.context.lineTo(v.width-(major?12:6),Math.round(py)+.5);v.context.stroke();
+      if(major){v.context.save();v.context.translate(9,py-3);v.context.rotate(-Math.PI/2);v.context.fillText(String(Math.round(value*100)/100),0,0);v.context.restore();}
+    }
+  }
+
+  function guidePositionFromClient(type,clientX,clientY){
+    const rect=canvas.getBoundingClientRect();
+    const stageX=Math.max(0,Math.min(W,(clientX-rect.left)/Math.max(1,rect.width)*W));
+    const stageY=Math.max(0,Math.min(H,(clientY-rect.top)/Math.max(1,rect.height)*H));
+    const scene=stageToScenePoint({x:stageX,y:stageY});
+    return type==='vertical'?scene.x:scene.y;
+  }
+
+  function clientIsNearCanvas(clientX,clientY,pad){
+    const rect=canvas.getBoundingClientRect(),margin=Number(pad)||0;
+    return clientX>=rect.left-margin&&clientX<=rect.right+margin&&clientY>=rect.top-margin&&clientY<=rect.bottom+margin;
+  }
+
+  function startGuideDrag(type,index,event,historyAlreadyPushed){
+    if(!historyAlreadyPushed)pushUndo();
+    const element=event&&event.currentTarget&&event.currentTarget.classList?event.currentTarget:null;
+    if(element)element.classList.add('dragging');
+    function move(moveEvent){stageGuides[type][index]=guidePositionFromClient(type,moveEvent.clientX,moveEvent.clientY);renderStageGuides();}
+    function up(upEvent){
+      window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up);
+      if(element)element.classList.remove('dragging');
+      if(!clientIsNearCanvas(upEvent.clientX,upEvent.clientY,18))stageGuides[type].splice(index,1);
+      renderStageGuides();renderStageRulers();
+    }
+    window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+    if(event){event.preventDefault();event.stopPropagation();}
+  }
+
+  function renderStageGuides(){
+    const layer=document.getElementById('guide-layer');if(!layer)return;
+    layer.querySelectorAll('.stage-guide').forEach(node=>node.remove());
+    applyRulerGuideVisibility();
+    if(exportPlayback.active||!guidesVisible)return;
+    ['vertical','horizontal'].forEach(type=>{
+      stageGuides[type].forEach((position,index)=>{
+        const display=type==='vertical'?sceneToStagePoint({x:position,y:0}).x:sceneToStagePoint({x:0,y:position}).y;
+        if(display<0||display>(type==='vertical'?W:H))return;
+        const guide=document.createElement('div');guide.className='stage-guide '+type;
+        if(type==='vertical')guide.style.left=(display/W*100)+'%';else guide.style.top=(display/H*100)+'%';
+        guide.title=(type==='vertical'?'Vertical':'Horizontal')+' guide '+Math.round(position*100)/100+' — drag to move; Ctrl-drag to duplicate; right-click to delete';
+        guide.addEventListener('mousedown',event=>{
+          if(event.ctrlKey||event.metaKey){
+            pushUndo();
+            stageGuides[type].push(stageGuides[type][index]);
+            const duplicateIndex=stageGuides[type].length-1;
+            renderStageGuides();
+            const duplicate=document.querySelectorAll('.stage-guide.'+type)[duplicateIndex];
+            const dragEvent={
+              clientX:event.clientX,clientY:event.clientY,currentTarget:duplicate,
+              preventDefault:()=>event.preventDefault(),stopPropagation:()=>event.stopPropagation()
+            };
+            startGuideDrag(type,duplicateIndex,dragEvent,true);
+          }else{
+            startGuideDrag(type,index,event,false);
+          }
+        });
+        guide.addEventListener('contextmenu',event=>{event.preventDefault();event.stopPropagation();pushUndo();stageGuides[type].splice(index,1);renderStageGuides();});
+        layer.appendChild(guide);
+      });
+    });
+  }
+
+  function updateRulersAndGuides(){renderStageRulers();renderStageGuides();}
+
+  (function setupStageRulersAndGuides(){
+    const horizontal=document.getElementById('horizontal-ruler'),vertical=document.getElementById('vertical-ruler');
+    const snapCheckbox=document.getElementById('chk-snap-guides');
+    const rulersCheckbox=document.getElementById('chk-show-rulers');
+    const guidesCheckbox=document.getElementById('chk-show-guides');
+    // Standard ruler orientation: the top ruler creates horizontal guides;
+    // the side ruler creates vertical guides.
+    if(horizontal)horizontal.addEventListener('mousedown',event=>{
+      pushUndo();stageGuides.horizontal.push(guidePositionFromClient('horizontal',event.clientX,event.clientY));
+      const index=stageGuides.horizontal.length-1;renderStageGuides();startGuideDrag('horizontal',index,event,true);
+    });
+    if(vertical)vertical.addEventListener('mousedown',event=>{
+      pushUndo();stageGuides.vertical.push(guidePositionFromClient('vertical',event.clientX,event.clientY));
+      const index=stageGuides.vertical.length-1;renderStageGuides();startGuideDrag('vertical',index,event,true);
+    });
+    if(snapCheckbox)snapCheckbox.addEventListener('change',()=>{pushUndo();snapToGuides=snapCheckbox.checked;syncGuideControls();});
+    if(rulersCheckbox)rulersCheckbox.addEventListener('change',()=>{pushUndo();rulersVisible=rulersCheckbox.checked;syncGuideControls();requestAnimationFrame(updateRulersAndGuides);});
+    if(guidesCheckbox)guidesCheckbox.addEventListener('change',()=>{pushUndo();guidesVisible=guidesCheckbox.checked;syncGuideControls();renderStageGuides();});
+    if(window.ResizeObserver)new ResizeObserver(()=>updateRulersAndGuides()).observe(canvas);
+    syncGuideControls();
+    requestAnimationFrame(updateRulersAndGuides);
+  })();
+
   // Hard boundary check: a click must be physically inside the canvas's own
   // rendered box to count as a stage interaction. This is a deliberate second
   // guard beyond "did the event target the overlay element" — it protects
@@ -2773,6 +3228,92 @@ ctx.fill();</textarea>
     context.lineTo(x, y + r);
     context.quadraticCurveTo(x, y, x + r, y);
     context.closePath();
+  }
+
+
+  // A non-uniform canvas transform also stretches the stroke itself. That is
+  // why an otherwise smooth circle developed heavy sides and pinched top and
+  // bottom edges. Build the outline as a transformed Path2D, then stroke it in
+  // stage space with one even width. Uniform object scaling is preserved, but
+  // independent X/Y stretching can no longer deform the border.
+  function path2DRoundedRect(x,y,w,h,radius){
+    const path=new Path2D();
+    const r=Math.max(0,Math.min(Number(radius)||0,w/2,h/2));
+    if(r<=0){path.rect(x,y,w,h);return path;}
+    if(typeof path.roundRect==='function'){path.roundRect(x,y,w,h,r);return path;}
+    path.moveTo(x+r,y);
+    path.lineTo(x+w-r,y);
+    path.quadraticCurveTo(x+w,y,x+w,y+r);
+    path.lineTo(x+w,y+h-r);
+    path.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    path.lineTo(x+r,y+h);
+    path.quadraticCurveTo(x,y+h,x,y+h-r);
+    path.lineTo(x,y+r);
+    path.quadraticCurveTo(x,y,x+r,y);
+    path.closePath();
+    return path;
+  }
+
+  function path2DFromVectorPoints(points,handles,closedPath){
+    const list=Array.isArray(points)?points:[];
+    if(!list.length) return null;
+    const path=new Path2D();
+    path.moveTo(Number(list[0].x)||0,Number(list[0].y)||0);
+    const useBezier=Array.isArray(handles)&&handles.length===list.length;
+    const segmentCount=closedPath?list.length:list.length-1;
+    for(let i=0;i<segmentCount;i++){
+      const j=(i+1)%list.length;
+      const a=list[i],b=list[j];
+      if(useBezier){
+        const ah=handles[i]||{},bh=handles[j]||{};
+        path.bezierCurveTo(
+          (Number(a.x)||0)+(Number(ah.outX)||0),
+          (Number(a.y)||0)+(Number(ah.outY)||0),
+          (Number(b.x)||0)+(Number(bh.inX)||0),
+          (Number(b.y)||0)+(Number(bh.inY)||0),
+          Number(b.x)||0,Number(b.y)||0
+        );
+      }else path.lineTo(Number(b.x)||0,Number(b.y)||0);
+    }
+    if(closedPath) path.closePath();
+    return path;
+  }
+
+  function transformMinimumScale(matrix){
+    if(!matrix) return 1;
+    const a=Number(matrix.a)||0,b=Number(matrix.b)||0,c=Number(matrix.c)||0,d=Number(matrix.d)||0;
+    const aa=a*a+b*b,bb=c*c+d*d,cross=a*c+b*d;
+    const trace=aa+bb;
+    const determinant=Math.max(0,aa*bb-cross*cross);
+    const discriminant=Math.max(0,trace*trace-4*determinant);
+    const smallest=Math.max(0,(trace-Math.sqrt(discriminant))/2);
+    return Math.max(.0001,Math.sqrt(smallest));
+  }
+
+  function strokeVectorPathEvenly(context,path,strokeColor,strokeWidth,lineJoin,lineCap){
+    if(!path||!(strokeWidth>0)) return;
+    const matrix=typeof context.getTransform==='function'?context.getTransform():null;
+    if(matrix&&typeof Path2D!=='undefined'&&typeof Path2D.prototype.addPath==='function'){
+      const transformed=new Path2D();
+      transformed.addPath(path,matrix);
+      const evenScale=transformMinimumScale(matrix);
+      context.save();
+      context.setTransform(1,0,0,1,0,0);
+      context.strokeStyle=strokeColor;
+      context.lineWidth=Math.max(.01,strokeWidth*evenScale);
+      context.lineJoin=lineJoin||'round';
+      context.lineCap=lineCap||'round';
+      context.stroke(transformed);
+      context.restore();
+      return;
+    }
+    context.save();
+    context.strokeStyle=strokeColor;
+    context.lineWidth=strokeWidth;
+    context.lineJoin=lineJoin||'round';
+    context.lineCap=lineCap||'round';
+    context.stroke(path);
+    context.restore();
   }
 
   function makeSmoothOpenBezierHandles(pointsInput){
@@ -3014,11 +3555,11 @@ ctx.fill();</textarea>
     const b0 = getDrawObjectBounds(obj);
     const pivotX = (b0.x1+b0.x2)/2, pivotY = (b0.y1+b0.y2)/2;
     const tx = eff.tx || 0, ty = eff.ty || 0;
-    const tscale = (eff.tscale === undefined) ? 1 : eff.tscale;
+    const scaleAxes=getObjectScaleAxes(obj,eff);
     const trotation = eff.trotation || 0;
     ctx.translate(pivotX+tx, pivotY+ty);
     if(trotation) ctx.rotate(trotation * Math.PI/180);
-    if(tscale !== 1) ctx.scale(tscale, tscale);
+    if(scaleAxes.x !== 1 || scaleAxes.y !== 1) ctx.scale(scaleAxes.x,scaleAxes.y);
     ctx.translate(-pivotX, -pivotY);
 
     const fillColor = eff.fillColor || obj.fillColor || obj.color || '#4fe0c4';
@@ -3041,30 +3582,11 @@ ctx.fill();</textarea>
       if(obj.penStroke){
         renderCalligraphyStroke(ctx,obj,eff,renderPoints,renderHandles,strokeColor);
       }else{
-        ctx.strokeStyle = strokeColor; ctx.lineWidth = strokeWidth;
-        ctx.fillStyle = fillColor;
-        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(renderPoints[0].x,renderPoints[0].y);
-        const useBezier = Array.isArray(renderHandles) && renderHandles.length === renderPoints.length;
-        if(useBezier){
-          const segmentCount = closedPath ? renderPoints.length : renderPoints.length - 1;
-          for(let i=0;i<segmentCount;i++){
-            const j=(i+1)%renderPoints.length;
-            const a=renderPoints[i], b=renderPoints[j];
-            const ah=renderHandles[i]||{}, bh=renderHandles[j]||{};
-            ctx.bezierCurveTo(
-              a.x+(Number(ah.outX)||0), a.y+(Number(ah.outY)||0),
-              b.x+(Number(bh.inX)||0), b.y+(Number(bh.inY)||0),
-              b.x,b.y
-            );
-          }
-        }else{
-          for(let i=1;i<renderPoints.length;i++) ctx.lineTo(renderPoints[i].x,renderPoints[i].y);
+        const vectorPath=path2DFromVectorPoints(renderPoints,renderHandles,closedPath);
+        if(closedPath&&fillEnabled&&vectorPath){
+          ctx.save();ctx.fillStyle=fillColor;ctx.fill(vectorPath);ctx.restore();
         }
-        if(closedPath) ctx.closePath();
-        if(closedPath && fillEnabled) ctx.fill();
-        if(strokeEnabled) ctx.stroke();
+        if(strokeEnabled&&vectorPath) strokeVectorPathEvenly(ctx,vectorPath,strokeColor,strokeWidth,'round','round');
       }
     } else if(obj.type === 'line'){
       const x1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
@@ -3073,8 +3595,8 @@ ctx.fill();</textarea>
       const y2 = eff.y2 !== undefined ? eff.y2 : obj.y2;
       const strokeEnabled = eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false;
       if(strokeEnabled && strokeWidth > 0){
-        ctx.strokeStyle = strokeColor; ctx.lineWidth = strokeWidth; ctx.lineCap = 'round';
-        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+        const linePath=new Path2D();linePath.moveTo(x1,y1);linePath.lineTo(x2,y2);
+        strokeVectorPathEvenly(ctx,linePath,strokeColor,strokeWidth,'round','round');
       }
     } else if(obj.type === 'rect'){
       const rx1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
@@ -3085,12 +3607,9 @@ ctx.fill();</textarea>
       const w = Math.abs(rx2-rx1), h = Math.abs(ry2-ry1);
       const fillEnabled = eff.fillEnabled !== undefined ? !!eff.fillEnabled : obj.fillEnabled !== false;
       const strokeEnabled = eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false;
-      ctx.fillStyle = fillColor;
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = strokeWidth;
-      roundedRectPath(ctx, x, y, w, h, cornerRadius);
-      if(fillEnabled) ctx.fill();
-      if(strokeEnabled && strokeWidth > 0) ctx.stroke();
+      const rectPath=path2DRoundedRect(x,y,w,h,cornerRadius);
+      if(fillEnabled){ctx.save();ctx.fillStyle=fillColor;ctx.fill(rectPath);ctx.restore();}
+      if(strokeEnabled&&strokeWidth>0) strokeVectorPathEvenly(ctx,rectPath,strokeColor,strokeWidth,'round','round');
     } else if(obj.type === 'ellipse'){
       const ex1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
       const ey1 = eff.y1 !== undefined ? eff.y1 : obj.y1;
@@ -3100,13 +3619,10 @@ ctx.fill();</textarea>
       const rx = Math.abs(ex2-ex1)/2, ry = Math.abs(ey2-ey1)/2;
       const fillEnabled = eff.fillEnabled !== undefined ? !!eff.fillEnabled : obj.fillEnabled !== false;
       const strokeEnabled = eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false;
-      ctx.fillStyle = fillColor;
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = strokeWidth;
-      ctx.beginPath();
-      ctx.ellipse(cx,cy,Math.max(0.5,rx),Math.max(0.5,ry),0,0,Math.PI*2);
-      if(fillEnabled) ctx.fill();
-      if(strokeEnabled && strokeWidth > 0) ctx.stroke();
+      const ellipsePath=new Path2D();
+      ellipsePath.ellipse(cx,cy,Math.max(.5,rx),Math.max(.5,ry),0,0,Math.PI*2);
+      if(fillEnabled){ctx.save();ctx.fillStyle=fillColor;ctx.fill(ellipsePath);ctx.restore();}
+      if(strokeEnabled&&strokeWidth>0) strokeVectorPathEvenly(ctx,ellipsePath,strokeColor,strokeWidth,'round','round');
     } else if(obj.type === 'text'){
       const weight = obj.bold ? '700' : '400';
       const style = obj.italic ? 'italic ' : '';
@@ -3188,6 +3704,14 @@ ctx.fill();</textarea>
       const half = clip ? 60 : 40; // rough placeholder extent since clip content bounds vary
       return { x1:obj.x-half, y1:obj.y-half, x2:obj.x+half, y2:obj.y+half };
     }
+    // Editor-only external tools may expose a stage-space bounding rectangle
+    // without asking the core renderer to draw the object itself.
+    if(obj && obj.editorBounds){
+      const b=obj.editorBounds;
+      if([b.x1,b.y1,b.x2,b.y2].every(v=>Number.isFinite(Number(v)))){
+        return {x1:Number(b.x1),y1:Number(b.y1),x2:Number(b.x2),y2:Number(b.y2)};
+      }
+    }
     return { x1:0,y1:0,x2:0,y2:0 };
   }
   function getIsolatedGroupInfo(){
@@ -3203,13 +3727,34 @@ ctx.fill();</textarea>
   }
 
   function getStandaloneLiveTransform(obj, eff){
+    const axes=getObjectScaleAxes(obj,eff);
+    if(obj.type === 'clipinstance'){
+      const originX=Number(eff.x)||0,originY=Number(eff.y)||0;
+      const rotation=Number(eff.rotation)||0;
+      const clip=clips[obj.clipId];
+      if(clip){
+        const localTime=clipInstanceLocalTime(obj,eff,t);
+        const bounds=getClipContentLocalBounds(clip,localTime);
+        const clipPivot=ensureClipPivot(clip);
+        const localCenterX=(bounds.x1+bounds.x2)/2-clipPivot.x;
+        const localCenterY=(bounds.y1+bounds.y2)/2-clipPivot.y;
+        const centerDelta=rotateScaleDeltaAxes(localCenterX,localCenterY,axes.x,axes.y,rotation);
+        return {
+          pivotX:originX+centerDelta.x,pivotY:originY+centerDelta.y,
+          originX,originY,localCenterX,localCenterY,
+          scale:axes.uniform,scaleX:axes.x,scaleY:axes.y,
+          axisX:axes.axisX,axisY:axes.axisY,rotation,
+          halfW:Math.max(6,(bounds.x2-bounds.x1)/2),
+          halfH:Math.max(6,(bounds.y2-bounds.y1)/2)
+        };
+      }
+      return {pivotX:originX,pivotY:originY,originX,originY,scale:axes.uniform,scaleX:axes.x,scaleY:axes.y,axisX:axes.axisX,axisY:axes.axisY,rotation,halfW:40,halfH:40};
+    }
     const b = getDrawObjectBounds(obj);
     const baseHalfW=(b.x2-b.x1)/2, baseHalfH=(b.y2-b.y1)/2;
-    if(obj.type === 'clipinstance'){
-      return {pivotX:Number(eff.x)||0,pivotY:Number(eff.y)||0,scale:eff.scale===undefined?1:Number(eff.scale)||1,rotation:Number(eff.rotation)||0,halfW:Math.max(6,baseHalfW),halfH:Math.max(6,baseHalfH)};
-    }
     const basePivotX=(b.x1+b.x2)/2,basePivotY=(b.y1+b.y2)/2;
-    return {pivotX:basePivotX+(Number(eff.tx)||0),pivotY:basePivotY+(Number(eff.ty)||0),scale:eff.tscale===undefined?1:Number(eff.tscale)||1,rotation:Number(eff.trotation)||0,halfW:Math.max(6,baseHalfW),halfH:Math.max(6,baseHalfH)};
+    const pivotX=basePivotX+(Number(eff.tx)||0),pivotY=basePivotY+(Number(eff.ty)||0);
+    return {pivotX,pivotY,originX:pivotX,originY:pivotY,scale:axes.uniform,scaleX:axes.x,scaleY:axes.y,axisX:axes.axisX,axisY:axes.axisY,rotation:Number(eff.trotation)||0,halfW:Math.max(6,baseHalfW),halfH:Math.max(6,baseHalfH)};
   }
 
   function getStandaloneEffectiveBounds(obj,timeValue){
@@ -3245,10 +3790,10 @@ ctx.fill();</textarea>
     const bounds=getDrawObjectBounds(group);
     const baseX=(bounds.x1+bounds.x2)/2,baseY=(bounds.y1+bounds.y2)/2;
     const tx=Number(eff.tx)||0,ty=Number(eff.ty)||0;
-    const scale=eff.tscale===undefined?1:Number(eff.tscale)||1;
+    const axes=getObjectScaleAxes(group,eff);
     const angle=(Number(eff.trotation)||0)*Math.PI/180;
-    const dx=(Number(point.x)||0)-baseX,dy=(Number(point.y)||0)-baseY;
-    return {x:baseX+tx+(dx*Math.cos(angle)-dy*Math.sin(angle))*scale,y:baseY+ty+(dx*Math.sin(angle)+dy*Math.cos(angle))*scale};
+    const dx=((Number(point.x)||0)-baseX)*axes.x,dy=((Number(point.y)||0)-baseY)*axes.y;
+    return {x:baseX+tx+dx*Math.cos(angle)-dy*Math.sin(angle),y:baseY+ty+dx*Math.sin(angle)+dy*Math.cos(angle)};
   }
 
   function stagePointToGroupLocal(group, point, timeValue){
@@ -3256,24 +3801,29 @@ ctx.fill();</textarea>
     const bounds=getDrawObjectBounds(group);
     const baseX=(bounds.x1+bounds.x2)/2,baseY=(bounds.y1+bounds.y2)/2;
     const tx=Number(eff.tx)||0,ty=Number(eff.ty)||0;
-    const scale=Math.max(.00001,Math.abs(eff.tscale===undefined?1:Number(eff.tscale)||1));
+    const axes=getObjectScaleAxes(group,eff);
+    const scaleX=Math.max(.00001,Math.abs(axes.x)),scaleY=Math.max(.00001,Math.abs(axes.y));
     const angle=-(Number(eff.trotation)||0)*Math.PI/180;
     const dx=(Number(point.x)||0)-(baseX+tx),dy=(Number(point.y)||0)-(baseY+ty);
-    return {x:baseX+(dx*Math.cos(angle)-dy*Math.sin(angle))/scale,y:baseY+(dx*Math.sin(angle)+dy*Math.cos(angle))/scale};
+    const rx=dx*Math.cos(angle)-dy*Math.sin(angle),ry=dx*Math.sin(angle)+dy*Math.cos(angle);
+    return {x:baseX+rx/scaleX,y:baseY+ry/scaleY};
   }
 
   function groupStageDeltaToLocal(group, dx, dy, timeValue){
     const eff=getEffectiveObj(group,timeValue===undefined?t:timeValue);
-    const scale=Math.max(.00001,Math.abs(eff.tscale===undefined?1:Number(eff.tscale)||1));
+    const axes=getObjectScaleAxes(group,eff);
+    const scaleX=Math.max(.00001,Math.abs(axes.x)),scaleY=Math.max(.00001,Math.abs(axes.y));
     const angle=-(Number(eff.trotation)||0)*Math.PI/180;
-    return {x:(dx*Math.cos(angle)-dy*Math.sin(angle))/scale,y:(dx*Math.sin(angle)+dy*Math.cos(angle))/scale};
+    const rx=dx*Math.cos(angle)-dy*Math.sin(angle),ry=dx*Math.sin(angle)+dy*Math.cos(angle);
+    return {x:rx/scaleX,y:ry/scaleY};
   }
 
   function getGroupParentPoseForObject(obj){
     const isolated=getIsolatedGroupInfo();
     if(!isolated || isolated.child !== obj) return null;
     const eff=getEffectiveObj(isolated.group,t);
-    return {group:isolated.group,scale:eff.tscale===undefined?1:Number(eff.tscale)||1,rotation:Number(eff.trotation)||0};
+    const axes=getObjectScaleAxes(isolated.group,eff);
+    return {group:isolated.group,scale:axes.uniform,scaleX:axes.x,scaleY:axes.y,rotation:Number(eff.trotation)||0};
   }
 
   // Bounds at the object's CURRENT (possibly keyframed) transform — used for
@@ -3294,12 +3844,20 @@ ctx.fill();</textarea>
   }
   function drawSelectionHighlight(obj){
     if(exportPlayback.active) return;
-    const b = getEffectiveBounds(obj);
+    const eff=getEffectiveObj(obj,t);
+    const lt=getLiveTransform(obj,eff);
+    const byKey=Object.fromEntries(getTransformedCorners(lt).map(point=>[point.key,point]));
+    const outline=[byKey.tl,byKey.tr,byKey.br,byKey.bl].filter(Boolean);
+    if(outline.length!==4) return;
     ctx.save();
-    ctx.strokeStyle = 'rgba(14,156,134,0.9)';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle='rgba(14,156,134,0.95)';
+    ctx.lineWidth=1.5;
     ctx.setLineDash([5,4]);
-    ctx.strokeRect(b.x1-4, b.y1-4, (b.x2-b.x1)+8, (b.y2-b.y1)+8);
+    ctx.beginPath();
+    ctx.moveTo(outline[0].x,outline[0].y);
+    for(let index=1;index<outline.length;index++) ctx.lineTo(outline[index].x,outline[index].y);
+    ctx.closePath();
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -3315,9 +3873,161 @@ ctx.fill();</textarea>
       drawObjects: [],
       pivotX: 0,
       pivotY: 0,
+      frameLabels: [],
       timelineDuration: 3,
       loopTimeline: true
     };
+  }
+
+  function currentEditingClip(){
+    return editingClipId && clips[editingClipId] ? clips[editingClipId] : null;
+  }
+
+  function clipFrameCount(clip){
+    if(!clip) return 0;
+    return Math.max(1, Math.round(Math.max(0, Number(clip.timelineDuration) || 0) * getTimelineFPS()) + 1);
+  }
+
+  function clipFrameToTime(frame){
+    return Math.max(0, (Math.max(1, Math.round(Number(frame) || 1)) - 1) / getTimelineFPS());
+  }
+
+  function normalizedClipFrameLabels(clip){
+    if(!clip) return [];
+    const maximumFrame = clipFrameCount(clip);
+    const source = Array.isArray(clip.frameLabels) ? clip.frameLabels : [];
+    const byFrame = new Map();
+    source.forEach(label=>{
+      const name = String(label && label.name || '').trim();
+      if(!name) return;
+      const frame = Math.max(1, Math.min(maximumFrame, Math.round(Number(label && label.frame) || (Math.round((Number(label && label.time) || 0) * getTimelineFPS()) + 1))));
+      byFrame.set(frame, { name, frame, time:clipFrameToTime(frame) });
+    });
+    clip.frameLabels = Array.from(byFrame.values()).sort((a,b)=>a.frame-b.frame);
+    return clip.frameLabels;
+  }
+
+  function clipFrameLabelAt(clip, frame){
+    return normalizedClipFrameLabels(clip).find(label=>label.frame===frame) || null;
+  }
+
+  function setClipFrameName(clip, frame, requestedName){
+    if(!clip) return false;
+    const maximumFrame = clipFrameCount(clip);
+    const targetFrame = Math.max(1, Math.min(maximumFrame, Math.round(Number(frame) || 1)));
+    const nextName = String(requestedName == null ? '' : requestedName).trim();
+    const labels = normalizedClipFrameLabels(clip).filter(label=>label.frame!==targetFrame);
+    if(nextName){
+      const duplicate = labels.find(label=>label.name.toLowerCase()===nextName.toLowerCase());
+      if(duplicate){
+        alert('“' + nextName + '” is already used on frame ' + duplicate.frame + '. Frame names in one Clip must be unique.');
+        return false;
+      }
+    }
+    pushUndo();
+    if(nextName) labels.push({name:nextName, frame:targetFrame, time:clipFrameToTime(targetFrame)});
+    clip.frameLabels = labels.sort((a,b)=>a.frame-b.frame);
+    renderTimeline();
+    renderClipFrameNameList();
+    return true;
+  }
+
+  function updateClipFrameNameCurrentHighlight(frameOverride){
+    const list = document.getElementById('clip-frame-name-list');
+    if(!list) return;
+    const currentFrame = Math.max(1, Math.round(Number(frameOverride) || (Math.round(t * getTimelineFPS()) + 1)));
+    const old = list.querySelector('.clip-frame-name-row.current');
+    if(old && Number(old.dataset.frame)!==currentFrame) old.classList.remove('current');
+    const next = list.querySelector('.clip-frame-name-row[data-frame="' + currentFrame + '"]');
+    if(next) next.classList.add('current');
+  }
+
+  function renderClipFrameNameList(){
+    const section = document.getElementById('clip-frame-names-section');
+    const list = document.getElementById('clip-frame-name-list');
+    const title = document.getElementById('clip-frame-name-title');
+    const count = document.getElementById('clip-frame-name-count');
+    if(!section || !list || !title || !count) return;
+    const clip = currentEditingClip();
+    if(!clip){
+      section.style.display = 'none';
+      list.innerHTML = '';
+      clipFrameNameListSignature = '';
+      return;
+    }
+    section.style.display = 'block';
+    title.textContent = 'Frames — ' + clip.name;
+    const total = clipFrameCount(clip);
+    count.textContent = total + (total===1 ? ' frame' : ' frames');
+    const normalizedLabels = normalizedClipFrameLabels(clip);
+    const labels = new Map(normalizedLabels.map(label=>[label.frame,label.name]));
+    const currentFrame = Math.max(1, Math.min(total, Math.round(t * getTimelineFPS()) + 1));
+    const signature = editingClipId + '|' + total + '|' + normalizedLabels.map(label=>label.frame + ':' + label.name).join('|');
+    if(signature === clipFrameNameListSignature && list.children.length){
+      updateClipFrameNameCurrentHighlight(currentFrame);
+      return;
+    }
+    clipFrameNameListSignature = signature;
+    const fragment = document.createDocumentFragment();
+    for(let frame=1; frame<=total; frame++){
+      const row = document.createElement('div');
+      row.className = 'clip-frame-name-row' + (frame===currentFrame ? ' current' : '');
+      row.dataset.frame = String(frame);
+
+      const frameButton = document.createElement('button');
+      frameButton.type = 'button';
+      frameButton.className = 'clip-frame-number';
+      frameButton.textContent = String(frame);
+      frameButton.title = 'Go to frame ' + frame;
+      frameButton.addEventListener('click', ()=>{
+        t = Math.max(0, Math.min(timelineDuration, clipFrameToTime(frame)));
+        playing = false;
+        stopAudioIfLoaded();
+        updateInspector();
+        renderTimeline();
+        renderTransformHandles();
+      });
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'clip-frame-name-input';
+      input.value = labels.get(frame) || '';
+      input.placeholder = 'Frame ' + frame;
+      input.setAttribute('aria-label','Name for frame ' + frame);
+      input.addEventListener('keydown', event=>{
+        if(event.key==='Enter'){ event.preventDefault(); input.blur(); }
+        else if(event.key==='Escape'){
+          event.preventDefault();
+          input.value = labels.get(frame) || '';
+          input.blur();
+        }
+      });
+      input.addEventListener('change', ()=>{
+        if(!setClipFrameName(clip, frame, input.value)) input.value = labels.get(frame) || '';
+      });
+
+      row.appendChild(frameButton);
+      row.appendChild(input);
+      fragment.appendChild(row);
+    }
+    list.replaceChildren(fragment);
+  }
+
+  function promptClipFrameNameAtClientX(clientX){
+    const clip = currentEditingClip();
+    if(!clip){
+      logToSandbox('Enter a Clip before naming its frames.', true);
+      return false;
+    }
+    const ruler = document.getElementById('timeline-ruler');
+    const rect = ruler.getBoundingClientRect();
+    const info = getTimelineFrameInfo();
+    const fraction = Math.max(0, Math.min(1, (Number(clientX) - rect.left) / Math.max(1, rect.width)));
+    const frame = Math.max(1, Math.min(clipFrameCount(clip), Math.round(fraction * info.totalFrames) + 1));
+    const old = clipFrameLabelAt(clip, frame);
+    const answer = prompt('Name frame ' + frame + ' in “' + clip.name + '”. Leave it blank to remove the name:', old ? old.name : '');
+    if(answer === null) return false;
+    return setClipFrameName(clip, frame, answer);
   }
 
   // Recursive, per-instance render: temporarily points the shared scene
@@ -3329,9 +4039,8 @@ ctx.fill();</textarea>
     if(!clip || clipRenderDepth >= MAX_CLIP_DEPTH) return;
     clipRenderDepth++;
 
-    const dur = Math.max(0.1, clip.timelineDuration);
-    let localT = t + (obj.timeOffset || 0);
-    localT = clip.loopTimeline ? (((localT % dur) + dur) % dur) : Math.min(localT, dur);
+    // Bounds, gizmos and rendering must all resolve the same internal Clip frame.
+    const localT = clipInstanceLocalTime(obj, eff, t);
 
     const saved = { points, closed, samples, pathLen, targetPoints, layers, drawObjects, t };
     points = clip.points; closed = clip.closed; targetPoints = clip.targetPoints;
@@ -3343,8 +4052,8 @@ ctx.fill();</textarea>
     ctx.globalAlpha *= (eff.opacity !== undefined ? eff.opacity : 1);
     ctx.translate(eff.x, eff.y);
     if(eff.rotation) ctx.rotate(eff.rotation * Math.PI / 180);
-    const s = (eff.scale === undefined || eff.scale === null) ? 1 : eff.scale;
-    if(s !== 1) ctx.scale(s, s);
+    const axes=getObjectScaleAxes(obj,eff);
+    if(axes.x !== 1 || axes.y !== 1) ctx.scale(axes.x,axes.y);
     const clipPivot = ensureClipPivot(clip);
     if(clipPivot.x || clipPivot.y) ctx.translate(-clipPivot.x, -clipPivot.y);
 
@@ -3397,6 +4106,9 @@ ctx.fill();</textarea>
     });
     updateClipBreadcrumb();
     renderClipLibrary();
+    renderTimeline();
+    renderClipFrameNameList();
+    requestAnimationFrame(updateRulersAndGuides);
   }
 
   function exitClipEdit(){
@@ -3415,6 +4127,9 @@ ctx.fill();</textarea>
     applyContext(prev.data);
     updateClipBreadcrumb();
     renderClipLibrary();
+    renderTimeline();
+    renderClipFrameNameList();
+    requestAnimationFrame(updateRulersAndGuides);
   }
 
   function updateClipBreadcrumb(){
@@ -3437,6 +4152,8 @@ ctx.fill();</textarea>
     if(obj.tx === undefined) obj.tx = 0;
     if(obj.ty === undefined) obj.ty = 0;
     if(obj.tscale === undefined) obj.tscale = 1;
+    if(obj.tscaleX === undefined) obj.tscaleX = 1;
+    if(obj.tscaleY === undefined) obj.tscaleY = 1;
     if(obj.trotation === undefined) obj.trotation = 0;
     if(obj.opacity === undefined) obj.opacity = 1;
     if(obj.fillColor === undefined) obj.fillColor = obj.color || '#4fe0c4';
@@ -3488,7 +4205,7 @@ ctx.fill();</textarea>
     updatePenDraftPreview();updateInkSettingsPanel();
     let moved=false;
     function move(moveEvent){
-      const point=canvasCoords(moveEvent.clientX,moveEvent.clientY);
+      const point=snapScenePointToGuides(canvasCoords(moveEvent.clientX,moveEvent.clientY));
       penDraft.points[1]={x:point.x,y:point.y};
       moved=Math.hypot(point.x-startPoint.x,point.y-startPoint.y)>2;
       updatePenDraftPreview();
@@ -3524,7 +4241,7 @@ ctx.fill();</textarea>
       if(!obj||obj.enabled===false||!obj.penStroke||obj.type!=='freehand') continue;
       const local=scenePointToObjectLocal(obj,scenePoint,t);
       const hit=closestEditableShapeSegment(obj,local);
-      const eff=getEffectiveObj(obj,t),scale=Math.max(.01,Math.abs(Number(eff.tscale)||1));
+      const eff=getEffectiveObj(obj,t),axes=getObjectScaleAxes(obj,eff),scale=Math.max(.01,Math.min(Math.abs(axes.x),Math.abs(axes.y)));
       const threshold=(shapePointSceneThreshold(Math.max(14,(Number(obj.penWidth)||32)*.55))/scale);
       if(hit&&hit.distance<=threshold) return {index,obj,hit,local};
     }
@@ -3668,8 +4385,8 @@ ctx.fill();</textarea>
 
   function applyDrawObjectTransformToContext(context,obj,eff){
     const bounds=getDrawObjectBounds(obj),pivotX=(bounds.x1+bounds.x2)/2,pivotY=(bounds.y1+bounds.y2)/2;
-    const tx=Number(eff.tx)||0,ty=Number(eff.ty)||0,scale=eff.tscale===undefined?1:(Number(eff.tscale)||1),rotation=(Number(eff.trotation)||0)*Math.PI/180;
-    context.translate(pivotX+tx,pivotY+ty);if(rotation)context.rotate(rotation);if(scale!==1)context.scale(scale,scale);context.translate(-pivotX,-pivotY);
+    const tx=Number(eff.tx)||0,ty=Number(eff.ty)||0,axes=getObjectScaleAxes(obj,eff),rotation=(Number(eff.trotation)||0)*Math.PI/180;
+    context.translate(pivotX+tx,pivotY+ty);if(rotation)context.rotate(rotation);if(axes.x!==1||axes.y!==1)context.scale(axes.x,axes.y);context.translate(-pivotX,-pivotY);
   }
 
   function traceFreehandPath(context,points,handles,closed){
@@ -3769,14 +4486,15 @@ ctx.fill();</textarea>
     const points=contour.map(point=>({x:point.x/scale,y:point.y/scale}));
     if(points.length<3){logToSandbox('The enclosed region was too small to fill.',true);return false;}
     pushUndo();selectedDrawIndices.clear();
-    const style=drawStyle(),obj=ensureDrawObjectMetadata({type:'freehand',fillRegion:true,points,closedPath:true,fillEnabled:true,strokeEnabled:false,fillColor:style.fillColor,strokeColor:style.strokeColor,strokeWidth:0,opacity:1,tx:0,ty:0,tscale:1,trotation:0,keyframes:[]});
+    const style=drawStyle(),obj=ensureDrawObjectMetadata({type:'freehand',fillRegion:true,points,closedPath:true,fillEnabled:true,strokeEnabled:false,fillColor:style.fillColor,strokeColor:style.strokeColor,strokeWidth:0,opacity:1,tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,keyframes:[]});
     drawObjects.unshift(obj);selectDrawObject(0,false,true);renderLayerList();renderTimeline();
     logToSandbox('Closed area filled with an editable vector behind the line work.');return true;
   }
 
   function handleDrawMouseDown(e){
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
-    const c = canvasCoords(e.clientX, e.clientY);
+    const rawPoint = canvasCoords(e.clientX, e.clientY);
+    const c = stageTool === 'freehand' || stageTool === 'fill' ? rawPoint : snapScenePointToGuides(rawPoint);
     const style = drawStyle();
 
     if(stageTool === 'text'){
@@ -3805,7 +4523,7 @@ ctx.fill();</textarea>
     const start = c;
     pendingDraw = { type: stageTool, x1:start.x, y1:start.y, x2:start.x, y2:start.y, fillColor: style.fillColor, strokeColor: style.strokeColor, strokeWidth: style.strokeWidth, cornerRadius: stageTool === 'rect' ? style.cornerRadius : 0 };
     const onMove = (ev)=>{
-      const cc = canvasCoords(ev.clientX, ev.clientY);
+      const cc = snapScenePointToGuides(canvasCoords(ev.clientX, ev.clientY));
       pendingDraw.x2 = cc.x; pendingDraw.y2 = cc.y;
     };
     const onUp = ()=>{
@@ -4506,16 +5224,20 @@ ctx.fill();</textarea>
         x: eff.x !== undefined ? eff.x : (obj.x || 0),
         y: eff.y !== undefined ? eff.y : (obj.y || 0),
         scale: eff.scale !== undefined ? eff.scale : (obj.scale === undefined ? 1 : obj.scale),
+        scaleX: eff.scaleX !== undefined ? eff.scaleX : (obj.scaleX === undefined ? 1 : obj.scaleX),
+        scaleY: eff.scaleY !== undefined ? eff.scaleY : (obj.scaleY === undefined ? 1 : obj.scaleY),
         rotation: eff.rotation !== undefined ? eff.rotation : (obj.rotation || 0),
         opacity: eff.opacity !== undefined ? eff.opacity : (obj.opacity === undefined ? 1 : obj.opacity)
       };
     }
     const snapshot = {
       time,
-      easing:'linear',
+      easing:obj && obj.forceHoldKeyframes ? 'hold' : 'linear',
       tx: eff.tx !== undefined ? eff.tx : (obj.tx || 0),
       ty: eff.ty !== undefined ? eff.ty : (obj.ty || 0),
       tscale: eff.tscale !== undefined ? eff.tscale : (obj.tscale === undefined ? 1 : obj.tscale),
+      tscaleX: eff.tscaleX !== undefined ? eff.tscaleX : (obj.tscaleX === undefined ? 1 : obj.tscaleX),
+      tscaleY: eff.tscaleY !== undefined ? eff.tscaleY : (obj.tscaleY === undefined ? 1 : obj.tscaleY),
       trotation: eff.trotation !== undefined ? eff.trotation : (obj.trotation || 0),
       opacity: eff.opacity !== undefined ? eff.opacity : (obj.opacity === undefined ? 1 : obj.opacity),
       strokeWidth: eff.strokeWidth !== undefined ? eff.strokeWidth : (obj.strokeWidth || 4),
@@ -4525,6 +5247,16 @@ ctx.fill();</textarea>
       strokeEnabled: eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false
     };
     if(obj.type === 'rect') snapshot.cornerRadius = eff.cornerRadius !== undefined ? eff.cornerRadius : (obj.cornerRadius || 0);
+    // Config-loaded tools can declare additional fields that should be captured
+    // by Auto Keyframe and the timeline's right-click Add Key command.
+    if(Array.isArray(obj.keyframeFields)){
+      obj.keyframeFields.forEach(field=>{
+        const key=String(field||'').trim();
+        if(!key || key==='time' || key==='easing') return;
+        const value=eff && eff[key] !== undefined ? eff[key] : obj[key];
+        if(value !== undefined) snapshot[key]=JSON.parse(JSON.stringify(value));
+      });
+    }
     if(obj.type === 'freehand'){
       const pts = Array.isArray(eff.points) ? eff.points : obj.points;
       snapshot.points = Array.isArray(pts) ? pts.map(point=>({x:Number(point.x)||0,y:Number(point.y)||0})) : [];
@@ -4597,7 +5329,8 @@ ctx.fill();</textarea>
     const mapped=groupLocalPointToStage(parent.group,{x:live.pivotX,y:live.pivotY},t);
     live.pivotX=mapped.x;
     live.pivotY=mapped.y;
-    live.scale*=parent.scale;
+    live.scaleX*=parent.scaleX;
+    live.scaleY*=parent.scaleY;
     live.rotation+=parent.rotation;
     return live;
   }
@@ -4613,13 +5346,13 @@ ctx.fill();</textarea>
       {key:'bl', x:-lt.halfW, y: lt.halfH},
       {key:'br', x: lt.halfW, y: lt.halfH}
     ].map(c=>{
-      const r = rotatePoint(c.x*lt.scale, c.y*lt.scale, rad);
+      const r = rotatePoint(c.x*lt.scaleX,c.y*lt.scaleY,rad);
       return { key:c.key, x: lt.pivotX + r.x, y: lt.pivotY + r.y };
     });
   }
   function getRotateHandlePos(lt){
     const rad = lt.rotation * Math.PI/180;
-    const localY = -(lt.halfH*lt.scale) - 28;
+    const localY = -(lt.halfH*Math.abs(lt.scaleY)) - 28;
     const r = rotatePoint(0, localY, rad);
     return { x: lt.pivotX + r.x, y: lt.pivotY + r.y };
   }
@@ -4668,11 +5401,11 @@ ctx.fill();</textarea>
     const b=getDrawObjectBounds(obj);
     const pivotX=(b.x1+b.x2)/2,pivotY=(b.y1+b.y2)/2;
     const tx=Number(eff.tx)||0,ty=Number(eff.ty)||0;
-    const scale=eff.tscale===undefined?1:Number(eff.tscale)||1;
+    const axes=getObjectScaleAxes(obj,eff);
     const angle=(Number(eff.trotation)||0)*Math.PI/180;
     const cos=Math.cos(angle),sin=Math.sin(angle);
     return sourcePoints.map(p=>{
-      const dx=(p.x-pivotX)*scale,dy=(p.y-pivotY)*scale;
+      const dx=(p.x-pivotX)*axes.x,dy=(p.y-pivotY)*axes.y;
       return {x:pivotX+tx+dx*cos-dy*sin,y:pivotY+ty+dx*sin+dy*cos};
     });
   }
@@ -4736,10 +5469,10 @@ ctx.fill();</textarea>
     const pivotY = (bounds.y1 + bounds.y2) / 2;
     const tx = Number(eff.tx)||0;
     const ty = Number(eff.ty)||0;
-    const scale = eff.tscale === undefined ? 1 : (Number(eff.tscale)||1);
+    const axes=getObjectScaleAxes(obj,eff);
     const angle = (Number(eff.trotation)||0) * Math.PI / 180;
-    const dx = (point.x - pivotX) * scale;
-    const dy = (point.y - pivotY) * scale;
+    const dx = (point.x - pivotX) * axes.x;
+    const dy = (point.y - pivotY) * axes.y;
     let mapped = {
       x:pivotX + tx + dx*Math.cos(angle) - dy*Math.sin(angle),
       y:pivotY + ty + dx*Math.sin(angle) + dy*Math.cos(angle)
@@ -4758,13 +5491,14 @@ ctx.fill();</textarea>
     const pivotY = (bounds.y1 + bounds.y2) / 2;
     const tx = Number(eff.tx)||0;
     const ty = Number(eff.ty)||0;
-    const scale = eff.tscale === undefined ? 1 : (Number(eff.tscale)||1);
+    const axes=getObjectScaleAxes(obj,eff);
+    const scaleX=Math.max(.00001,Math.abs(axes.x)),scaleY=Math.max(.00001,Math.abs(axes.y));
     const angle = -(Number(eff.trotation)||0) * Math.PI / 180;
     const dx = point.x - (pivotX + tx);
     const dy = point.y - (pivotY + ty);
     const rx = dx*Math.cos(angle) - dy*Math.sin(angle);
     const ry = dx*Math.sin(angle) + dy*Math.cos(angle);
-    return {x:pivotX + rx/scale, y:pivotY + ry/scale};
+    return {x:pivotX + rx/scaleX, y:pivotY + ry/scaleY};
   }
 
   function currentEditablePointArray(obj){
@@ -4926,7 +5660,7 @@ ctx.fill();</textarea>
     const localPoint = scenePointToObjectLocal(obj,scenePoint,t);
     const hit=closestEditableShapeSegment(obj,localPoint);
     const eff=getEffectiveObj(obj,t);
-    const scale=Math.max(0.01,Math.abs(Number(eff.tscale)||1));
+    const axes=getObjectScaleAxes(obj,eff),scale=Math.max(.01,Math.min(Math.abs(axes.x),Math.abs(axes.y)));
     if(!hit||hit.distance>(shapePointSceneThreshold(20)/scale)) return false;
     if(recordHistory) pushUndo();
     const oldLength=obj.points.length;
@@ -5046,7 +5780,7 @@ ctx.fill();</textarea>
         pushUndo();shapePointSelectedIndex=index;shapePointAddMode=false;
         inspectorDragging=true;
         function move(ev){
-          const scenePoint=canvasCoords(ev.clientX,ev.clientY);
+          const scenePoint=snapScenePointToGuides(canvasCoords(ev.clientX,ev.clientY));
           const localPoint=scenePointToObjectLocal(obj,scenePoint,t);
           writeEditablePointAtCurrentTime(obj,index,localPoint);
           renderShapePointHandles();
@@ -5591,7 +6325,7 @@ ctx.fill();</textarea>
   }
 
   function renderTransformHandles(){
-    overlay.querySelectorAll('.xform-handle, .xform-rotate-handle, .shape-point-handle, .bezier-anchor-handle, .bezier-control-handle, .bezier-handle-line, .pen-edit-anchor, .pen-edit-control, .pen-edit-bend, .pen-edit-width, .pen-edit-line').forEach(e=>e.remove());
+    overlay.querySelectorAll('.xform-handle, .xform-axis-handle, .xform-rotate-handle, .shape-point-handle, .bezier-anchor-handle, .bezier-control-handle, .bezier-handle-line, .pen-edit-anchor, .pen-edit-control, .pen-edit-bend, .pen-edit-width, .pen-edit-line').forEach(e=>e.remove());
     if(exportPlayback.active) return;
     if(stageTool==='bcurve' && currentBezierObject()){ renderBezierCurveHandles(); return; }
     const penSelection=getSelectedSingleObject();
@@ -5612,29 +6346,85 @@ ctx.fill();</textarea>
       el.className = 'xform-handle';
       el.style.left = (displayCorner.x/W*100) + '%';
       el.style.top = (displayCorner.y/H*100) + '%';
-      el.title = 'Drag to scale';
+      el.title = 'Drag to scale uniformly';
       el.addEventListener('mousedown', (e)=>{
         e.stopPropagation(); e.preventDefault();
-        pushUndo();
-        inspectorDragging = true;
-        const ltStart = getLiveTransform(obj, getEffectiveObj(obj, t));
-        const baseDist = Math.max(1, Math.hypot(ltStart.halfW, ltStart.halfH));
+        pushUndo(); inspectorDragging = true;
+        const effStart=getEffectiveObj(obj,t),ltStart=getLiveTransform(obj,effStart);
+        const axesStart=getObjectScaleAxes(obj,effStart);
+        const parent=getGroupParentPoseForObject(obj);
+        const parentX=parent?Math.max(.0001,Math.abs(parent.scaleX)):1;
+        const parentY=parent?Math.max(.0001,Math.abs(parent.scaleY)):1;
+        const originX=Number.isFinite(Number(ltStart.originX))?Number(ltStart.originX):ltStart.pivotX;
+        const originY=Number.isFinite(Number(ltStart.originY))?Number(ltStart.originY):ltStart.pivotY;
+        const startCorner=getTransformedCorners(ltStart).find(point=>point.key===c.key) || c;
+        const startExtent=Math.max(1,Math.hypot(startCorner.x-originX,startCorner.y-originY));
         function onMove(ev){
-          const cc = canvasCoords(ev.clientX, ev.clientY);
-          const dist = Math.hypot(cc.x-ltStart.pivotX, cc.y-ltStart.pivotY);
-          let newScale = Math.max(0.1, Math.min(6, dist / baseDist));
-          const parent=getGroupParentPoseForObject(obj);
-          if(parent) newScale=Math.max(0.1,Math.min(6,newScale/Math.max(.0001,Math.abs(parent.scale))));
-          setObjectFieldForCurrentTime(obj, obj.type === 'clipinstance' ? 'scale' : 'tscale', newScale);
+          const cc=canvasCoords(ev.clientX,ev.clientY);
+          const dist=Math.hypot(cc.x-originX,cc.y-originY);
+          const ratio=Math.max(.02,Math.min(20,dist/startExtent));
+          const newUniform=Math.max(.05,Math.min(20,axesStart.uniform*ratio));
+          setObjectFieldForCurrentTime(obj,obj.type==='clipinstance'?'scale':'tscale',newUniform);
           updateInspector();
         }
-        function onUp(){
-          window.removeEventListener('mousemove', onMove);
-          window.removeEventListener('mouseup', onUp);
-          finishObjectEdit(obj);
+        function onUp(){window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onUp);finishObjectEdit(obj);}
+        window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onUp);
+      });
+      overlay.appendChild(el);
+    });
+
+    // Side handles change one axis only and leave the opposite axis untouched.
+    const rad=lt.rotation*Math.PI/180;
+    const axisHandles=[
+      {axis:'x',sign:-1,x:-lt.halfW*lt.scaleX,y:0,title:'Drag to scale horizontally'},
+      {axis:'x',sign:1,x:lt.halfW*lt.scaleX,y:0,title:'Drag to scale horizontally'},
+      {axis:'y',sign:-1,x:0,y:-lt.halfH*lt.scaleY,title:'Drag to scale vertically'},
+      {axis:'y',sign:1,x:0,y:lt.halfH*lt.scaleY,title:'Drag to scale vertically'}
+    ];
+    axisHandles.forEach(handle=>{
+      const rotated=rotatePoint(handle.x,handle.y,rad);
+      const scene={x:lt.pivotX+rotated.x,y:lt.pivotY+rotated.y};
+      const display=sceneToStagePoint(scene);
+      const el=document.createElement('div');
+      el.className='xform-axis-handle';el.dataset.axis=handle.axis;
+      el.style.left=(display.x/W*100)+'%';el.style.top=(display.y/H*100)+'%';el.title=handle.title;
+      el.addEventListener('mousedown',event=>{
+        event.stopPropagation();event.preventDefault();pushUndo();inspectorDragging=true;
+        const effStart=getEffectiveObj(obj,t),liveStart=getLiveTransform(obj,effStart),axesStart=getObjectScaleAxes(obj,effStart);
+        const parent=getGroupParentPoseForObject(obj);
+        const parentAxis=handle.axis==='x'?(parent?Math.max(.0001,Math.abs(parent.scaleX)):1):(parent?Math.max(.0001,Math.abs(parent.scaleY)):1);
+        const half=Math.max(1,handle.axis==='x'?liveStart.halfW:liveStart.halfH);
+        const radians=liveStart.rotation*Math.PI/180;
+        const unit=handle.axis==='x'?rotatePoint(1,0,radians):rotatePoint(0,1,radians);
+        const startExtent=half*Math.abs(handle.axis==='x'?liveStart.scaleX:liveStart.scaleY);
+        const opposite={
+          x:liveStart.pivotX-unit.x*handle.sign*startExtent,
+          y:liveStart.pivotY-unit.y*handle.sign*startExtent
+        };
+        const baseBounds=getDrawObjectBounds(obj);
+        const basePivot={x:(baseBounds.x1+baseBounds.x2)/2,y:(baseBounds.y1+baseBounds.y2)/2};
+        function onMove(moveEvent){
+          const cc=canvasCoords(moveEvent.clientX,moveEvent.clientY);
+          const projected=((cc.x-opposite.x)*unit.x+(cc.y-opposite.y)*unit.y)*handle.sign;
+          const fullExtent=Math.max(half*.1,Math.min(half*200,projected));
+          const targetWorldAxis=fullExtent/(half*2);
+          const localAxis=Math.max(.05,Math.min(20,targetWorldAxis/(Math.max(.0001,Math.abs(axesStart.uniform))*parentAxis)));
+          const dragged={x:opposite.x+unit.x*handle.sign*fullExtent,y:opposite.y+unit.y*handle.sign*fullExtent};
+          const worldPivot={x:(opposite.x+dragged.x)/2,y:(opposite.y+dragged.y)/2};
+          const localPivot=parent?stagePointToGroupLocal(parent.group,worldPivot,t):worldPivot;
+          const axisField=obj.type==='clipinstance'?(handle.axis==='x'?'scaleX':'scaleY'):(handle.axis==='x'?'tscaleX':'tscaleY');
+          setObjectFieldForCurrentTime(obj,axisField,localAxis);
+          if(obj.type==='clipinstance'){
+            setObjectFieldForCurrentTime(obj,'x',localPivot.x);
+            setObjectFieldForCurrentTime(obj,'y',localPivot.y);
+          }else{
+            setObjectFieldForCurrentTime(obj,'tx',localPivot.x-basePivot.x);
+            setObjectFieldForCurrentTime(obj,'ty',localPivot.y-basePivot.y);
+          }
+          updateInspector();
         }
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onUp);
+        function onUp(){window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onUp);finishObjectEdit(obj);}
+        window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onUp);
       });
       overlay.appendChild(el);
     });
@@ -5650,9 +6440,11 @@ ctx.fill();</textarea>
       pushUndo();
       inspectorDragging = true;
       const ltStart = getLiveTransform(obj, getEffectiveObj(obj, t));
+      const rotationOriginX=Number.isFinite(Number(ltStart.originX))?Number(ltStart.originX):ltStart.pivotX;
+      const rotationOriginY=Number.isFinite(Number(ltStart.originY))?Number(ltStart.originY):ltStart.pivotY;
       function onMove(ev){
         const cc = canvasCoords(ev.clientX, ev.clientY);
-        let deg = Math.atan2(cc.y-ltStart.pivotY, cc.x-ltStart.pivotX) * 180/Math.PI + 90;
+        let deg = Math.atan2(cc.y-rotationOriginY, cc.x-rotationOriginX) * 180/Math.PI + 90;
         const parent=getGroupParentPoseForObject(obj);
         if(parent) deg-=parent.rotation;
         setObjectFieldForCurrentTime(obj, obj.type === 'clipinstance' ? 'rotation' : 'trotation', deg);
@@ -5783,9 +6575,13 @@ ctx.fill();</textarea>
       setRangeUI('insp-strokewidth','val-insp-strokewidth', Math.max(1, eff.strokeWidth !== undefined ? eff.strokeWidth : (obj.strokeWidth || 4)), v=>Math.round(v));
       if(obj.type === 'rect') setRangeUI('insp-cornerradius','val-insp-cornerradius', Math.max(0, eff.cornerRadius !== undefined ? eff.cornerRadius : (obj.cornerRadius || 0)), v=>Math.round(v));
     }
-    const scaleVal = isClip ? (eff.scale===undefined?1:eff.scale) : (eff.tscale===undefined?1:eff.tscale);
+    const axes=getObjectScaleAxes(obj,eff);
+    const scaleVal=axes.uniform;
+    const axisXVal=axes.axisX,axisYVal=axes.axisY;
     const rotVal = isClip ? (eff.rotation||0) : (eff.trotation||0);
     setRangeUI('insp-scale','val-insp-scale', scaleVal, v=>v.toFixed(2));
+    setRangeUI('insp-scale-x','val-insp-scale-x',axisXVal,v=>v.toFixed(2));
+    setRangeUI('insp-scale-y','val-insp-scale-y',axisYVal,v=>v.toFixed(2));
     setRangeUI('insp-rotation','val-insp-rotation', Math.round(rotVal));
     setRangeUI('insp-opacity','val-insp-opacity', Math.round((eff.opacity===undefined?1:eff.opacity)*100));
 
@@ -5839,6 +6635,8 @@ ctx.fill();</textarea>
     });
   }
   bindInspectorRange('insp-scale','val-insp-scale','scale','tscale', v=>v.toFixed(2));
+  bindInspectorRange('insp-scale-x','val-insp-scale-x','scaleX','tscaleX',v=>v.toFixed(2));
+  bindInspectorRange('insp-scale-y','val-insp-scale-y','scaleY','tscaleY',v=>v.toFixed(2));
   bindInspectorRange('insp-rotation','val-insp-rotation','rotation','trotation', v=>Math.round(v));
   bindInspectorRange('insp-strokewidth','val-insp-strokewidth','strokeWidth','strokeWidth', v=>Math.round(v));
   bindInspectorRange('insp-cornerradius','val-insp-cornerradius','cornerRadius','cornerRadius', v=>Math.round(v));
@@ -5907,11 +6705,15 @@ ctx.fill();</textarea>
       keyframe.x = parseFloat(document.getElementById('insp-x').value) || 0;
       keyframe.y = parseFloat(document.getElementById('insp-y').value) || 0;
       keyframe.scale = parseFloat(document.getElementById('insp-scale').value);
+      keyframe.scaleX = parseFloat(document.getElementById('insp-scale-x').value);
+      keyframe.scaleY = parseFloat(document.getElementById('insp-scale-y').value);
       keyframe.rotation = parseFloat(document.getElementById('insp-rotation').value);
     }else{
       keyframe.tx = parseFloat(document.getElementById('insp-x').value) || 0;
       keyframe.ty = parseFloat(document.getElementById('insp-y').value) || 0;
       keyframe.tscale = parseFloat(document.getElementById('insp-scale').value);
+      keyframe.tscaleX = parseFloat(document.getElementById('insp-scale-x').value);
+      keyframe.tscaleY = parseFloat(document.getElementById('insp-scale-y').value);
       keyframe.trotation = parseFloat(document.getElementById('insp-rotation').value);
       keyframe.strokeWidth = parseFloat(document.getElementById('insp-strokewidth').value) || 4;
       keyframe.fillColor = document.getElementById('insp-fill').value;
@@ -5997,7 +6799,7 @@ ctx.fill();</textarea>
       name:'Group '+groupCounter,
       children,
       groupBounds:bounds,
-      tx:0,ty:0,tscale:1,trotation:0,opacity:1,keyframes:[],enabled:true,panelId:'animate'
+      tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,opacity:1,keyframes:[],enabled:true,panelId:'animate'
     });
     const insertIndex=indices[0];
     indices.slice().reverse().forEach(index=>drawObjects.splice(index,1));
@@ -6043,15 +6845,68 @@ ctx.fill();</textarea>
   if(groupSelectedButton) groupSelectedButton.addEventListener('click',createGroupFromSelection);
   document.getElementById('btn-exit-group-isolation').addEventListener('click',exitGroupIsolation);
 
+
+  // Move an existing stage object into Clip-local coordinates without changing
+  // its visible stage position. Absolute geometry and absolute keyframe fields
+  // move; relative transform fields such as tx/ty remain unchanged.
+  function translateDrawObjectIntoClip(object, dx, dy){
+    if(!object) return object;
+    const shiftPoints=list=>{
+      if(!Array.isArray(list)) return;
+      list.forEach(point=>{
+        if(Number.isFinite(Number(point && point.x))) point.x=Number(point.x)+dx;
+        if(Number.isFinite(Number(point && point.y))) point.y=Number(point.y)+dy;
+      });
+    };
+    if(object.type==='freehand') shiftPoints(object.points);
+    if(object.type==='line'||object.type==='rect'||object.type==='ellipse'){
+      if(Number.isFinite(Number(object.x1))) object.x1=Number(object.x1)+dx;
+      if(Number.isFinite(Number(object.y1))) object.y1=Number(object.y1)+dy;
+      if(Number.isFinite(Number(object.x2))) object.x2=Number(object.x2)+dx;
+      if(Number.isFinite(Number(object.y2))) object.y2=Number(object.y2)+dy;
+    }
+    if(object.type==='text'||object.type==='clipinstance'){
+      if(Number.isFinite(Number(object.x))) object.x=Number(object.x)+dx;
+      if(Number.isFinite(Number(object.y))) object.y=Number(object.y)+dy;
+    }
+    if(object.type==='group'){
+      (object.children||[]).forEach(child=>translateDrawObjectIntoClip(child,dx,dy));
+      if(object.groupBounds){
+        object.groupBounds.x1=Number(object.groupBounds.x1||0)+dx;
+        object.groupBounds.y1=Number(object.groupBounds.y1||0)+dy;
+        object.groupBounds.x2=Number(object.groupBounds.x2||0)+dx;
+        object.groupBounds.y2=Number(object.groupBounds.y2||0)+dy;
+      }
+    }
+    if(object.editorBounds){
+      object.editorBounds.x1=Number(object.editorBounds.x1||0)+dx;
+      object.editorBounds.y1=Number(object.editorBounds.y1||0)+dy;
+      object.editorBounds.x2=Number(object.editorBounds.x2||0)+dx;
+      object.editorBounds.y2=Number(object.editorBounds.y2||0)+dy;
+    }
+    (object.keyframes||[]).forEach(keyframe=>{
+      if(Array.isArray(keyframe.points)) shiftPoints(keyframe.points);
+      ['x','x1','x2'].forEach(field=>{
+        if(Number.isFinite(Number(keyframe[field])) && (field!=='x' || object.type==='clipinstance' || Number.isFinite(Number(object.x)))) keyframe[field]=Number(keyframe[field])+dx;
+      });
+      ['y','y1','y2'].forEach(field=>{
+        if(Number.isFinite(Number(keyframe[field])) && (field!=='y' || object.type==='clipinstance' || Number.isFinite(Number(object.y)))) keyframe[field]=Number(keyframe[field])+dy;
+      });
+    });
+    return object;
+  }
+
   document.getElementById('btn-convert-to-clip').addEventListener('click', ()=>{
     if(selectedDrawIndices.size === 0){ logToSandbox('Select at least one shape first', true); return; }
     const idxs = Array.from(selectedDrawIndices).sort((a,b)=>a-b);
     const selectedObjs = idxs.map(i => drawObjects[i]);
 
-    // combined bounding box -> use its center as the clip's local origin
+    // Use the CURRENT evaluated visual bounds, not the untransformed source
+    // geometry. A moved/scaled/rotated shape therefore becomes a Clip whose
+    // pivot, artwork and transform box all share the same centre.
     let x1=Infinity,y1=Infinity,x2=-Infinity,y2=-Infinity;
     selectedObjs.forEach(o=>{
-      const b = getDrawObjectBounds(o);
+      const b = getEffectiveBounds(o);
       x1=Math.min(x1,b.x1); y1=Math.min(y1,b.y1); x2=Math.max(x2,b.x2); y2=Math.max(y2,b.y2);
     });
     const cx=(x1+x2)/2, cy=(y1+y2)/2;
@@ -6061,17 +6916,14 @@ ctx.fill();</textarea>
     const clip = makeClip(name);
     clip.drawObjects = selectedObjs.map(o=>{
       const clone = JSON.parse(JSON.stringify(o));
-      if(clone.type==='freehand') clone.points = clone.points.map(p=>({x:p.x-cx, y:p.y-cy}));
-      if(clone.type==='line'||clone.type==='rect'||clone.type==='ellipse'){ clone.x1-=cx; clone.y1-=cy; clone.x2-=cx; clone.y2-=cy; }
-      if(clone.type==='text'||clone.type==='clipinstance'){ clone.x-=cx; clone.y-=cy; }
-      return clone;
+      return translateDrawObjectIntoClip(clone,-cx,-cy);
     });
     clip.layers = []; // a fresh clip starts with no effect layers; add them once you Edit it
     clips[clip.id] = clip;
 
     // remove the originals (high index first so earlier indices stay valid), add one instance
     idxs.slice().reverse().forEach(i => drawObjects.splice(i,1));
-    const clipInstance = ensureDrawObjectMetadata({ type:'clipinstance', clipId:clip.id, name:clip.name, x:cx, y:cy, scale:1, rotation:0, timeOffset:0, opacity:1, keyframes:[] });
+    const clipInstance = ensureDrawObjectMetadata({ type:'clipinstance', clipId:clip.id, name:clip.name, x:cx, y:cy, scale:1, scaleX:1, scaleY:1, rotation:0, timeOffset:0, opacity:1, keyframes:[] });
     drawObjects.push(clipInstance);
 
     selectedDrawIndices.clear();
@@ -6079,6 +6931,9 @@ ctx.fill();</textarea>
     updateSelectedCountUI();
     renderLayerList();
     renderClipLibrary();
+    updateInspector();
+    renderTimeline();
+    renderTransformHandles();
     logToSandbox('Created Clip "' + clip.name + '" from ' + selectedObjs.length + ' shape(s)');
   });
 
@@ -6427,7 +7282,9 @@ ctx.fill();</textarea>
       if(header && header.nextSibling) host.insertBefore(block, header.nextSibling);
       else host.appendChild(block);
     }else{
-      host.appendChild(block);
+      // Configured tools belong at the top of their panel. Appending them after
+      // the Clip library and inspector pushed the Animate tools off-screen.
+      host.insertBefore(block, host.firstElementChild || null);
     }
   }
 
@@ -6437,7 +7294,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 98,
+    version: 107,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -6503,6 +7360,58 @@ ctx.fill();</textarea>
       return t;
     },
     setFrame(frame){ return this.setTime(this.frameToTime(frame)); },
+    getAutoKeyframe(){ return !!autoKeyframe; },
+    setObjectFieldForCurrentTime(object, field, value, options){
+      if(!object || !field) return false;
+      pushUndo();
+      setObjectFieldForCurrentTime(object, String(field), value);
+      if(autoKeyframe && object.keyframes && object.keyframes.length){
+        const tolerance=0.5/Math.max(1,this.fps);
+        const key=object.keyframes.find(entry=>Math.abs((Number(entry.time)||0)-t)<=tolerance);
+        if(key && options && options.easing) key.easing=normalizeKeyframeEasing(options.easing);
+      }
+      this.refreshUI();
+      return true;
+    },
+    getClipInstances(){ return drawObjects.filter(object=>object && object.type==='clipinstance'); },
+    getClipInternalKeyframeTimes(clipId){
+      const clip=clips[clipId];
+      if(!clip) return [];
+      const found=new Set();
+      const fpsValue=Math.max(1,this.fps);
+      const addTime=value=>{ const timeValue=Number(value); if(Number.isFinite(timeValue)) found.add(Math.max(0,Math.min(Number(clip.timelineDuration)||0,timeValue))); };
+      const visit=object=>{
+        if(!object) return;
+        (object.keyframes||[]).forEach(key=>addTime(key.time));
+        const stick=object._lukeAnimateStickRig;
+        if(stick && stick.channels){
+          Object.values(stick.channels).forEach(channel=>Object.keys((channel&&channel.keys)||{}).forEach(frame=>addTime((Math.max(1,Number(frame)||1)-1)/fpsValue)));
+        }
+        const rig=object.demBones && object.demBones.rig;
+        if(rig && Array.isArray(rig.bones)) rig.bones.forEach(bone=>(bone.keys||[]).forEach(key=>addTime(key.time)));
+        if(object.type==='group' && Array.isArray(object.children)) object.children.forEach(visit);
+      };
+      (clip.drawObjects||[]).forEach(visit);
+      return Array.from(found).sort((a,b)=>a-b);
+    },
+    getClipFrameLabels(clipId){
+      const clip=clips[clipId];
+      return clip && Array.isArray(clip.frameLabels) ? JSON.parse(JSON.stringify(clip.frameLabels)) : [];
+    },
+    setClipFrameLabels(clipId, labels){
+      const clip=clips[clipId];
+      if(!clip) return false;
+      pushUndo();
+      clip.frameLabels=(Array.isArray(labels)?labels:[]).map(label=>({
+        name:String(label&&label.name||'').trim(),
+        time:Math.max(0,Math.min(Number(clip.timelineDuration)||0,Number(label&&label.time)||0)),
+        frame:Math.max(1,Math.round(Number(label&&label.frame)||this.timeToFrame(Number(label&&label.time)||0)))
+      })).filter(label=>label.name);
+      normalizedClipFrameLabels(clip);
+      this.refreshUI();
+      renderClipFrameNameList();
+      return true;
+    },
     pushUndo(){ pushUndo(); return true; },
     getEffectiveObject(object, timeValue){ return getEffectiveObj(object, timeValue === undefined ? t : Number(timeValue) || 0); },
     refreshUI(){
@@ -6915,15 +7824,22 @@ ctx.fill();</textarea>
     const startPos = isClip
       ? { x: effStart.x !== undefined ? effStart.x : (obj.x || 0), y: effStart.y !== undefined ? effStart.y : (obj.y || 0) }
       : { x: effStart.tx || 0, y: effStart.ty || 0 };
+    const isolationAtStart=getIsolatedGroupInfo();
+    const startBounds=isolationAtStart&&isolationAtStart.child===obj
+      ? getGroupChildStageBounds(isolationAtStart.group,obj,t)
+      : getEffectiveBounds(obj);
     let historyPushed = false;
     let moved = false;
     inspectorDragging = true;
 
     function onMove(ev){
       const cc = canvasCoords(ev.clientX, ev.clientY);
-      let dx = cc.x - startCanvas.x, dy = cc.y - startCanvas.y;
+      let stageDx = cc.x - startCanvas.x, stageDy = cc.y - startCanvas.y;
+      const snappedMove=snapBoundsDeltaToGuides(startBounds,stageDx,stageDy);
+      stageDx=snappedMove.dx;stageDy=snappedMove.dy;
+      let dx=stageDx,dy=stageDy;
       const parentInfo=getIsolatedGroupInfo();
-      if(parentInfo && parentInfo.child===obj){const localDelta=groupStageDeltaToLocal(parentInfo.group,dx,dy,t);dx=localDelta.x;dy=localDelta.y;}
+      if(parentInfo && parentInfo.child===obj){const localDelta=groupStageDeltaToLocal(parentInfo.group,stageDx,stageDy,t);dx=localDelta.x;dy=localDelta.y;}
       if(!historyPushed && Math.hypot(dx,dy) >= 0.5){
         pushUndo();
         historyPushed = true;
@@ -6979,7 +7895,7 @@ ctx.fill();</textarea>
     if(placingClipId){
       const c = canvasCoords(e.clientX, e.clientY);
       pushUndo();
-      const obj = ensureDrawObjectMetadata({ type:'clipinstance', clipId:placingClipId, x:c.x, y:c.y, scale:1, rotation:0, timeOffset:0, opacity:1, keyframes:[] });
+      const obj = ensureDrawObjectMetadata({ type:'clipinstance', clipId:placingClipId, x:c.x, y:c.y, scale:1, scaleX:1, scaleY:1, rotation:0, timeOffset:0, opacity:1, keyframes:[] });
       drawObjects.push(obj);
       placingClipId = null;
       selectDrawObject(drawObjects.length-1, false, true);
@@ -7515,6 +8431,7 @@ ctx.fill();</textarea>
     syncStageSettingsUI();
     renderPoints();
     if(selectShapesMode) renderTransformHandles();
+    requestAnimationFrame(updateRulersAndGuides);
   }
   function setStageBackground(mode, color, recordHistory){
     const nextMode = mode === 'color' ? 'color' : 'transparent';
@@ -7606,6 +8523,7 @@ ctx.fill();</textarea>
   window.addEventListener('resize', ()=>{
     clampFloatingPanelToViewport(stageSettingsPanel);
     clampFloatingPanelToViewport(document.getElementById('text-settings-panel'));
+    requestAnimationFrame(updateRulersAndGuides);
   });
 
   // ---------------- stage zoom ----------------
@@ -7636,6 +8554,7 @@ ctx.fill();</textarea>
       shell.style.height = h + 'px';
     }
     document.getElementById('zoom-label').textContent = Math.round(stageZoom * 100) + '%';
+    requestAnimationFrame(updateRulersAndGuides);
   }
   function setZoom(z){
     stageZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +z.toFixed(2)));
@@ -8085,7 +9004,24 @@ ctx.fill();</textarea>
       ruler.appendChild(label);
     });
 
-    ruler.title = `Frames 0–${info.totalFrames} at ${info.fps} fps · minor divisions are 1 frame · shaded blocks are 5 frames`;
+    const editingClip = currentEditingClip();
+    if(editingClip){
+      normalizedClipFrameLabels(editingClip).forEach(frameLabel=>{
+        const timelineFrame = Math.max(0, Math.min(info.totalFrames, frameLabel.frame - 1));
+        const marker = document.createElement('span');
+        marker.className = 'timeline-frame-name-marker';
+        if(timelineFrame===0) marker.classList.add('first');
+        if(timelineFrame===info.totalFrames) marker.classList.add('last');
+        marker.style.left = ((timelineFrame / info.totalFrames) * 100) + '%';
+        marker.textContent = frameLabel.name;
+        marker.title = frameLabel.name + ' · Frame ' + frameLabel.frame;
+        ruler.appendChild(marker);
+      });
+    }
+
+    ruler.title = editingClip
+      ? `Frames 0–${info.totalFrames} at ${info.fps} fps · double-click or right-click to name a Clip frame`
+      : `Frames 0–${info.totalFrames} at ${info.fps} fps · minor divisions are 1 frame · shaded blocks are 5 frames`;
   }
 
   function snapTimeToFrame(time){
@@ -8367,6 +9303,7 @@ ctx.fill();</textarea>
       tracksEl.appendChild(row);
     });
     addDemBonesTimelineRows(tracksEl);
+    renderClipFrameNameList();
   }
 
   function scrubToClientX(clientX){
@@ -8397,6 +9334,17 @@ ctx.fill();</textarea>
   }
 
   document.getElementById('timeline-ruler').addEventListener('mousedown', beginTimelineScrub);
+  document.getElementById('timeline-ruler').addEventListener('dblclick', event=>{
+    event.preventDefault();
+    event.stopPropagation();
+    promptClipFrameNameAtClientX(event.clientX);
+  });
+  document.getElementById('timeline-ruler').addEventListener('contextmenu', event=>{
+    if(!currentEditingClip()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    promptClipFrameNameAtClientX(event.clientX);
+  });
   document.getElementById('timeline-playhead-handle').addEventListener('mousedown', beginTimelineScrub);
 
   function beginOnionRangeDrag(event, side){
@@ -8902,6 +9850,8 @@ ctx.fill();</textarea>
         x:Number(pose && pose.x) || 0,
         y:Number(pose && pose.y) || 0,
         scale:Math.max(0.01, Number(pose && pose.scale) || 1),
+        scaleX:Math.max(0.01,Number(pose&&pose.scaleX)||Number(obj.scaleX)||1),
+        scaleY:Math.max(0.01,Number(pose&&pose.scaleY)||Number(obj.scaleY)||1),
         rotation:Number(pose && pose.rotation) || 0,
         [marker]:true,
         _stickRigSourceFrame:frame,
@@ -10129,6 +11079,7 @@ ctx.fill();</textarea>
     }
     const frameInfo = getTimelineFrameInfo();
     const currentFrame = Math.max(0, Math.min(frameInfo.totalFrames, Math.round(t * frameInfo.fps)));
+    updateClipFrameNameCurrentHighlight(currentFrame + 1);
     if(onionSkinEnabled) updateOnionRangeUI();
     const readout = document.getElementById('time-readout');
     if(readout) readout.textContent = 'F ' + currentFrame + ' / ' + frameInfo.totalFrames + ' · ' + t.toFixed(2) + 's / ' + timelineDuration.toFixed(2) + 's';
@@ -10276,11 +11227,12 @@ ctx.fill();</textarea>
     };
 
     selectedDrawIndices.clear();
+    const guideLayer=document.getElementById('guide-layer');if(guideLayer)guideLayer.style.display='none';
     selectShapesMode = false;
     shapePointEditMode = false;
     shapePointAddMode = false;
     shapePointEditObjectId = null;
-    overlay.querySelectorAll('.xform-handle, .xform-rotate-handle, .shape-point-handle, .bezier-anchor-handle, .bezier-control-handle, .bezier-handle-line').forEach(el=>el.remove());
+    overlay.querySelectorAll('.xform-handle, .xform-axis-handle, .xform-rotate-handle, .shape-point-handle, .bezier-anchor-handle, .bezier-control-handle, .bezier-handle-line').forEach(el=>el.remove());
     const pivotCross = document.getElementById('clip-pivot-cross');
     if(pivotCross) pivotCross.remove();
     updateSelectedCountUI();
@@ -10294,6 +11246,7 @@ ctx.fill();</textarea>
     if(!snapshot) return;
 
     selectedDrawIndices.clear();
+    applyRulerGuideVisibility();
     (snapshot.selectedIndices || []).forEach(index=>{
       if(index >= 0 && index < drawObjects.length) selectedDrawIndices.add(index);
     });
@@ -10312,6 +11265,7 @@ ctx.fill();</textarea>
     renderLayerList();
     renderTransformHandles();
     renderClipPivotCross();
+    renderStageGuides();
   }
 
   let mediaRecorder = null;
@@ -10482,6 +11436,8 @@ ctx.fill();</textarea>
   renderPoints();
   setAutoKeyframe(false);
   setOnionSkin(false);
+  syncGuideControls();
+  requestAnimationFrame(updateRulersAndGuides);
   refreshAllUIFromLayer(activeLayer());
   renderLayerList();
   renderPointList();
