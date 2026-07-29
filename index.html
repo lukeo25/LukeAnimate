@@ -1,8 +1,9 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v107</title>
+<title>Luke Animate v128</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -334,16 +335,30 @@
   }
 
   #clip-breadcrumb{
-    position:absolute; top:64px; left:50%; transform:translateX(-50%); z-index:6;
+    position:fixed; top:82px; left:248px; transform:none; z-index:60;
     display:flex; align-items:center; gap:8px;
-    background:rgba(255,255,255,.95); border:1px solid var(--line); border-radius:20px;
-    padding:5px 12px 5px 6px; box-shadow:0 6px 18px rgba(0,0,0,.15);
-    font-size:12px; color:var(--text-dim);
+    max-width:calc(100vw - 620px);
+    background:rgba(255,255,255,.97); border:1px solid var(--line); border-radius:20px;
+    padding:5px 8px 5px 6px; box-shadow:0 6px 18px rgba(0,0,0,.15);
+    font-size:12px; color:var(--text-dim); backdrop-filter:blur(6px);
   }
   #clip-breadcrumb .btn.small{ flex:0 0 auto; padding:4px 10px; }
+  #clip-breadcrumb-text{
+    min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  #clip-nav-controls{
+    display:none; align-items:center; gap:6px; margin-left:auto;
+  }
+  #clip-nav-controls .btn.small{
+    flex:0 0 auto; padding:5px 9px; min-width:0;
+  }
+  #clip-nav-path{
+    max-width:118px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:10.5px; font-weight:500; color:var(--text-dim);
+  }
 
   #zoom-controls{
-    position:fixed; bottom:144px; right:354px; z-index:20;
+    position:fixed; bottom:calc(var(--timeline-dock-height, 130px) + 12px); right:354px; z-index:20;
     display:flex; align-items:center; gap:4px;
     background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:8px;
     padding:5px 6px; backdrop-filter:blur(4px);
@@ -964,10 +979,45 @@
   }
   .timeline-bar.active-row{ outline:2px solid var(--accent); outline-offset:1px; }
   .timeline-object-span{
-    position:absolute; left:0; right:0; top:4px; bottom:4px; border-radius:3px;
-    background:rgba(63,174,155,.18); border:1px solid rgba(14,156,134,.35); cursor:pointer;
+    position:absolute; left:0; right:0; top:3px; bottom:3px; border-radius:3px;
+    background:rgba(63,174,155,.24); border:1px solid rgba(14,156,134,.52); cursor:ew-resize;
+    touch-action:none; user-select:none;
+  }
+  .timeline-object-span::after{
+    content:''; position:absolute; right:2px; top:3px; bottom:3px; width:3px;
+    border-radius:3px; background:rgba(8,88,76,.72); pointer-events:none;
+  }
+  .timeline-object-span.dragging{
+    background:rgba(63,174,155,.42); outline:2px solid var(--accent); outline-offset:1px;
   }
   .timeline-object-span.active-row{ outline:2px solid var(--accent); outline-offset:1px; }
+  .timeline-scene-frame{
+    position:absolute; top:2px; bottom:2px; min-width:6px;
+    border-radius:3px; background:rgba(14,156,134,.30);
+    border:1px solid rgba(8,111,96,.68); cursor:pointer; overflow:visible;
+    box-sizing:border-box;
+  }
+  .timeline-scene-frame.blank{
+    background:repeating-linear-gradient(135deg,rgba(110,120,135,.18) 0,rgba(110,120,135,.18) 4px,rgba(255,255,255,.45) 4px,rgba(255,255,255,.45) 8px);
+    border-color:rgba(110,120,135,.55);
+  }
+  .timeline-scene-frame.active{
+    outline:2px solid var(--accent); outline-offset:1px;
+    background:rgba(14,156,134,.48);
+  }
+  .timeline-scene-frame-label{
+    position:absolute; left:5px; top:1px; max-width:calc(100% - 14px);
+    overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
+    font-size:9px; line-height:14px; color:#18352f; pointer-events:none;
+  }
+  .timeline-scene-frame-hold{
+    position:absolute; right:-4px; top:-1px; bottom:-1px; width:9px;
+    cursor:ew-resize; z-index:5;
+  }
+  .timeline-scene-frame-hold::after{
+    content:""; position:absolute; right:3px; top:3px; bottom:3px; width:2px;
+    border-radius:2px; background:rgba(13,38,34,.75);
+  }
   .timeline-key-dot{
     position:absolute; top:5px; width:10px; height:10px; margin-left:-5px;
     transform:rotate(45deg); border-radius:2px; background:var(--accent);
@@ -977,6 +1027,18 @@
   .timeline-key-dot[data-easing="ease-out"]{ box-shadow:inset -2px 2px 0 rgba(255,255,255,.55); }
   .timeline-key-dot[data-easing="ease-in-out"]{ box-shadow:inset 0 0 0 2px rgba(255,255,255,.58); }
   .timeline-key-dot[data-easing="hold"]{ background:#f05b9f; border-radius:0; }
+  /* Frame Gizmo choices are held Clip-frame keys on the parent timeline.
+     They share the Clip layer row but sit above ordinary transform keys so
+     both channels remain visible even when they occur on the same frame. */
+  .timeline-key-dot.frame-gizmo-key{
+    top:1px; width:9px; height:9px; margin-left:-4.5px; z-index:7;
+    background:#9b2f63; border-color:#ffffff; border-radius:2px;
+    box-shadow:0 0 0 1px #5c1639,0 1px 3px rgba(0,0,0,.28);
+  }
+  .timeline-key-dot.frame-gizmo-key:hover{filter:brightness(1.18);}
+  .timeline-track.has-frame-gizmo-keys .timeline-key-dot:not(.frame-gizmo-key){
+    top:10px; width:8px; height:8px; margin-left:-4px; z-index:5;
+  }
   .keyframe-context-menu{
     position:fixed; z-index:5000; min-width:238px; padding:7px; border-radius:10px;
     background:#f7f8fa; border:1px solid #aeb8c5; box-shadow:0 12px 32px rgba(16,24,40,.28);
@@ -1015,12 +1077,25 @@
   #timeline-dock{
     flex:0 0 130px;
     height:130px;
+    min-height:96px;
     display:flex;
     flex-direction:column;
     background:var(--panel);
     border-top:1px solid var(--line);
-    overflow:hidden; /* fixed size — the inner .timeline-wrap scrolls, the dock itself never grows */
+    overflow:hidden;
   }
+  #timeline-resize-handle{
+    flex:0 0 10px; height:10px; position:relative; cursor:ns-resize;
+    background:linear-gradient(to bottom,#eef1f5,#d8dde4);
+    border-bottom:1px solid var(--line); user-select:none; touch-action:none;
+  }
+  #timeline-resize-handle::after{
+    content:''; position:absolute; left:50%; top:3px; width:62px; height:3px;
+    transform:translateX(-50%); border-radius:4px;
+    background:#9aa4b1; box-shadow:0 1px 0 rgba(255,255,255,.8);
+  }
+  #timeline-resize-handle:hover::after,
+  #timeline-resize-handle.dragging::after{ background:var(--accent); }
   #transport-bar{
     display:flex;
     align-items:center;
@@ -1108,6 +1183,74 @@
     border-radius:6px; background:#fff; color:var(--text); font-size:10px;
   }
   .clip-frame-name-input:not(:placeholder-shown){border-color:rgba(14,156,134,.6);}
+
+
+  /* ---------- v125 Wick-style drawing layers and independent frames ---------- */
+  .timeline-track-row.wick-drawing-layer .timeline-track-name{
+    cursor:pointer; font-weight:650; color:#45515f;
+  }
+  .timeline-track-row.wick-drawing-layer .timeline-track-name.active-layer{
+    color:var(--accent); background:#e3f7f3; border-radius:4px; padding-left:4px;
+  }
+  .wick-layer-frame{
+    position:absolute; top:2px; bottom:2px; min-width:6px;
+    border-radius:3px; background:rgba(63,174,155,.38);
+    border:1px solid rgba(8,111,96,.78); cursor:ew-resize;
+    overflow:visible; touch-action:none; user-select:none; z-index:2;
+  }
+  .wick-layer-frame::after{
+    content:''; position:absolute; right:2px; top:3px; bottom:3px; width:3px;
+    border-radius:3px; background:rgba(8,72,63,.78); pointer-events:none;
+  }
+  .wick-layer-frame.blank{
+    background:repeating-linear-gradient(135deg,rgba(110,120,135,.20) 0,rgba(110,120,135,.20) 4px,rgba(255,255,255,.58) 4px,rgba(255,255,255,.58) 8px);
+    border-color:rgba(110,120,135,.68); cursor:pointer;
+  }
+  .wick-layer-frame.blank::after{background:rgba(90,99,112,.62);}
+  .wick-layer-frame.active-frame{
+    outline:2px solid var(--accent); outline-offset:1px;
+  }
+  .wick-layer-frame.dragging{
+    background:rgba(63,174,155,.58); outline:2px solid var(--accent); outline-offset:1px;
+    z-index:8;
+  }
+  .wick-layer-frame-label{
+    position:absolute; left:5px; top:1px; right:8px;
+    overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
+    font:9px/14px var(--mono); color:#163c35; pointer-events:none;
+  }
+  .wick-layer-empty-cell-hint{
+    position:absolute; inset:3px 3px; border:1px dashed transparent;
+    border-radius:3px; pointer-events:none;
+  }
+  .timeline-track-row.wick-drawing-layer:hover .wick-layer-empty-cell-hint{
+    border-color:rgba(14,156,134,.18);
+  }
+  .wick-frame-drag-readout{
+    position:fixed; z-index:20000; transform:translate(-50%,-115%);
+    padding:4px 7px; border-radius:6px; background:#17212b; color:#fff;
+    font:10px var(--mono); pointer-events:none; white-space:nowrap;
+    box-shadow:0 4px 12px rgba(0,0,0,.28);
+  }
+
+
+
+  /* ---------- v126 compact centred timeline cells ---------- */
+  .timeline-zoom-controls{
+    display:flex; align-items:center; gap:4px; flex:0 0 auto;
+    padding:2px 5px; border:1px solid var(--line); border-radius:7px;
+    background:var(--panel-2);
+  }
+  .timeline-zoom-controls button{
+    width:24px; height:23px; padding:0; border:1px solid var(--line);
+    border-radius:5px; background:#fff; color:var(--text); cursor:pointer;
+    font-size:15px; line-height:19px;
+  }
+  .timeline-zoom-controls button:hover{border-color:var(--accent);color:var(--accent);}
+  #timeline-frame-zoom{width:92px;accent-color:var(--accent);}
+  #timeline-frame-zoom-readout{min-width:36px;text-align:right;color:var(--text-dim);font:10px var(--mono);}
+  .wick-layer-frame{cursor:ew-resize;}
+
 </style>
 </head>
 <body>
@@ -1761,6 +1904,11 @@
 <div id="sidebar-tools-content" style="display:flex;">
   <div class="devpanel-header">
     <span id="devpanel-title">Animate</span>
+    <div id="clip-nav-controls" aria-label="Clip navigation">
+      <span id="clip-nav-path" title="Current clip path"></span>
+      <button class="btn small" id="btn-clip-parent" title="Return to the parent clip or main stage">← Parent</button>
+      <button class="btn small" id="btn-clip-stage" title="Return directly to the main staging area">Stage</button>
+    </div>
   </div>
 
   <div class="devpanel" id="devpanel-animate">
@@ -1896,6 +2044,7 @@ ctx.fill();</textarea>
 </div><!-- /main-row -->
 
 <div id="timeline-dock">
+  <div id="timeline-resize-handle" title="Drag upward to reveal more timeline layers. Double-click to reset the timeline height."></div>
   <div id="transport-bar">
     <button class="btn small" id="btn-transport-play" title="Play">▶</button>
     <button class="btn small" id="btn-transport-pause" title="Pause">⏸</button>
@@ -1908,6 +2057,15 @@ ctx.fill();</textarea>
       <img src="https://lukeo25.github.io/LukeAnimate/SVGs/Onion.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
       <span class="transport-icon-fallback" aria-hidden="true">◉</span>
     </button>
+    <button class="btn small" id="btn-frame-blank" type="button" title="Insert a blank independent keyframe at the playhead (F7)">+ Blank Key</button>
+    <button class="btn small" id="btn-frame-duplicate" type="button" title="Insert an independent copy of the held frame at the playhead (F6)">Duplicate Key</button>
+    <button class="btn small danger" id="btn-frame-clear" type="button" title="Clear the active frame without changing its hold length">Clear Key</button>
+    <div class="timeline-zoom-controls" title="Adjust timeline frame width. Ctrl/Cmd + mouse wheel over the timeline also zooms.">
+      <button type="button" id="btn-timeline-zoom-out" aria-label="Zoom timeline out">−</button>
+      <input type="range" id="timeline-frame-zoom" min="6" max="40" step="1" value="12" aria-label="Timeline frame width">
+      <button type="button" id="btn-timeline-zoom-in" aria-label="Zoom timeline in">+</button>
+      <span id="timeline-frame-zoom-readout">12px</span>
+    </div>
     <span id="time-readout">0.0s / 6.0s</span>
     <span class="transport-sep"></span>
     <label class="transport-field">Duration<input type="number" id="inp-timelineduration" value="6" min="1" max="120" step="0.5"></label>
@@ -1998,7 +2156,10 @@ ctx.fill();</textarea>
   let guidesVisible = true;
   const GUIDE_SNAP_PIXELS = 8;
   let stageTool = 'none'; // 'none'|'freehand'|'bcurve'|'pen'|'fill'|'line'|'rect'|'ellipse'|'text'
-  let drawObjects = [];   // static SVG-like shapes/text stamped onto the canvas
+  let drawObjects = [];   // objects owned by the currently active independent scene frame
+  let sceneFrames = [];   // Wick-style held frames: {id,startFrame,endFrame,objects[]}
+  let sceneFrameCounter = 0;
+  let activeSceneFrameId = null;
   let pendingDraw = null; // in-progress shape being dragged out, for live preview
   let freehandPoints = null;
   let penDraft = null;
@@ -2077,10 +2238,345 @@ ctx.fill();</textarea>
   let editingBehaviourId = null;
   let trailFade = 0;          // global canvas-wide motion trail (0-95)
   let timelineDuration = 6;   // seconds — shared with the recording duration
+  let timelineFramePixelWidth = 12; // compact default; user-adjustable in the timeline
   let loopTimeline = true;
   let audioLoaded = false;
   let audioDuration = 0;
   let includeAudioInExport = false;
+
+  // ---------------- Wick-style independent held frames ----------------
+  // Drawing objects are frame-owned in both the main project timeline and every
+  // nested Clip timeline. Transform keyframes remain attached to those owned
+  // objects, while particle/effect layers remain scene-level tracks so they can
+  // run continuously across drawing-frame changes.
+  // Every project scene and every Clip owns a list of discrete frames. A frame
+  // owns its own complete drawObjects array and is held from startFrame through
+  // endFrame. Editing a held frame changes only that frame's content. Insert a
+  // blank or duplicate key to split the hold and begin independent content.
+  function nextSceneFrameId(){
+    sceneFrameCounter++;
+    return 'scene-frame-' + sceneFrameCounter;
+  }
+
+  function updateSceneFrameCounterFromId(id){
+    const match = String(id || '').match(/scene-frame-(\d+)/);
+    if(match) sceneFrameCounter = Math.max(sceneFrameCounter, parseInt(match[1],10) || 0);
+  }
+
+  function cloneIndependentFrameObjects(objects){
+    const cloned = JSON.parse(JSON.stringify(Array.isArray(objects) ? objects : []));
+    // A duplicated drawing frame must be structurally independent. Reassign
+    // object IDs so external animation tools cannot accidentally treat objects
+    // on two different drawing frames as the same live object.
+    const resetIds = object=>{
+      if(!object || typeof object !== 'object') return;
+      delete object.id;
+      if(object.type === 'group' && Array.isArray(object.children)) object.children.forEach(resetIds);
+    };
+    cloned.forEach(resetIds);
+    cloned.forEach(ensureDrawObjectMetadata);
+    return cloned;
+  }
+
+  // Internal arrays are zero-based; the visible timeline is strictly 1..N.
+  // A duration of N/fps seconds owns exactly N frame cells.
+  function frameIndexForTime(timeValue, durationValue){
+    const fps = getTimelineFPS();
+    const duration = Math.max(0, Number(durationValue !== undefined ? durationValue : timelineDuration) || 0);
+    const frameCount = Math.max(1, Math.round(duration * fps));
+    const lastFrameIndex = frameCount - 1;
+    const rawIndex = Math.floor(Math.max(0, Number(timeValue) || 0) * fps + 1e-7);
+    return Math.max(0, Math.min(lastFrameIndex, rawIndex));
+  }
+
+  function totalFrameIndexForDuration(durationValue){
+    const fps = getTimelineFPS();
+    const frameCount = Math.max(1, Math.round(Math.max(0, Number(durationValue) || 0) * fps));
+    return frameCount - 1;
+  }
+
+  function makeIndependentSceneFrame(startFrame, endFrame, objects, options){
+    const settings = options && typeof options === 'object' ? options : {};
+    return {
+      id: nextSceneFrameId(),
+      startFrame: Math.max(0, Math.round(Number(startFrame) || 0)),
+      endFrame: Math.max(0, Math.round(Number(endFrame) || 0)),
+      objects: Array.isArray(objects) ? objects : [],
+      // Explicit keys include both artwork keys and deliberately inserted blank
+      // keys. Implicit blank spans only fill uncovered timeline cells.
+      explicitKey: settings.explicitKey !== false,
+      frameOnly: true
+    };
+  }
+
+  function normalizeSceneFrameList(frameList, durationValue, fallbackObjects){
+    const totalFrames = totalFrameIndexForDuration(durationValue);
+    const source = Array.isArray(frameList) ? frameList : [];
+    const candidates = source.map(frame=>{
+      if(!frame || typeof frame !== 'object') return null;
+      const start = Math.max(0, Math.min(totalFrames, Math.round(Number(
+        frame.startFrame !== undefined ? frame.startFrame : frame.start
+      ) || 0)));
+      const end = Math.max(start, Math.min(totalFrames, Math.round(Number(
+        frame.endFrame !== undefined ? frame.endFrame : frame.end
+      ) || start)));
+      if(!frame.id) frame.id = nextSceneFrameId();
+      updateSceneFrameCounterFromId(frame.id);
+      frame.startFrame = start;
+      frame.endFrame = end;
+      frame.objects = Array.isArray(frame.objects)
+        ? frame.objects
+        : (Array.isArray(frame.drawObjects) ? frame.drawObjects : []);
+      // Older saved projects did not carry this marker. Treat every stored span
+      // as an intentional key so a saved blank key is never collapsed away.
+      frame.explicitKey = frame.explicitKey !== false;
+      frame.frameOnly = true;
+      return frame;
+    }).filter(Boolean).sort((a,b)=>a.startFrame-b.startFrame || a.endFrame-b.endFrame);
+
+    if(candidates.length === 0){
+      candidates.push(makeIndependentSceneFrame(0, totalFrames, Array.isArray(fallbackObjects) ? fallbackObjects : []));
+    }
+
+    const normalized = [];
+    let cursor = 0;
+    candidates.forEach(frame=>{
+      if(cursor > totalFrames) return;
+      let start = Math.max(cursor, frame.startFrame);
+      let end = Math.max(start, frame.endFrame);
+      end = Math.min(totalFrames, end);
+      if(frame.endFrame < cursor) return;
+      if(start > cursor){
+        normalized.push(makeIndependentSceneFrame(cursor, start - 1, [], { explicitKey:false }));
+      }
+      frame.startFrame = start;
+      frame.endFrame = end;
+      normalized.push(frame);
+      cursor = end + 1;
+    });
+    if(cursor <= totalFrames){
+      normalized.push(makeIndependentSceneFrame(cursor, totalFrames, [], { explicitKey:false }));
+    }
+
+    // Only merge automatically generated blank gaps. An explicit blank key is
+    // real frame data and must survive normalization, rendering, undo, save/load
+    // and clip context switching.
+    const merged = [];
+    normalized.forEach(frame=>{
+      const previous = merged[merged.length - 1];
+      const blank = !Array.isArray(frame.objects) || frame.objects.length === 0;
+      const previousBlank = previous && (!Array.isArray(previous.objects) || previous.objects.length === 0);
+      const bothImplicit = previous && previous.explicitKey === false && frame.explicitKey === false;
+      if(previous && bothImplicit && previousBlank && blank && previous.endFrame + 1 === frame.startFrame){
+        previous.endFrame = frame.endFrame;
+      }else{
+        merged.push(frame);
+      }
+    });
+
+    if(Array.isArray(frameList)){
+      frameList.splice(0, frameList.length, ...merged);
+      return frameList;
+    }
+    return merged;
+  }
+
+  function sceneFrameAtIndex(frameList, frameIndex){
+    const frames = Array.isArray(frameList) ? frameList : [];
+    const index = Math.max(0, Math.round(Number(frameIndex) || 0));
+    return frames.find(frame=>index >= frame.startFrame && index <= frame.endFrame) || frames[frames.length - 1] || null;
+  }
+
+  function sceneFrameObjectsAtTime(frameList, timeValue, durationValue, fallbackObjects){
+    const normalized = normalizeSceneFrameList(frameList, durationValue, fallbackObjects);
+    const frame = sceneFrameAtIndex(normalized, frameIndexForTime(timeValue, durationValue));
+    return frame && Array.isArray(frame.objects) ? frame.objects : [];
+  }
+
+  function ensureClipSceneFrames(clip){
+    if(!clip) return [];
+    if(!Array.isArray(clip.sceneFrames)) clip.sceneFrames = [];
+    normalizeSceneFrameList(clip.sceneFrames, clip.timelineDuration, clip.drawObjects || []);
+    clip.drawObjects = clip.sceneFrames.length ? clip.sceneFrames[0].objects : [];
+    return clip.sceneFrames;
+  }
+
+  function ensureCurrentSceneFrames(){
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    const currentIndex = frameIndexForTime(t, timelineDuration);
+    const active = sceneFrameAtIndex(sceneFrames, currentIndex);
+    if(active && drawObjects !== active.objects){
+      drawObjects = active.objects;
+      activeSceneFrameId = active.id;
+    }else if(active){
+      activeSceneFrameId = active.id;
+    }
+    return active;
+  }
+
+  function syncActiveSceneFrameForTime(timeValue, refreshUI){
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    const target = sceneFrameAtIndex(sceneFrames, frameIndexForTime(timeValue, timelineDuration));
+    if(!target) return null;
+    const changed = activeSceneFrameId !== target.id || drawObjects !== target.objects;
+    if(changed){
+      activeSceneFrameId = target.id;
+      drawObjects = target.objects;
+      selectedDrawIndices.clear();
+      isolatedGroupEdit = null;
+      shapePointEditMode = false;
+      shapePointAddMode = false;
+      shapePointEditObjectId = null;
+      bezierCurveObjectId = null;
+      updateSelectedCountUI();
+      if(refreshUI){
+        renderLayerList();
+        updateInspector();
+        renderTimeline();
+        renderTransformHandles();
+      }
+    }
+    return target;
+  }
+
+  function activeIndependentSceneFrame(){
+    return syncActiveSceneFrameForTime(t, false) || ensureCurrentSceneFrames();
+  }
+
+  function ensureFrameOwnedDrawingForMutation(){
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    const currentIndex = frameIndexForTime(t, timelineDuration);
+    let frame = sceneFrameAtIndex(sceneFrames, currentIndex);
+    if(!frame) return null;
+
+    // Drawing into an automatically generated blank gap materialises a real
+    // blank key at the current playhead. This is copy-on-write frame ownership:
+    // the new artwork cannot leak into another project frame or Clip frame.
+    if(frame.explicitKey === false){
+      if(currentIndex > frame.startFrame){
+        const oldEnd = frame.endFrame;
+        frame.endFrame = currentIndex - 1;
+        const explicit = makeIndependentSceneFrame(currentIndex, oldEnd, [], { explicitKey:true });
+        const sourceIndex = sceneFrames.indexOf(frame);
+        sceneFrames.splice(sourceIndex + 1, 0, explicit);
+        frame = explicit;
+      }else{
+        frame.explicitKey = true;
+        frame.frameOnly = true;
+      }
+    }
+
+    activeSceneFrameId = frame.id;
+    drawObjects = frame.objects;
+    return frame;
+  }
+
+  function insertIndependentSceneFrame(mode, requestedFrame){
+    const totalFrames = totalFrameIndexForDuration(timelineDuration);
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    const frameIndex = Math.max(0, Math.min(totalFrames, Math.round(
+      requestedFrame !== undefined ? Number(requestedFrame) : frameIndexForTime(t, timelineDuration)
+    ) || 0));
+    const source = sceneFrameAtIndex(sceneFrames, frameIndex);
+    if(!source) return null;
+
+    pushUndo();
+    let target = source;
+    const newObjects = mode === 'duplicate' ? cloneIndependentFrameObjects(source.objects) : [];
+
+    if(frameIndex > source.startFrame){
+      const oldEnd = source.endFrame;
+      source.endFrame = frameIndex - 1;
+      target = makeIndependentSceneFrame(frameIndex, oldEnd, newObjects);
+      const sourceIndex = sceneFrames.indexOf(source);
+      sceneFrames.splice(sourceIndex + 1, 0, target);
+    }else{
+      // A key already begins here. Replacing its owned content is the correct
+      // Wick-style operation; the surrounding frames remain untouched.
+      source.objects = newObjects;
+      source.explicitKey = true;
+      source.frameOnly = true;
+      target = source;
+    }
+
+    activeSceneFrameId = target.id;
+    drawObjects = target.objects;
+    selectedDrawIndices.clear();
+    isolatedGroupEdit = null;
+    pendingDraw = null;
+    updateSelectedCountUI();
+    renderLayerList();
+    updateInspector();
+    renderTimeline();
+    renderTransformHandles();
+    return target;
+  }
+
+  function clearActiveIndependentSceneFrame(){
+    const frame = activeIndependentSceneFrame();
+    if(!frame) return;
+    pushUndo();
+    frame.objects = [];
+    frame.explicitKey = true;
+    frame.frameOnly = true;
+    drawObjects = frame.objects;
+    activeSceneFrameId = frame.id;
+    selectedDrawIndices.clear();
+    isolatedGroupEdit = null;
+    pendingDraw = null;
+    updateSelectedCountUI();
+    renderLayerList();
+    updateInspector();
+    renderTimeline();
+    renderTransformHandles();
+  }
+
+  function setIndependentSceneFrameEnd(frame, requestedEnd){
+    if(!frame) return false;
+    const totalFrames = totalFrameIndexForDuration(timelineDuration);
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    const frameIndex = sceneFrames.indexOf(frame);
+    if(frameIndex < 0) return false;
+
+    const oldEnd = frame.endFrame;
+    const nextEnd = Math.max(frame.startFrame, Math.min(totalFrames, Math.round(Number(requestedEnd) || 0)));
+    if(nextEnd === oldEnd) return false;
+
+    frame.endFrame = nextEnd;
+    if(nextEnd > oldEnd){
+      // Extending a hold consumes the following frame cells, exactly as a Wick
+      // frame extends over later timeline positions.
+      for(let i=sceneFrames.length-1; i>frameIndex; i--){
+        const later = sceneFrames[i];
+        if(later.startFrame > nextEnd) continue;
+        if(later.endFrame <= nextEnd) sceneFrames.splice(i,1);
+        else later.startFrame = nextEnd + 1;
+      }
+    }else{
+      // Shortening a hold reveals a blank span until the next independent key.
+      const releasedStart = nextEnd + 1;
+      const releasedEnd = oldEnd;
+      if(releasedStart <= releasedEnd){
+        sceneFrames.splice(frameIndex + 1, 0, makeIndependentSceneFrame(releasedStart, releasedEnd, [], { explicitKey:false }));
+      }
+    }
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    syncActiveSceneFrameForTime(t, false);
+    return true;
+  }
+
+  function allSceneFrameObjectArrays(frameList, fallbackObjects){
+    const arrays = [];
+    const seen = new Set();
+    const add = list=>{
+      if(!Array.isArray(list) || seen.has(list)) return;
+      seen.add(list);
+      arrays.push(list);
+    };
+    if(Array.isArray(frameList)) frameList.forEach(frame=>add(frame && frame.objects));
+    add(fallbackObjects);
+    return arrays;
+  }
 
   function ensureClipPivot(clip){
     if(!clip) return { x:0, y:0 };
@@ -2175,7 +2671,8 @@ ctx.fill();</textarea>
       x2=Math.max(x2,values[2]); y2=Math.max(y2,values[3]);
     };
     try{
-      (clip.drawObjects || []).forEach(child=>{
+      const clipFrameObjects = sceneFrameObjectsAtTime(ensureClipSceneFrames(clip), timeValue, clip.timelineDuration, clip.drawObjects || []);
+      clipFrameObjects.forEach(child=>{
         if(!child || child.enabled === false) return;
         ensureDrawObjectMetadata(child);
         if(child.type === 'clipinstance'){
@@ -2215,9 +2712,12 @@ ctx.fill();</textarea>
     return Number.isFinite(x1) ? {x1,y1,x2,y2} : fallback;
   }
 
-  function mainSceneDrawObjects(){
-    if(contextStack.length) return contextStack[0].data.drawObjects || [];
-    return drawObjects;
+  function mainSceneDrawObjectArrays(){
+    if(contextStack.length){
+      const data = contextStack[0].data || {};
+      return allSceneFrameObjectArrays(data.sceneFrames, data.drawObjects || []);
+    }
+    return allSceneFrameObjectArrays(sceneFrames, drawObjects);
   }
 
   function compensateInstanceForPivot(instance, dx, dy){
@@ -2259,8 +2759,12 @@ ctx.fill();</textarea>
       seenArrays.add(list);
       arrays.push(list);
     }
-    addArray(mainSceneDrawObjects());
-    Object.values(clips).forEach(definition=> addArray(definition && definition.drawObjects));
+    mainSceneDrawObjectArrays().forEach(addArray);
+    Object.values(clips).forEach(definition=>{
+      if(!definition) return;
+      ensureClipSceneFrames(definition);
+      allSceneFrameObjectArrays(definition.sceneFrames, definition.drawObjects).forEach(addArray);
+    });
     arrays.forEach(list=> list.forEach(instance=>{
       if(instance && instance.type === 'clipinstance' && instance.clipId === clipId){
         compensateInstanceForPivot(instance, dx, dy);
@@ -2324,9 +2828,11 @@ ctx.fill();</textarea>
     };
   }
 
-  let layers = [ makeLayer('particles') ];
-  let activeIndex = 0;
-  function activeLayer(){ return layers[activeIndex]; }
+  // Start with no effect layer. A particle/effect track is created only
+  // when the user explicitly adds or creates an effect.
+  let layers = [];
+  let activeIndex = -1;
+  function activeLayer(){ return activeIndex >= 0 && activeIndex < layers.length ? layers[activeIndex] : null; }
 
   function effectLabel(type){
     return {
@@ -2489,7 +2995,12 @@ ctx.fill();</textarea>
   }
 
   function normalizeAllDrawObjects(){
-    drawObjects.forEach(ensureDrawObjectMetadata);
+    allSceneFrameObjectArrays(sceneFrames, drawObjects).forEach(list=>list.forEach(ensureDrawObjectMetadata));
+    Object.values(clips).forEach(clip=>{
+      if(!clip) return;
+      ensureClipSceneFrames(clip);
+      allSceneFrameObjectArrays(clip.sceneFrames, clip.drawObjects).forEach(list=>list.forEach(ensureDrawObjectMetadata));
+    });
   }
 
   function objectLayerName(obj){
@@ -2556,6 +3067,10 @@ ctx.fill();</textarea>
       rulersVisible,
       guidesVisible,
       drawObjects: JSON.parse(JSON.stringify(drawObjects)),
+      sceneFrames: JSON.parse(JSON.stringify(sceneFrames)),
+      frameModelVersion: 2,
+      sceneFrameCounter,
+      activeSceneFrameId,
       clips: JSON.parse(JSON.stringify(clips)),
       clipCounter,
       behaviours: behaviours.map(b=>({ id:b.id, name:b.name, code:b.code, enabled:b.enabled })),
@@ -2592,13 +3107,23 @@ ctx.fill();</textarea>
     guidesVisible = snap.guidesVisible !== undefined ? !!snap.guidesVisible : true;
     syncGuideControls();
     drawObjects = snap.drawObjects ? JSON.parse(JSON.stringify(snap.drawObjects)) : [];
+    sceneFrameCounter = Math.max(0, Number(snap.sceneFrameCounter) || 0);
+    sceneFrames = snap.sceneFrames
+      ? JSON.parse(JSON.stringify(snap.sceneFrames))
+      : [];
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    activeSceneFrameId = snap.activeSceneFrameId || null;
+    syncActiveSceneFrameForTime(t, false);
     normalizeAllDrawObjects();
     // Clips are project content, not transient UI. Preserve definitions, named
     // frame labels, nested content and external tool metadata through save/load
     // and undo/redo. Older projects without a clips field remain valid.
     if(snap.clips && typeof snap.clips === 'object'){
       Object.keys(clips).forEach(id=> delete clips[id]);
-      Object.entries(JSON.parse(JSON.stringify(snap.clips))).forEach(([id,clip])=>{ clips[id]=clip; });
+      Object.entries(JSON.parse(JSON.stringify(snap.clips))).forEach(([id,clip])=>{
+        clips[id]=clip;
+        ensureClipSceneFrames(clip);
+      });
       clipCounter = Math.max(Number(snap.clipCounter)||0, ...Object.keys(clips).map(id=>{ const m=String(id).match(/clip-(\d+)/); return m?Number(m[1])||0:0; }));
     }
     selectedDrawIndices.clear();
@@ -2627,7 +3152,9 @@ ctx.fill();</textarea>
     snap.layers.forEach(l=>{
       layers.push({ id:l.id, type:l.type, enabled:l.enabled, p: JSON.parse(JSON.stringify(l.p)), state:{} });
     });
-    activeIndex = Math.max(0, Math.min(snap.activeIndex, layers.length-1));
+    activeIndex = layers.length
+      ? Math.max(0, Math.min(Number(snap.activeIndex) || 0, layers.length - 1))
+      : -1;
 
     rebuildPath();
     refreshAllUIFromLayer(activeLayer());
@@ -3869,8 +4396,9 @@ ctx.fill();</textarea>
       name: name || ('Clip ' + clipCounter),
       points: [], closed: false,
       targetPoints: [],
-      layers: [ makeLayer('particles') ],
+      layers: [],
       drawObjects: [],
+      sceneFrames: [],
       pivotX: 0,
       pivotY: 0,
       frameLabels: [],
@@ -4042,9 +4570,13 @@ ctx.fill();</textarea>
     // Bounds, gizmos and rendering must all resolve the same internal Clip frame.
     const localT = clipInstanceLocalTime(obj, eff, t);
 
-    const saved = { points, closed, samples, pathLen, targetPoints, layers, drawObjects, t };
+    const saved = { points, closed, samples, pathLen, targetPoints, layers, drawObjects, sceneFrames, activeSceneFrameId, t };
     points = clip.points; closed = clip.closed; targetPoints = clip.targetPoints;
-    layers = clip.layers; drawObjects = clip.drawObjects;
+    layers = clip.layers;
+    ensureClipSceneFrames(clip);
+    sceneFrames = clip.sceneFrames;
+    drawObjects = sceneFrameObjectsAtTime(sceneFrames, localT, clip.timelineDuration, clip.drawObjects || []);
+    activeSceneFrameId = (sceneFrameAtIndex(sceneFrames, frameIndexForTime(localT, clip.timelineDuration)) || {}).id || null;
     t = localT;
     rebuildPath();
 
@@ -4063,13 +4595,14 @@ ctx.fill();</textarea>
     ctx.restore();
 
     points = saved.points; closed = saved.closed; samples = saved.samples; pathLen = saved.pathLen;
-    targetPoints = saved.targetPoints; layers = saved.layers; drawObjects = saved.drawObjects; t = saved.t;
+    targetPoints = saved.targetPoints; layers = saved.layers; drawObjects = saved.drawObjects;
+    sceneFrames = saved.sceneFrames; activeSceneFrameId = saved.activeSceneFrameId; t = saved.t;
 
     clipRenderDepth--;
   }
 
   function captureMainSceneAsContext(){
-    return { points, closed, targetPoints, layers, drawObjects, timelineDuration, loopTimeline, activeIndex, t };
+    return { points, closed, targetPoints, layers, drawObjects, sceneFrames, activeSceneFrameId, timelineDuration, loopTimeline, activeIndex, t };
   }
 
   // Persistent context switch used while actively EDITING a clip (not just
@@ -4077,10 +4610,17 @@ ctx.fill();</textarea>
   // keeps working unmodified because they all read these same variables.
   function applyContext(data){
     points = data.points; closed = data.closed; targetPoints = data.targetPoints;
-    layers = data.layers; drawObjects = data.drawObjects;
+    layers = data.layers;
+    drawObjects = Array.isArray(data.drawObjects) ? data.drawObjects : [];
+    sceneFrames = Array.isArray(data.sceneFrames) ? data.sceneFrames : [];
+    activeSceneFrameId = data.activeSceneFrameId || null;
     timelineDuration = data.timelineDuration; loopTimeline = data.loopTimeline;
-    activeIndex = Math.max(0, Math.min(data.activeIndex || 0, layers.length - 1));
+    activeIndex = layers.length
+      ? Math.max(0, Math.min(Number(data.activeIndex) || 0, layers.length - 1))
+      : -1;
     t = data.t || 0;
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    syncActiveSceneFrameForTime(t, false);
     rebuildPath();
     document.getElementById('inp-timelineduration').value = timelineDuration;
     document.getElementById('inp-duration').value = timelineDuration;
@@ -4101,6 +4641,7 @@ ctx.fill();</textarea>
     applyContext({
       points: clip.points, closed: clip.closed, targetPoints: clip.targetPoints,
       layers: clip.layers, drawObjects: clip.drawObjects,
+      sceneFrames: ensureClipSceneFrames(clip), activeSceneFrameId:null,
       timelineDuration: clip.timelineDuration, loopTimeline: clip.loopTimeline,
       activeIndex: 0, t: 0
     });
@@ -4111,16 +4652,24 @@ ctx.fill();</textarea>
     requestAnimationFrame(updateRulersAndGuides);
   }
 
+  function saveCurrentClipEditingContext(){
+    if(!editingClipId) return;
+    const clip = clips[editingClipId];
+    if(!clip) return;
+    clip.points = points;
+    clip.closed = closed;
+    clip.targetPoints = targetPoints;
+    clip.layers = layers;
+    clip.sceneFrames = sceneFrames;
+    normalizeSceneFrameList(clip.sceneFrames, timelineDuration, drawObjects);
+    clip.drawObjects = clip.sceneFrames.length ? clip.sceneFrames[0].objects : [];
+    clip.timelineDuration = timelineDuration;
+    clip.loopTimeline = loopTimeline;
+  }
+
   function exitClipEdit(){
-    if(contextStack.length === 0) return;
-    if(editingClipId){
-      const clip = clips[editingClipId];
-      if(clip){
-        clip.points = points; clip.closed = closed; clip.targetPoints = targetPoints;
-        clip.layers = layers; clip.drawObjects = drawObjects;
-        clip.timelineDuration = timelineDuration; clip.loopTimeline = loopTimeline;
-      }
-    }
+    if(contextStack.length === 0) return false;
+    saveCurrentClipEditingContext();
     const prev = contextStack.pop();
     editingClipId = prev.clipId;
     clipEditViewOffset = prev.viewOffset || { x:0, y:0 };
@@ -4130,23 +4679,76 @@ ctx.fill();</textarea>
     renderTimeline();
     renderClipFrameNameList();
     requestAnimationFrame(updateRulersAndGuides);
+    return true;
+  }
+
+  function exitToMainStage(){
+    let changed = false;
+    let guard = 0;
+    while(contextStack.length > 0 && guard < 100){
+      changed = exitClipEdit() || changed;
+      guard++;
+    }
+    return changed;
+  }
+
+  function currentClipPathNames(){
+    const names = contextStack.map(context => {
+      if(!context.clipId) return 'Main Scene';
+      return clips[context.clipId] ? clips[context.clipId].name : '?';
+    });
+    if(editingClipId){
+      names.push(clips[editingClipId] ? clips[editingClipId].name : '?');
+    }
+    return names;
   }
 
   function updateClipBreadcrumb(){
     const bar = document.getElementById('clip-breadcrumb');
-    if(!bar) return;
+    const nav = document.getElementById('clip-nav-controls');
+    const navPath = document.getElementById('clip-nav-path');
+    const parentButton = document.getElementById('btn-clip-parent');
+    const stageButton = document.getElementById('btn-clip-stage');
     if(!editingClipId){
-      bar.style.display = 'none';
+      if(bar) bar.style.display = 'none';
+      if(nav) nav.style.display = 'none';
       return;
     }
-    bar.style.display = 'flex';
-    const names = contextStack.map(c => c.clipId ? (clips[c.clipId] ? clips[c.clipId].name : '?') : 'Main Scene');
-    names.push(clips[editingClipId] ? clips[editingClipId].name : '?');
-    document.getElementById('clip-breadcrumb-text').textContent = names.join(' › ');
+
+    const names = currentClipPathNames();
+    const pathText = names.join(' › ');
+    const parentName = names.length > 1 ? names[names.length - 2] : 'Main Scene';
+
+    if(bar){
+      bar.style.display = 'flex';
+      const breadcrumbText = document.getElementById('clip-breadcrumb-text');
+      if(breadcrumbText){
+        breadcrumbText.textContent = pathText;
+        breadcrumbText.title = pathText;
+      }
+    }
+
+    if(nav){
+      nav.style.display = 'flex';
+      if(navPath){
+        navPath.textContent = names[names.length - 1] || '';
+        navPath.title = pathText;
+      }
+      if(parentButton){
+        parentButton.textContent = parentName === 'Main Scene' ? '← Stage' : '← Parent';
+        parentButton.title = parentName === 'Main Scene'
+          ? 'Return to the main staging area'
+          : 'Return to parent clip: ' + parentName;
+      }
+      if(stageButton){
+        stageButton.style.display = parentName === 'Main Scene' ? 'none' : 'inline-flex';
+      }
+    }
   }
 
   function commitDrawObject(obj){
     pushUndo();
+    ensureFrameOwnedDrawingForMutation();
     // transform + appearance fields every shape gets, so the Animate
     // inspector and keyframing work uniformly regardless of shape type
     if(obj.tx === undefined) obj.tx = 0;
@@ -4485,7 +5087,7 @@ ctx.fill();</textarea>
     if(contour.length>700){const step=Math.ceil(contour.length/700);contour=contour.filter((_,index)=>index%step===0);}
     const points=contour.map(point=>({x:point.x/scale,y:point.y/scale}));
     if(points.length<3){logToSandbox('The enclosed region was too small to fill.',true);return false;}
-    pushUndo();selectedDrawIndices.clear();
+    pushUndo();ensureFrameOwnedDrawingForMutation();selectedDrawIndices.clear();
     const style=drawStyle(),obj=ensureDrawObjectMetadata({type:'freehand',fillRegion:true,points,closedPath:true,fillEnabled:true,strokeEnabled:false,fillColor:style.fillColor,strokeColor:style.strokeColor,strokeWidth:0,opacity:1,tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,keyframes:[]});
     drawObjects.unshift(obj);selectDrawObject(0,false,true);renderLayerList();renderTimeline();
     logToSandbox('Closed area filled with an editable vector behind the line work.');return true;
@@ -6804,6 +7406,7 @@ ctx.fill();</textarea>
     const insertIndex=indices[0];
     indices.slice().reverse().forEach(index=>drawObjects.splice(index,1));
     drawObjects.splice(insertIndex,0,group);
+    wickRebuildCanonicalFromCurrentComposite();
     selectedDrawIndices.clear();selectedDrawIndices.add(insertIndex);
     isolatedGroupEdit=null;
     updateSelectedCountUI();renderLayerList();renderTimeline();renderTransformHandles();
@@ -6918,6 +7521,7 @@ ctx.fill();</textarea>
       const clone = JSON.parse(JSON.stringify(o));
       return translateDrawObjectIntoClip(clone,-cx,-cy);
     });
+    clip.sceneFrames = [makeIndependentSceneFrame(0, totalFrameIndexForDuration(clip.timelineDuration), clip.drawObjects)];
     clip.layers = []; // a fresh clip starts with no effect layers; add them once you Edit it
     clips[clip.id] = clip;
 
@@ -6925,6 +7529,7 @@ ctx.fill();</textarea>
     idxs.slice().reverse().forEach(i => drawObjects.splice(i,1));
     const clipInstance = ensureDrawObjectMetadata({ type:'clipinstance', clipId:clip.id, name:clip.name, x:cx, y:cy, scale:1, scaleX:1, scaleY:1, rotation:0, timeOffset:0, opacity:1, keyframes:[] });
     drawObjects.push(clipInstance);
+    wickRebuildCanonicalFromCurrentComposite();
 
     selectedDrawIndices.clear();
     selectedDrawIndices.add(drawObjects.length - 1);
@@ -6981,9 +7586,24 @@ ctx.fill();</textarea>
       delBtn.textContent = '\u2715';
       delBtn.addEventListener('click', ()=>{
         pushUndo();
-        drawObjects = drawObjects.filter(o => !(o.type==='clipinstance' && o.clipId===id));
+        allSceneFrameObjectArrays(sceneFrames, drawObjects).forEach(list=>{
+          for(let i=list.length-1;i>=0;i--){
+            if(list[i] && list[i].type==='clipinstance' && list[i].clipId===id) list.splice(i,1);
+          }
+        });
+        Object.values(clips).forEach(definition=>{
+          if(!definition) return;
+          ensureClipSceneFrames(definition);
+          allSceneFrameObjectArrays(definition.sceneFrames, definition.drawObjects).forEach(list=>{
+            for(let i=list.length-1;i>=0;i--){
+              if(list[i] && list[i].type==='clipinstance' && list[i].clipId===id) list.splice(i,1);
+            }
+          });
+        });
+        syncActiveSceneFrameForTime(t, false);
         delete clips[id];
         renderClipLibrary();
+        renderTimeline();
       });
 
       row.appendChild(name);
@@ -6995,6 +7615,16 @@ ctx.fill();</textarea>
   }
 
   document.getElementById('btn-clip-back').addEventListener('click', exitClipEdit);
+  document.getElementById('btn-clip-parent').addEventListener('click', exitClipEdit);
+  document.getElementById('btn-clip-stage').addEventListener('click', exitToMainStage);
+  window.addEventListener('keydown', event=>{
+    if(!editingClipId || !event.altKey || event.key !== 'ArrowLeft') return;
+    const target = event.target;
+    const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+    if(tag === 'input' || tag === 'textarea' || (target && target.isContentEditable)) return;
+    event.preventDefault();
+    exitClipEdit();
+  });
 
   function renderBehaviourList(){
     const list = document.getElementById('behaviour-list');
@@ -7294,7 +7924,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 107,
+    version: 109,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -7338,11 +7968,39 @@ ctx.fill();</textarea>
     getLayers(){ return layers; },
     getClips(){ return clips; },
     getEditingClipId(){ return editingClipId; },
+    enterClip(clipId){
+      if(!clips[clipId]) return false;
+      enterClipEdit(clipId);
+      return true;
+    },
+    exitClip(){
+      if(!editingClipId) return false;
+      exitClipEdit();
+      return true;
+    },
     sceneToStagePoint(point){ return sceneToStagePoint(point || {x:0,y:0}); },
     stageToScenePoint(point){ return stageToScenePoint(point || {x:0,y:0}); },
     getClipPivot(clipId){ const clip = clips[clipId]; return clip ? Object.assign({}, ensureClipPivot(clip)) : null; },
     setClipPivot(clipId, x, y){ return moveClipPivotPreserveStage(clipId, x, y); },
-    getDrawObjects(){ return drawObjects; },
+    getDrawObjects(){ syncActiveSceneFrameForTime(t, false); return drawObjects; },
+    getSceneFrames(){ return sceneFrames; },
+    getActiveSceneFrame(){ return activeIndependentSceneFrame(); },
+    insertBlankFrame(frame){
+      if(frame !== undefined) t = Math.max(0, Math.min(timelineDuration, this.frameToTime(frame)));
+      return insertIndependentSceneFrame('blank');
+    },
+    duplicateFrame(frame){
+      if(frame !== undefined) t = Math.max(0, Math.min(timelineDuration, this.frameToTime(frame)));
+      return insertIndependentSceneFrame('duplicate');
+    },
+    setFrameHold(frameId, endFrame){
+      const frame = sceneFrames.find(entry=>entry && entry.id === frameId);
+      if(!frame) return false;
+      pushUndo();
+      const changed = setIndependentSceneFrameEnd(frame, Math.max(0, Math.round(Number(endFrame) || 0)));
+      if(changed) this.refreshUI();
+      return changed;
+    },
     getSelectedDrawObjects(){
       const isolated=getIsolatedGroupInfo();
       if(isolated) return [isolated.child];
@@ -7354,6 +8012,7 @@ ctx.fill();</textarea>
     timeToFrame(time){ return Math.max(1, Math.round(Math.max(0, Number(time) || 0) * this.fps) + 1); },
     setTime(value){
       t = Math.max(0, Math.min(timelineDuration, Number(value) || 0));
+      syncActiveSceneFrameForTime(t, false);
       updateInspector();
       renderTimeline();
       renderTransformHandles();
@@ -7391,7 +8050,8 @@ ctx.fill();</textarea>
         if(rig && Array.isArray(rig.bones)) rig.bones.forEach(bone=>(bone.keys||[]).forEach(key=>addTime(key.time)));
         if(object.type==='group' && Array.isArray(object.children)) object.children.forEach(visit);
       };
-      (clip.drawObjects||[]).forEach(visit);
+      ensureClipSceneFrames(clip);
+      allSceneFrameObjectArrays(clip.sceneFrames, clip.drawObjects).forEach(list=>list.forEach(visit));
       return Array.from(found).sort((a,b)=>a-b);
     },
     getClipFrameLabels(clipId){
@@ -7415,6 +8075,7 @@ ctx.fill();</textarea>
     pushUndo(){ pushUndo(); return true; },
     getEffectiveObject(object, timeValue){ return getEffectiveObj(object, timeValue === undefined ? t : Number(timeValue) || 0); },
     refreshUI(){
+      syncActiveSceneFrameForTime(t, false);
       updateInspector();
       renderTimeline();
       renderLayerList();
@@ -7424,6 +8085,7 @@ ctx.fill();</textarea>
     addDrawObject(object, panelId){
       if(!object || typeof object !== 'object') throw new Error('addDrawObject requires an object.');
       pushUndo();
+      ensureFrameOwnedDrawingForMutation();
       if(panelId) object.panelId = panelId;
       ensureDrawObjectMetadata(object);
       drawObjects.push(object);
@@ -7895,8 +8557,10 @@ ctx.fill();</textarea>
     if(placingClipId){
       const c = canvasCoords(e.clientX, e.clientY);
       pushUndo();
+      ensureFrameOwnedDrawingForMutation();
       const obj = ensureDrawObjectMetadata({ type:'clipinstance', clipId:placingClipId, x:c.x, y:c.y, scale:1, scaleX:1, scaleY:1, rotation:0, timeOffset:0, opacity:1, keyframes:[] });
       drawObjects.push(obj);
+      wickIngestUnregisteredCurrentObjects();
       placingClipId = null;
       selectDrawObject(drawObjects.length-1, false, true);
       updatePlacingUI();
@@ -8574,6 +9238,66 @@ ctx.fill();</textarea>
     setZoom(stageZoom + (e.deltaY < 0 ? 0.1 : -0.1));
   }, { passive:false });
 
+  // ---------------- liftable timeline dock ----------------
+  let timelineDockHeight = 130;
+  function applyTimelineDockHeight(value, persist){
+    const dock = document.getElementById('timeline-dock');
+    const zoom = document.getElementById('zoom-controls');
+    const maximum = Math.max(140, Math.round(window.innerHeight * 0.72));
+    timelineDockHeight = Math.max(96, Math.min(maximum, Math.round(Number(value) || 130)));
+    if(dock){
+      dock.style.height = timelineDockHeight + 'px';
+      dock.style.flexBasis = timelineDockHeight + 'px';
+    }
+    document.documentElement.style.setProperty('--timeline-dock-height', timelineDockHeight + 'px');
+    if(zoom) zoom.style.bottom = (timelineDockHeight + 12) + 'px';
+    if(persist !== false){
+      try{ localStorage.setItem('lukeAnimateTimelineDockHeight', String(timelineDockHeight)); }catch(_error){}
+    }
+    requestAnimationFrame(updateRulersAndGuides);
+  }
+
+  function initialiseTimelineDockLift(){
+    try{
+      const stored = Number(localStorage.getItem('lukeAnimateTimelineDockHeight'));
+      if(Number.isFinite(stored) && stored >= 96) timelineDockHeight = stored;
+    }catch(_error){}
+    applyTimelineDockHeight(timelineDockHeight, false);
+    const handle = document.getElementById('timeline-resize-handle');
+    const dock = document.getElementById('timeline-dock');
+    if(!handle || !dock) return;
+    handle.addEventListener('pointerdown', event=>{
+      if(event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startY = event.clientY;
+      const startHeight = dock.getBoundingClientRect().height || timelineDockHeight;
+      handle.classList.add('dragging');
+      document.body.style.cursor = 'ns-resize';
+      document.documentElement.style.userSelect = 'none';
+      try{ handle.setPointerCapture(event.pointerId); }catch(_error){}
+      const onMove = moveEvent=>{
+        applyTimelineDockHeight(startHeight + (startY - moveEvent.clientY), false);
+      };
+      const onUp = upEvent=>{
+        handle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.documentElement.style.userSelect = '';
+        try{ handle.releasePointerCapture(upEvent.pointerId); }catch(_error){}
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        applyTimelineDockHeight(timelineDockHeight, true);
+      };
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
+    });
+    handle.addEventListener('dblclick', ()=>applyTimelineDockHeight(260, true));
+    window.addEventListener('resize', ()=>applyTimelineDockHeight(timelineDockHeight, false));
+  }
+  initialiseTimelineDockLift();
+
   // Ctrl/Cmd + drag pans only from the stage canvas. The toolbar lives inside
   // the scrolling stage wrapper, so its transform is counter-scrolled to keep it
   // permanently visible instead of letting a stage pan drag it off screen.
@@ -8889,7 +9613,7 @@ ctx.fill();</textarea>
       row.appendChild(name);
       row.appendChild(visBtn);
       row.appendChild(delBtn);
-      row.addEventListener('click', (e)=> selectDrawObject(idx, e.shiftKey, true));
+      row.addEventListener('click', (e)=> selectDrawObject(idx, !!(e.shiftKey || e.ctrlKey || e.metaKey), true));
       list.appendChild(row);
     });
     renderTimeline();
@@ -8957,6 +9681,7 @@ ctx.fill();</textarea>
   }
 
   const TIMELINE_MIN_FRAME_PX = 6;
+  const TIMELINE_MAX_FRAME_PX = 40;
 
   function getTimelineFPS(){
     return Math.max(1, parseInt(document.getElementById('inp-fps').value, 10) || 30);
@@ -8964,23 +9689,70 @@ ctx.fill();</textarea>
 
   function getTimelineFrameInfo(){
     const fps = getTimelineFPS();
-    const totalFrames = Math.max(1, Math.round(timelineDuration * fps));
+    const frameCount = Math.max(1, Math.round(timelineDuration * fps));
+    const totalFrames = frameCount - 1;
+    const totalCells = frameCount;
     const wrap = document.getElementById('timeline-wrap');
     const availableWidth = wrap ? Math.max(320, wrap.clientWidth - 110) : 900;
-    const contentWidth = Math.max(availableWidth, totalFrames * TIMELINE_MIN_FRAME_PX);
+    const requestedFrameWidth = Math.max(TIMELINE_MIN_FRAME_PX, Math.min(TIMELINE_MAX_FRAME_PX, Number(timelineFramePixelWidth) || 12));
+    const contentWidth = Math.max(availableWidth, totalCells * requestedFrameWidth);
+    const frameWidth = contentWidth / totalCells;
     if(wrap) wrap.style.setProperty('--timeline-content-width', contentWidth + 'px');
-    return { fps, totalFrames, contentWidth, frameWidth: contentWidth / totalFrames };
+    return {fps, frameCount, totalFrames, totalCells, contentWidth, frameWidth};
+  }
+
+  function timelineFrameCenterPercent(frame, info){
+    const details = info || getTimelineFrameInfo();
+    const index = Math.max(0, Math.min(details.totalFrames, Math.round(Number(frame) || 0)));
+    return ((index + 0.5) / details.totalCells) * 100;
+  }
+
+  function timelineFrameBoundaryPercent(frameBoundary, info){
+    const details = info || getTimelineFrameInfo();
+    return (Math.max(0, Math.min(details.totalCells, Number(frameBoundary) || 0)) / details.totalCells) * 100;
+  }
+
+  function timelineFrameFromClientX(track, clientX, info){
+    const details = info || getTimelineFrameInfo();
+    const rect = track && track.getBoundingClientRect ? track.getBoundingClientRect() : null;
+    if(!rect || rect.width <= 0) return frameIndexForTime(t, timelineDuration);
+    const fraction = Math.max(0, Math.min(0.999999, (Number(clientX) - rect.left) / rect.width));
+    return Math.max(0, Math.min(details.totalFrames, Math.floor(fraction * details.totalCells)));
+  }
+
+  function timelinePercentForTime(time, info){
+    const details = info || getTimelineFrameInfo();
+    return timelineFrameCenterPercent(frameIndexForTime(time, timelineDuration), details);
+  }
+
+  function centreTimelineOnFrame(frameIndex){
+    const scroller = document.querySelector('#timeline-dock .timeline-wrap');
+    if(!scroller) return;
+    const info = getTimelineFrameInfo();
+    const x = 82 + ((Math.max(0, Math.min(info.totalFrames, frameIndex)) + 0.5) / info.totalCells) * info.contentWidth;
+    scroller.scrollLeft = Math.max(0, x - scroller.clientWidth / 2);
+  }
+
+  function setTimelineFramePixelWidth(value, keepPlayheadCentred){
+    timelineFramePixelWidth = Math.max(TIMELINE_MIN_FRAME_PX, Math.min(TIMELINE_MAX_FRAME_PX, Math.round(Number(value) || 12)));
+    try{ localStorage.setItem('lukeAnimateTimelineFramePixelWidthCompact', String(timelineFramePixelWidth)); }catch(_error){}
+    const input = document.getElementById('timeline-frame-zoom');
+    const readout = document.getElementById('timeline-frame-zoom-readout');
+    if(input) input.value = String(timelineFramePixelWidth);
+    if(readout) readout.textContent = timelineFramePixelWidth + 'px';
+    renderTimeline();
+    if(keepPlayheadCentred !== false){
+      requestAnimationFrame(()=>centreTimelineOnFrame(frameIndexForTime(t, timelineDuration)));
+    }
   }
 
   function renderFrameRuler(){
     const ruler = document.getElementById('timeline-ruler');
     if(!ruler) return;
-
     const info = getTimelineFrameInfo();
     const framePx = info.frameWidth;
     const blockPx = framePx * 5;
     const doubleBlockPx = blockPx * 2;
-
     ruler.innerHTML = '';
     ruler.style.backgroundImage = [
       `repeating-linear-gradient(to right, rgba(14,156,134,.055) 0, rgba(14,156,134,.055) ${blockPx}px, transparent ${blockPx}px, transparent ${doubleBlockPx}px)`,
@@ -8988,105 +9760,198 @@ ctx.fill();</textarea>
       `repeating-linear-gradient(to right, transparent 0, transparent ${Math.max(0, blockPx - 1)}px, rgba(14,156,134,.78) ${Math.max(0, blockPx - 1)}px, rgba(14,156,134,.78) ${blockPx}px)`
     ].join(',');
     ruler.style.backgroundSize = 'auto 100%';
-
+    const labelStep = info.frameWidth >= 17 ? 1 : (info.frameWidth >= 10 ? 2 : 5);
     const labelFrames = [];
-    for(let frame = 0; frame <= info.totalFrames; frame += 5) labelFrames.push(frame);
-    if(labelFrames[labelFrames.length - 1] !== info.totalFrames) labelFrames.push(info.totalFrames);
-
+    for(let frame=0; frame<=info.totalFrames; frame+=labelStep) labelFrames.push(frame);
+    if(labelFrames[labelFrames.length-1] !== info.totalFrames) labelFrames.push(info.totalFrames);
     labelFrames.forEach(frame=>{
-      const label = document.createElement('span');
-      label.className = 'timeline-frame-label';
-      if(frame === 0) label.classList.add('first');
-      if(frame === info.totalFrames) label.classList.add('last');
-      label.style.left = ((frame / info.totalFrames) * 100) + '%';
-      label.textContent = frame;
-      label.title = `Frame ${frame} · ${(frame / info.fps).toFixed(3)}s`;
+      const label=document.createElement('span');
+      label.className='timeline-frame-label';
+      label.style.left=timelineFrameCenterPercent(frame,info)+'%';
+      label.textContent=frame+1;
+      label.title=`Frame ${frame+1} · ${(frame/info.fps).toFixed(3)}s`;
       ruler.appendChild(label);
     });
-
-    const editingClip = currentEditingClip();
+    const editingClip=currentEditingClip();
     if(editingClip){
       normalizedClipFrameLabels(editingClip).forEach(frameLabel=>{
-        const timelineFrame = Math.max(0, Math.min(info.totalFrames, frameLabel.frame - 1));
-        const marker = document.createElement('span');
-        marker.className = 'timeline-frame-name-marker';
-        if(timelineFrame===0) marker.classList.add('first');
-        if(timelineFrame===info.totalFrames) marker.classList.add('last');
-        marker.style.left = ((timelineFrame / info.totalFrames) * 100) + '%';
-        marker.textContent = frameLabel.name;
-        marker.title = frameLabel.name + ' · Frame ' + frameLabel.frame;
+        const timelineFrame=Math.max(0,Math.min(info.totalFrames,frameLabel.frame-1));
+        const marker=document.createElement('span');
+        marker.className='timeline-frame-name-marker';
+        marker.style.left=timelineFrameCenterPercent(timelineFrame,info)+'%';
+        marker.textContent=frameLabel.name;
+        marker.title=frameLabel.name+' · Frame '+frameLabel.frame;
         ruler.appendChild(marker);
       });
     }
-
-    ruler.title = editingClip
-      ? `Frames 0–${info.totalFrames} at ${info.fps} fps · double-click or right-click to name a Clip frame`
-      : `Frames 0–${info.totalFrames} at ${info.fps} fps · minor divisions are 1 frame · shaded blocks are 5 frames`;
+    ruler.title=editingClip
+      ? `Frames 1–${info.totalCells} at ${info.fps} fps · double-click or right-click to name a Clip frame`
+      : `Frames 1–${info.totalCells} at ${info.fps} fps · minor divisions are 1 frame · shaded blocks are 5 frames`;
   }
 
   function snapTimeToFrame(time){
-    const fps = getTimelineFPS();
-    return Math.max(0, Math.min(timelineDuration, Math.round(time * fps) / fps));
+    const fps=getTimelineFPS();
+    const frame=frameIndexForTime(time,timelineDuration);
+    return Math.max(0,Math.min(timelineDuration,frame/fps));
   }
 
   function timelineTimeFromTrackClientX(track, clientX){
-    const rect = track && track.getBoundingClientRect ? track.getBoundingClientRect() : null;
-    if(!rect || rect.width <= 0) return snapTimeToFrame(t);
-    const pointerX = Number(clientX);
-    if(!Number.isFinite(pointerX)) return snapTimeToFrame(t);
-    const fraction = Math.max(0, Math.min(1, (pointerX - rect.left) / rect.width));
-    return snapTimeToFrame(fraction * timelineDuration);
+    const info=getTimelineFrameInfo();
+    return timelineFrameFromClientX(track,clientX,info)/info.fps;
   }
 
   function timelineFrameLabelAtTime(time){
-    const snapped = snapTimeToFrame(time);
-    return `Frame ${Math.round(snapped * getTimelineFPS())} · ${snapped.toFixed(3)}s`;
+    const snapped=snapTimeToFrame(time);
+    return `Frame ${frameIndexForTime(snapped,timelineDuration)+1} · ${snapped.toFixed(3)}s`;
   }
 
-  function addObjectKeyframeDots(track, obj){
-    (obj.keyframes || []).forEach(kf=>{
-      const dot = document.createElement('div');
-      const easing = getObjectKeyframeEasing(obj, kf);
-      dot.className = 'timeline-key-dot';
-      dot.dataset.easing = easing === 'mixed' ? 'linear' : easing;
-      dot.style.left = Math.max(0, Math.min(100, (kf.time/timelineDuration)*100)) + '%';
-      dot.title = `Frame ${Math.round(kf.time*getTimelineFPS())} · ${kf.time.toFixed(3)}s · ${keyframeEasingLabel(easing)} — drag to retime, right-click for key commands and interpolation`;
-      dot.addEventListener('contextmenu', event=> openKeyframeContextMenu(event, {
+  function addObjectKeyframeDots(track,obj){
+    (obj.keyframes||[]).forEach(kf=>{
+      const dot=document.createElement('div');
+      const easing=getObjectKeyframeEasing(obj,kf);
+      dot.className='timeline-key-dot';
+      dot.dataset.easing=easing==='mixed'?'linear':easing;
+      dot.style.left=timelinePercentForTime(kf.time)+'%';
+      dot.title=`Frame ${frameIndexForTime(kf.time,timelineDuration)+1} · ${kf.time.toFixed(3)}s · ${keyframeEasingLabel(easing)} — drag to retime, right-click for key commands and interpolation`;
+      dot.addEventListener('contextmenu',event=>openKeyframeContextMenu(event,{
         getEasing:()=>getObjectKeyframeEasing(obj,kf),
         setEasing:value=>setObjectKeyframeEasing(obj,kf,value),
         addKey:()=>addObjectKeyAtPlayhead(obj,kf),
         deleteKey:()=>deleteObjectKey(obj,kf)
       }));
+      let moved=false,startX=0,startTime=kf.time;
+      dot.addEventListener('mousedown',event=>{
+        if(event.button!==0)return;
+        event.stopPropagation();closeKeyframeContextMenu();pushUndo();
+        startX=event.clientX;startTime=kf.time;
+        const trackWidth=track.getBoundingClientRect().width||1;
+        function onMove(moveEvent){
+          moved=true;
+          const dt=((moveEvent.clientX-startX)/trackWidth)*timelineDuration;
+          kf.time=snapTimeToFrame(startTime+dt);
+          obj.keyframes.sort((a,b)=>a.time-b.time);
+          renderTimeline();updateInspector();
+        }
+        function onUp(){
+          window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onUp);
+          if(!moved){t=kf.time;updateInspector();}
+        }
+        window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onUp);
+      });
+      track.appendChild(dot);
+    });
+  }
 
+  const FRAME_GIZMO_TIMELINE_DATA_KEY = '_lukeAnimateFrameGizmo';
+
+  function frameGizmoTimelineData(obj){
+    if(!obj || obj.type !== 'clipinstance') return null;
+    const data = obj[FRAME_GIZMO_TIMELINE_DATA_KEY];
+    if(!data || typeof data !== 'object' || !Array.isArray(data.keys)) return null;
+    data.keys = data.keys
+      .filter(key=>key && Number.isFinite(Number(key.time)) && Number.isFinite(Number(key.frame)))
+      .map(key=>{
+        key.time = Math.max(0, Math.min(timelineDuration, Number(key.time) || 0));
+        key.frame = Math.max(1, Math.round(Number(key.frame) || 1));
+        return key;
+      })
+      .sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
+    return data;
+  }
+
+  function frameGizmoTimelineKeyName(obj, frame){
+    const clip = obj && clips ? clips[obj.clipId] : null;
+    if(clip && typeof normalizedClipFrameLabels === 'function'){
+      const label = normalizedClipFrameLabels(clip).find(entry=>Math.max(1,Math.round(Number(entry.frame)||1)) === Math.max(1,Math.round(Number(frame)||1)));
+      if(label && String(label.name || '').trim()) return String(label.name).trim();
+    }
+    return 'Clip Frame ' + Math.max(1,Math.round(Number(frame)||1));
+  }
+
+  function refreshFrameGizmoTimelineUI(){
+    renderTimeline();
+    updateInspector();
+    renderTransformHandles();
+    const gizmo = window.__LukeAnimateFrameGizmoV3;
+    if(gizmo && typeof gizmo.render === 'function'){
+      try{ gizmo.render(); }catch(_error){}
+    }
+  }
+
+  function removeFrameGizmoTimelineKey(obj, key){
+    const data = frameGizmoTimelineData(obj);
+    if(!data || !key) return false;
+    const before = data.keys.length;
+    data.keys = data.keys.filter(entry=>entry !== key);
+    return data.keys.length !== before;
+  }
+
+  function dedupeFrameGizmoTimelineKeys(data, preferredKey){
+    if(!data || !Array.isArray(data.keys)) return;
+    const tolerance = 0.5 / getTimelineFPS();
+    const ordered = data.keys.slice().sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
+    const kept = [];
+    ordered.forEach(key=>{
+      const existingIndex = kept.findIndex(entry=>Math.abs((Number(entry.time)||0)-(Number(key.time)||0)) <= tolerance);
+      if(existingIndex < 0){
+        kept.push(key);
+      }else if(key === preferredKey){
+        kept[existingIndex] = key;
+      }
+    });
+    data.keys = kept.sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
+  }
+
+  function addFrameGizmoKeyframeDots(track, obj){
+    const data = frameGizmoTimelineData(obj);
+    if(!data || data.keys.length === 0) return;
+    track.classList.add('has-frame-gizmo-keys');
+    data.keys.forEach(key=>{
+      const dot = document.createElement('div');
+      const parentFrame = frameIndexForTime(Number(key.time)||0,timelineDuration) + 1;
+      const clipFrame = Math.max(1,Math.round(Number(key.frame)||1));
+      const clipFrameName = frameGizmoTimelineKeyName(obj,clipFrame);
+      dot.className = 'timeline-key-dot frame-gizmo-key';
+      dot.dataset.easing = 'hold';
+      dot.dataset.clipFrame = String(clipFrame);
+      dot.style.left = timelinePercentForTime(Number(key.time)||0) + '%';
+      dot.title = `Frame Gizmo key · Parent Frame ${parentFrame} → ${clipFrameName} · held until the next Gizmo key — drag to retime or right-click to delete`;
+      dot.addEventListener('contextmenu',event=>openKeyframeContextMenu(event,{
+        deleteKey:()=>removeFrameGizmoTimelineKey(obj,key),
+        deleteKeyHint:`Delete the Frame Gizmo choice for ${clipFrameName}`
+      }));
       let moved = false;
       let startX = 0;
-      let startTime = kf.time;
-      dot.addEventListener('mousedown', (e)=>{
-        if(e.button !== 0) return;
-        e.stopPropagation();
+      let startTime = Number(key.time) || 0;
+      dot.addEventListener('mousedown',event=>{
+        if(event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
         closeKeyframeContextMenu();
         pushUndo();
-        startX = e.clientX;
-        startTime = kf.time;
+        startX = event.clientX;
+        startTime = Number(key.time) || 0;
         const trackWidth = track.getBoundingClientRect().width || 1;
-        function onMove(ev){
+        function onMove(moveEvent){
+          if(!moved && Math.abs(moveEvent.clientX-startX) < 2) return;
           moved = true;
-          const dt = ((ev.clientX-startX)/trackWidth) * timelineDuration;
-          kf.time = snapTimeToFrame(startTime + dt);
-          obj.keyframes.sort((a,b)=>a.time-b.time);
+          const dt = ((moveEvent.clientX-startX)/trackWidth) * timelineDuration;
+          key.time = snapTimeToFrame(startTime + dt);
+          dedupeFrameGizmoTimelineKeys(data,key);
           renderTimeline();
           updateInspector();
         }
         function onUp(){
-          window.removeEventListener('mousemove', onMove);
-          window.removeEventListener('mouseup', onUp);
+          window.removeEventListener('mousemove',onMove);
+          window.removeEventListener('mouseup',onUp);
           if(!moved){
-            t = kf.time;
-            updateInspector();
+            t = Math.max(0,Math.min(timelineDuration,Number(key.time)||0));
+            syncActiveSceneFrameForTime(t,false);
           }
+          refreshFrameGizmoTimelineUI();
         }
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onUp);
+        window.addEventListener('mousemove',onMove);
+        window.addEventListener('mouseup',onUp);
       });
       track.appendChild(dot);
     });
@@ -9130,8 +9995,8 @@ ctx.fill();</textarea>
           const easing = normalizeKeyframeEasing(key.easing);
           dot.className = 'timeline-key-dot';
           dot.dataset.easing = easing;
-          dot.style.left = Math.max(0, Math.min(100, (key.time/timelineDuration)*100)) + '%';
-          dot.title = `Frame ${Math.round(key.time*getTimelineFPS())} · ${Number(key.time).toFixed(3)}s · ${keyframeEasingLabel(easing)} — drag to retime, right-click for key commands and interpolation`;
+          dot.style.left = timelinePercentForTime(key.time) + '%';
+          dot.title = `Frame ${frameIndexForTime(key.time,timelineDuration)+1} · ${Number(key.time).toFixed(3)}s · ${keyframeEasingLabel(easing)} — drag to retime, right-click for key commands and interpolation`;
           dot.addEventListener('contextmenu', event=> openKeyframeContextMenu(event, {
             getEasing:()=>normalizeKeyframeEasing(key.easing),
             setEasing:value=>{ key.easing = normalizeKeyframeEasing(value); },
@@ -9177,11 +10042,163 @@ ctx.fill();</textarea>
     });
   }
 
+  function startIndependentFrameHoldDrag(event, frame, track){
+    if(event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const info = getTimelineFrameInfo();
+    const totalCells = info.totalFrames + 1;
+    const rect = track.getBoundingClientRect();
+    let historyPushed = false;
+
+    function onMove(moveEvent){
+      const fraction = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / Math.max(1, rect.width)));
+      const requestedEnd = Math.max(frame.startFrame, Math.min(info.totalFrames, Math.round(fraction * (info.totalFrames + 1) - 1)));
+      if(requestedEnd === frame.endFrame) return;
+      if(!historyPushed){
+        pushUndo();
+        historyPushed = true;
+      }
+      setIndependentSceneFrameEnd(frame, requestedEnd);
+      renderTimeline();
+    }
+    function onUp(){
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      syncActiveSceneFrameForTime(t, true);
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function startObjectFrameExposureDrag(event, frame, track, objectIndex){
+    if(!frame || !track || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    playing = false;
+    stopAudioIfLoaded();
+
+    const info = getTimelineFrameInfo();
+    const rect = track.getBoundingClientRect();
+    const originalEnd = frame.endFrame;
+    const startX = event.clientX;
+    let changed = false;
+    let historyPushed = false;
+
+    // Clicking the bar still selects its object. Ctrl/Cmd or Shift retains the
+    // existing additive-selection behaviour while the same gesture can drag.
+    selectDrawObject(objectIndex, !!(event.shiftKey || event.ctrlKey || event.metaKey), true);
+
+    function requestedEndFromClientX(clientX){
+      const relative = Math.max(0, Math.min(rect.width, clientX - rect.left));
+      const cell = Math.ceil((relative / Math.max(1, rect.width)) * totalCells) - 1;
+      return Math.max(frame.startFrame, Math.min(info.totalFrames, cell));
+    }
+
+    function onMove(moveEvent){
+      if(!changed && Math.abs(moveEvent.clientX - startX) < 3) return;
+      const nextEnd = requestedEndFromClientX(moveEvent.clientX);
+      if(nextEnd === frame.endFrame) return;
+      if(!historyPushed){
+        pushUndo();
+        historyPushed = true;
+      }
+      changed = true;
+      setIndependentSceneFrameEnd(frame, nextEnd);
+      renderTimeline();
+    }
+
+    function onUp(){
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      document.documentElement.style.userSelect = '';
+      if(changed){
+        syncActiveSceneFrameForTime(t, true);
+        logToSandbox('Frame exposure changed from ' + (originalEnd + 1) + ' to ' + (frame.endFrame + 1) + '.');
+      }else{
+        renderTimeline();
+        renderTransformHandles();
+      }
+    }
+
+    document.documentElement.style.userSelect = 'none';
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  }
+
+  function renderIndependentFrameTrack(tracksEl){
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    const info = getTimelineFrameInfo();
+    const totalCells = info.totalFrames + 1;
+    const currentIndex = frameIndexForTime(t, timelineDuration);
+    const active = sceneFrameAtIndex(sceneFrames, currentIndex);
+
+    const row = document.createElement('div');
+    row.className = 'timeline-track-row';
+    const name = document.createElement('div');
+    name.className = 'timeline-track-name';
+    name.textContent = editingClipId ? 'Clip Frames' : 'Frames';
+    name.title = 'Independent held frames. Double-click the row for a blank key; drag a frame\'s right edge to change its hold.';
+    const track = document.createElement('div');
+    track.className = 'timeline-track';
+    track.title = 'Double-click to insert a blank independent keyframe';
+
+    sceneFrames.forEach(frame=>{
+      const block = document.createElement('div');
+      const blank = !frame.objects || frame.objects.length === 0;
+      block.className = 'timeline-scene-frame' + (blank ? ' blank' : '') + (frame.explicitKey === false ? ' implicit' : ' key') + (active && active.id === frame.id ? ' active' : '');
+      block.style.left = (frame.startFrame / totalCells * 100) + '%';
+      block.style.width = (Math.max(1, frame.endFrame - frame.startFrame + 1) / totalCells * 100) + '%';
+      block.title = 'Frame ' + frame.startFrame + ' held through ' + frame.endFrame +
+        ' (' + (frame.endFrame - frame.startFrame + 1) + ' frame' + (frame.endFrame === frame.startFrame ? '' : 's') + ')' +
+        (blank ? (frame.explicitKey === false ? ' · empty gap' : ' · blank key') : ' · ' + frame.objects.length + ' object' + (frame.objects.length === 1 ? '' : 's'));
+
+      const label = document.createElement('span');
+      label.className = 'timeline-scene-frame-label';
+      label.textContent = frame.startFrame === frame.endFrame
+        ? String(frame.startFrame)
+        : frame.startFrame + '–' + frame.endFrame;
+      block.appendChild(label);
+
+      const hold = document.createElement('div');
+      hold.className = 'timeline-scene-frame-hold';
+      hold.title = 'Drag to hold this frame for more or fewer frames';
+      hold.addEventListener('mousedown', event=>startIndependentFrameHoldDrag(event, frame, track));
+      block.appendChild(hold);
+
+      block.addEventListener('mousedown', event=>{
+        if(event.target === hold || event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        playing = false;
+        stopAudioIfLoaded();
+        t = Math.max(0, Math.min(timelineDuration, frame.startFrame / info.fps));
+        syncActiveSceneFrameForTime(t, true);
+      });
+      track.appendChild(block);
+    });
+
+    track.addEventListener('dblclick', event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      const targetFrame = frameIndexForTime(timelineTimeFromTrackClientX(track, event.clientX), timelineDuration);
+      t = targetFrame / info.fps;
+      insertIndependentSceneFrame('blank', targetFrame);
+    });
+
+    row.appendChild(name);
+    row.appendChild(track);
+    tracksEl.appendChild(row);
+  }
+
   function renderTimeline(){
     renderFrameRuler();
     updateOnionRangeUI();
     const tracksEl = document.getElementById('timeline-tracks');
     tracksEl.innerHTML = '';
+    renderIndependentFrameTrack(tracksEl);
 
     layers.forEach((layer, idx)=>{
       const row = document.createElement('div');
@@ -9265,6 +10282,7 @@ ctx.fill();</textarea>
       const obj=entry.obj,idx=entry.idx;
       const row = document.createElement('div');
       row.className = 'timeline-track-row';
+      row.dataset.timelineKind = 'legacy-object-row';
       const name = document.createElement('div');
       name.className = 'timeline-track-name';
       name.textContent = objectLayerName(obj);
@@ -9274,14 +10292,22 @@ ctx.fill();</textarea>
       track.className = 'timeline-track';
       const span = document.createElement('div');
       span.className = 'timeline-object-span' + (selectedDrawIndices.has(idx) ? ' active-row' : '');
+      const objectOwnerFrame = activeIndependentSceneFrame();
+      if(objectOwnerFrame){
+        const totalCells = getTimelineFrameInfo().totalFrames + 1;
+        span.style.left = (objectOwnerFrame.startFrame / totalCells * 100) + '%';
+        span.style.right = 'auto';
+        span.style.width = (Math.max(1, objectOwnerFrame.endFrame - objectOwnerFrame.startFrame + 1) / totalCells * 100) + '%';
+      }
       span.style.opacity = obj.enabled === false ? '0.25' : '1';
       span.title = (obj.keyframes || []).length
-        ? `${obj.keyframes.length} keyframe(s) · click to select`
-        : 'Static object · click to select';
-      span.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        selectDrawObject(idx, e.shiftKey, true);
+        ? `${obj.keyframes.length} keyframe(s) · drag this green bar to extend or shorten the held frame`
+        : 'Drag this green bar to extend or shorten the held frame';
+      span.addEventListener('pointerdown', event=>{
+        const ownerFrame = activeIndependentSceneFrame();
+        startObjectFrameExposureDrag(event, ownerFrame, track, idx);
       });
+      span.addEventListener('click', event=>event.stopPropagation());
       track.appendChild(span);
       track.addEventListener('contextmenu', event=>{
         const keyTime = timelineTimeFromTrackClientX(track, event.clientX);
@@ -9297,6 +10323,7 @@ ctx.fill();</textarea>
         });
       });
       addObjectKeyframeDots(track, obj);
+      addFrameGizmoKeyframeDots(track, obj);
       row.appendChild(name);
       row.appendChild(track);
       row.addEventListener('click', (e)=> selectDrawObject(idx, e.shiftKey, true));
@@ -9313,6 +10340,7 @@ ctx.fill();</textarea>
     const info = getTimelineFrameInfo();
     const frame = Math.max(0, Math.min(info.totalFrames, Math.round(frac * info.totalFrames)));
     t = Math.min(timelineDuration, frame / info.fps);
+    syncActiveSceneFrameForTime(t, true);
     syncAudioToTime();
     updateInspector();
     renderTransformHandles();
@@ -9386,12 +10414,20 @@ ctx.fill();</textarea>
 
   document.getElementById('onion-range-before-handle').addEventListener('mousedown', e=> beginOnionRangeDrag(e, 'before'));
   document.getElementById('onion-range-after-handle').addEventListener('mousedown', e=> beginOnionRangeDrag(e, 'after'));
-  document.getElementById('inp-fps').addEventListener('change', ()=>{ renderTimeline(); updateOnionRangeUI(); });
+  document.getElementById('inp-fps').addEventListener('change', ()=>{
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    Object.values(clips).forEach(ensureClipSceneFrames);
+    syncActiveSceneFrameForTime(t, false);
+    renderTimeline();
+    updateOnionRangeUI();
+  });
   window.addEventListener('resize', renderTimeline);
 
   function syncTimelineDuration(newDuration){
     pushUndo();
     timelineDuration = Math.max(0.5, newDuration || 6);
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    syncActiveSceneFrameForTime(Math.min(t, timelineDuration), false);
     document.getElementById('inp-timelineduration').value = timelineDuration;
     document.getElementById('inp-duration').value = timelineDuration;
     renderTimeline();
@@ -9405,6 +10441,22 @@ ctx.fill();</textarea>
   document.getElementById('chk-looptimeline').addEventListener('change', (e)=>{
     pushUndo();
     loopTimeline = e.target.checked;
+  });
+
+  document.getElementById('btn-frame-blank').addEventListener('click', ()=>insertIndependentSceneFrame('blank'));
+  document.getElementById('btn-frame-duplicate').addEventListener('click', ()=>insertIndependentSceneFrame('duplicate'));
+  document.getElementById('btn-frame-clear').addEventListener('click', clearActiveIndependentSceneFrame);
+  document.addEventListener('keydown', event=>{
+    const target = event.target;
+    const typing = target && (/INPUT|TEXTAREA|SELECT/.test(target.tagName) || target.isContentEditable);
+    if(typing) return;
+    if(event.key === 'F6'){
+      event.preventDefault();
+      insertIndependentSceneFrame('duplicate');
+    }else if(event.key === 'F7'){
+      event.preventDefault();
+      insertIndependentSceneFrame('blank');
+    }
   });
 
   // ---------------- audio track ----------------
@@ -9502,13 +10554,14 @@ ctx.fill();</textarea>
   function stopAudioIfLoaded(){ if(audioLoaded){ audioEl.pause(); audioEl.currentTime = 0; } }
 
   function deleteLayer(idx){
-    if(layers.length <= 1) return; // always keep at least one layer
+    if(idx < 0 || idx >= layers.length) return;
     pushUndo();
     layers.splice(idx,1);
-    if(activeIndex >= layers.length) activeIndex = layers.length - 1;
+    activeIndex = layers.length ? Math.min(idx, layers.length - 1) : -1;
     refreshAllUIFromLayer(activeLayer());
     renderLayerList();
     renderPoints();
+    renderTimeline();
   }
 
   document.getElementById('btn-add-layer').addEventListener('click', ()=>{
@@ -10998,9 +12051,14 @@ ctx.fill();</textarea>
   function renderOneOnionFrame(sampleTime, filterValue){
     if(sampleTime === null || sampleTime === undefined) return;
     const savedTime = t;
+    const savedDrawObjects = drawObjects;
+    const savedActiveSceneFrameId = activeSceneFrameId;
     const stateRecords = captureOnionLayerStates();
     onionSkinRendering = true;
     t = sampleTime;
+    drawObjects = sceneFrameObjectsAtTime(sceneFrames, sampleTime, timelineDuration, savedDrawObjects);
+    const sampledFrame = sceneFrameAtIndex(sceneFrames, frameIndexForTime(sampleTime, timelineDuration));
+    activeSceneFrameId = sampledFrame ? sampledFrame.id : null;
     ctx.save();
     ctx.filter = filterValue;
     ctx.globalCompositeOperation = 'source-over';
@@ -11010,6 +12068,8 @@ ctx.fill();</textarea>
     }finally{
       ctx.restore();
       t = savedTime;
+      drawObjects = savedDrawObjects;
+      activeSceneFrameId = savedActiveSceneFrameId;
       onionSkinRendering = false;
       restoreOnionLayerStates(stateRecords);
     }
@@ -11063,29 +12123,30 @@ ctx.fill();</textarea>
       }
     }
 
+    syncActiveSceneFrameForTime(t, false);
+
     const playhead = document.getElementById('timeline-playhead');
+    const frameInfo = getTimelineFrameInfo();
+    const currentFrame = frameIndexForTime(t,timelineDuration);
     if(playhead){
-      const frac = timelineDuration > 0 ? Math.max(0, Math.min(1, t/timelineDuration)) : 0;
-      const wrapEl = document.getElementById('timeline-wrap');
-      const colEl = document.querySelector('.timeline-ruler-col');
-      if(wrapEl && colEl){
-        const wrapRect = wrapEl.getBoundingClientRect();
-        const colRect = colEl.getBoundingClientRect();
-        const offsetLeft = colRect.left - wrapRect.left;
-        playhead.style.left = (offsetLeft + frac*colRect.width) + 'px';
-      } else {
-        playhead.style.left = (frac*100) + '%';
+      const wrapEl=document.getElementById('timeline-wrap');
+      const colEl=document.querySelector('.timeline-ruler-col');
+      if(wrapEl&&colEl){
+        const colWidth=colEl.offsetWidth||colEl.getBoundingClientRect().width;
+        const wrapPaddingLeft=parseFloat(getComputedStyle(wrapEl).paddingLeft)||0;
+        const offsetLeft=wrapPaddingLeft+colEl.offsetLeft;
+        playhead.style.left=(offsetLeft+((currentFrame+0.5)/frameInfo.totalCells)*colWidth)+'px';
+      }else{
+        playhead.style.left=timelineFrameCenterPercent(currentFrame,frameInfo)+'%';
       }
     }
-    const frameInfo = getTimelineFrameInfo();
-    const currentFrame = Math.max(0, Math.min(frameInfo.totalFrames, Math.round(t * frameInfo.fps)));
-    updateClipFrameNameCurrentHighlight(currentFrame + 1);
+    updateClipFrameNameCurrentHighlight(currentFrame+1);
     if(onionSkinEnabled) updateOnionRangeUI();
-    const readout = document.getElementById('time-readout');
-    if(readout) readout.textContent = 'F ' + currentFrame + ' / ' + frameInfo.totalFrames + ' · ' + t.toFixed(2) + 's / ' + timelineDuration.toFixed(2) + 's';
-    const inspTimeEl = document.getElementById('insp-current-time');
+    const readout=document.getElementById('time-readout');
+    if(readout) readout.textContent='F '+(currentFrame+1)+' / '+frameInfo.totalCells+' · '+t.toFixed(2)+'s / '+timelineDuration.toFixed(2)+'s';
+    const inspTimeEl=document.getElementById('insp-current-time');
     if(inspTimeEl){
-      inspTimeEl.textContent = 'F ' + currentFrame + ' · ' + t.toFixed(2) + 's';
+      inspTimeEl.textContent='F '+(currentFrame+1)+' · '+t.toFixed(2)+'s';
       if(document.getElementById('inspector-section').style.display !== 'none' && !inspectorDragging) updateInspector();
     }
     if((selectShapesMode || shapePointEditMode) && !inspectorDragging) renderTransformHandles();
@@ -11343,6 +12404,7 @@ ctx.fill();</textarea>
       exportPlayback.videoTrack = null;
       playing = restorePlaying;
       t = restoreTime;
+      syncActiveSceneFrameForTime(t, true);
       lastFrame = performance.now();
       restoreCleanWebMExportView();
 
@@ -11420,6 +12482,7 @@ ctx.fill();</textarea>
       exportPlayback.videoTrack = null;
       playing = exportPlayback.previousPlaying;
       t = exportPlayback.previousTime;
+      syncActiveSceneFrameForTime(t, true);
       restoreCleanWebMExportView();
       btnRecord.disabled = false;
       if(btnExportWebMTop){ btnExportWebMTop.disabled = false; btnExportWebMTop.textContent = 'Export WebM'; }
@@ -11428,10 +12491,1134 @@ ctx.fill();</textarea>
     }
   });
 
+
+
+  // ========================================================================
+  // v125 — real Wick-style drawing layers
+  // ------------------------------------------------------------------------
+  // Every drawing layer owns any number of independent drawing frames. Frames
+  // on one layer never replace or split frames on another layer. The existing
+  // renderer still receives a composite sceneFrames projection, while this
+  // layer model remains the canonical editable data for the main stage and for
+  // every nested Clip.
+  // ========================================================================
+  let wickDrawingLayerCounter = 0;
+  let wickDrawingFrameCounter = 0;
+  let wickDrawingLayerOrderCounter = 0;
+  let wickMainDrawingLayers = [];
+  let wickDrawingLayers = wickMainDrawingLayers;
+  let wickActiveDrawingLayerId = null;
+  let wickProjectionBusy = false;
+  let wickReconcileBusy = false;
+
+  function wickDeepClone(value){
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function wickUpdateCounterFromId(id, prefix, setter){
+    const match = String(id || '').match(new RegExp(prefix + '(\\d+)'));
+    if(match) setter(Math.max(0, parseInt(match[1],10) || 0));
+  }
+
+  function wickNextLayerId(){
+    wickDrawingLayerCounter += 1;
+    return 'drawing-layer-' + wickDrawingLayerCounter;
+  }
+
+  function wickNextFrameId(){
+    wickDrawingFrameCounter += 1;
+    return 'drawing-frame-' + wickDrawingFrameCounter;
+  }
+
+  function wickNextLayerOrder(){
+    wickDrawingLayerOrderCounter += 1;
+    return wickDrawingLayerOrderCounter;
+  }
+
+  const wickEnsureDrawObjectMetadataBase = ensureDrawObjectMetadata;
+  ensureDrawObjectMetadata = function(object){
+    object = wickEnsureDrawObjectMetadataBase(object);
+    if(!object || typeof object !== 'object') return object;
+    if(object.timelineLayerId){
+      wickUpdateCounterFromId(object.timelineLayerId, 'drawing-layer-', value=>{ wickDrawingLayerCounter = Math.max(wickDrawingLayerCounter,value); });
+    }
+    if(object.timelineLayerOrder !== undefined && Number.isFinite(Number(object.timelineLayerOrder))){
+      wickDrawingLayerOrderCounter = Math.max(wickDrawingLayerOrderCounter, Math.round(Number(object.timelineLayerOrder) || 0));
+    }
+    if(object.frameLinkId){
+      wickUpdateCounterFromId(object.frameLinkId, 'drawing-frame-', value=>{ wickDrawingFrameCounter = Math.max(wickDrawingFrameCounter,value); });
+    }
+    return object;
+  };
+
+  function wickTotalFrameIndex(durationValue){
+    return totalFrameIndexForDuration(durationValue === undefined ? timelineDuration : durationValue);
+  }
+
+  function wickNormalizeLayerModel(model, durationValue){
+    const totalFrames = wickTotalFrameIndex(durationValue);
+    const layersModel = Array.isArray(model) ? model : [];
+    layersModel.forEach((layer, layerIndex)=>{
+      if(!layer || typeof layer !== 'object') return;
+      if(!layer.id) layer.id = wickNextLayerId();
+      wickUpdateCounterFromId(layer.id, 'drawing-layer-', value=>{ wickDrawingLayerCounter = Math.max(wickDrawingLayerCounter,value); });
+      if(!Number.isFinite(Number(layer.order))) layer.order = wickNextLayerOrder();
+      layer.order = Math.round(Number(layer.order) || (layerIndex + 1));
+      wickDrawingLayerOrderCounter = Math.max(wickDrawingLayerOrderCounter, layer.order);
+      if(!layer.name) layer.name = 'Layer ' + (layerIndex + 1);
+      if(!Array.isArray(layer.frames)) layer.frames = [];
+
+      const frames = layer.frames.map((frame, frameIndex)=>{
+        if(!frame || typeof frame !== 'object') return null;
+        if(!frame.id) frame.id = wickNextFrameId();
+        wickUpdateCounterFromId(frame.id, 'drawing-frame-', value=>{ wickDrawingFrameCounter = Math.max(wickDrawingFrameCounter,value); });
+        frame.startFrame = Math.max(0, Math.min(totalFrames, Math.round(Number(frame.startFrame) || 0)));
+        frame.endFrame = Math.max(frame.startFrame, Math.min(totalFrames, Math.round(Number(frame.endFrame) || frame.startFrame)));
+        frame.blank = frame.blank === true || !frame.object;
+        frame._sequence = Number.isFinite(Number(frame._sequence)) ? Number(frame._sequence) : frameIndex;
+        if(frame.object && !frame.blank){
+          ensureDrawObjectMetadata(frame.object);
+          frame.object.timelineLayerId = layer.id;
+          frame.object.timelineLayerOrder = layer.order;
+          frame.object.frameLinkId = frame.id;
+          frame.object.frameLinkStart = frame.startFrame;
+          frame.object.frameLinkEnd = frame.endFrame;
+          layer.name = frame.object.name || layer.name || objectLayerName(frame.object);
+        }else{
+          frame.object = null;
+          frame.blank = true;
+        }
+        return frame;
+      }).filter(Boolean).sort((a,b)=>a.startFrame-b.startFrame || a._sequence-b._sequence);
+
+      const resolved = [];
+      frames.forEach(frame=>{
+        const previous = resolved[resolved.length - 1];
+        if(previous && frame.startFrame <= previous.endFrame){
+          previous.endFrame = frame.startFrame - 1;
+          if(previous.object) previous.object.frameLinkEnd = previous.endFrame;
+          if(previous.endFrame < previous.startFrame) resolved.pop();
+        }
+        resolved.push(frame);
+      });
+      layer.frames = resolved.filter(frame=>frame.endFrame >= frame.startFrame);
+    });
+    layersModel.sort((a,b)=>(Number(a.order)||0)-(Number(b.order)||0));
+    return layersModel;
+  }
+
+  function wickLayerLineageKey(object, objectIndex){
+    if(!object) return 'slot:' + objectIndex;
+    if(object.timelineLayerId) return String(object.timelineLayerId);
+    if(object.frameExposureSourceId) return 'source:' + String(object.frameExposureSourceId);
+    if(object.id) return 'object:' + String(object.id);
+    return 'slot:' + objectIndex + ':' + String(object.type || 'object') + ':' + String(object.name || '');
+  }
+
+  function wickMigrateSceneFrames(frameList, fallbackObjects, durationValue){
+    const totalFrames = wickTotalFrameIndex(durationValue);
+    const sourceFrames = Array.isArray(frameList) ? frameList.slice().sort((a,b)=>(Number(a.startFrame)||0)-(Number(b.startFrame)||0)) : [];
+    const layersByKey = new Map();
+    const frameIdsByLegacyKey = new Map();
+
+    function ensureLayer(key, object, objectIndex){
+      if(layersByKey.has(key)) return layersByKey.get(key);
+      const requestedId = object && object.timelineLayerId ? String(object.timelineLayerId) : wickNextLayerId();
+      const layer = {
+        id:requestedId,
+        name:object ? objectLayerName(object) : ('Layer ' + (objectIndex + 1)),
+        order:object && Number.isFinite(Number(object.timelineLayerOrder)) ? Number(object.timelineLayerOrder) : wickNextLayerOrder(),
+        frames:[]
+      };
+      layersByKey.set(key, layer);
+      return layer;
+    }
+
+    sourceFrames.forEach(sceneFrame=>{
+      if(!sceneFrame || typeof sceneFrame !== 'object') return;
+      const startFrame = Math.max(0, Math.min(totalFrames, Math.round(Number(sceneFrame.startFrame) || 0)));
+      const endFrame = Math.max(startFrame, Math.min(totalFrames, Math.round(Number(sceneFrame.endFrame) || startFrame)));
+      (Array.isArray(sceneFrame.objects) ? sceneFrame.objects : []).forEach((object, objectIndex)=>{
+        if(!object) return;
+        const key = wickLayerLineageKey(object, objectIndex);
+        const layer = ensureLayer(key, object, objectIndex);
+        object.timelineLayerId = layer.id;
+        object.timelineLayerOrder = layer.order;
+        ensureDrawObjectMetadata(object);
+        const legacyFrameKey = String(object.frameLinkId || object.id || (key + ':' + startFrame));
+        let frame = frameIdsByLegacyKey.get(legacyFrameKey);
+        if(frame && frame.endFrame + 1 >= startFrame){
+          frame.endFrame = Math.max(frame.endFrame, endFrame);
+          if(frame.object) frame.object.frameLinkEnd = frame.endFrame;
+        }else{
+          const frameId = object.frameLinkId || wickNextFrameId();
+          frame = {id:String(frameId), startFrame, endFrame, blank:false, object, _sequence:layer.frames.length};
+          frameIdsByLegacyKey.set(legacyFrameKey, frame);
+          layer.frames.push(frame);
+        }
+      });
+    });
+
+    if(layersByKey.size === 0 && Array.isArray(fallbackObjects)){
+      fallbackObjects.forEach((object,index)=>{
+        if(!object) return;
+        const key = wickLayerLineageKey(object,index);
+        const layer = ensureLayer(key,object,index);
+        const frameId = object.frameLinkId || wickNextFrameId();
+        layer.frames.push({id:String(frameId),startFrame:0,endFrame:totalFrames,blank:false,object,_sequence:0});
+      });
+    }
+
+    return wickNormalizeLayerModel(Array.from(layersByKey.values()), durationValue);
+  }
+
+  function wickEnsureClipDrawingLayers(clip){
+    if(!clip) return [];
+    const legacyHasObjects=(Array.isArray(clip.drawObjects)&&clip.drawObjects.length>0) ||
+      (Array.isArray(clip.sceneFrames)&&clip.sceneFrames.some(frame=>Array.isArray(frame&&frame.objects)&&frame.objects.length>0));
+    if(!Array.isArray(clip.drawingLayers) || (clip.drawingLayers.length===0 && legacyHasObjects)){
+      clip.drawingLayers=wickMigrateSceneFrames(clip.sceneFrames,clip.drawObjects,clip.timelineDuration);
+    }
+    wickNormalizeLayerModel(clip.drawingLayers,clip.timelineDuration);
+    return clip.drawingLayers;
+  }
+
+  function wickModelForFrameList(frameList){
+    // A Clip renderer temporarily binds the shared sceneFrames variable to the
+    // Clip's own frame array. Resolve Clip-owned arrays first or the main-stage
+    // layer model is projected into the Clip while it renders, making the
+    // converted artwork disappear (and potentially recurse into itself).
+    for(const clip of Object.values(clips)){
+      if(clip && frameList === clip.sceneFrames) return wickEnsureClipDrawingLayers(clip);
+    }
+    if(frameList === sceneFrames) return wickDrawingLayers;
+    return null;
+  }
+
+  function wickProjectLayerModel(model, targetFrames, durationValue){
+    if(wickProjectionBusy) return targetFrames;
+    wickProjectionBusy = true;
+    try{
+      const totalFrames = wickTotalFrameIndex(durationValue);
+      const normalized = wickNormalizeLayerModel(model, durationValue);
+      const boundaries = new Set([0, totalFrames + 1]);
+      normalized.forEach(layer=>layer.frames.forEach(frame=>{
+        boundaries.add(frame.startFrame);
+        boundaries.add(Math.min(totalFrames + 1, frame.endFrame + 1));
+      }));
+      const positions = Array.from(boundaries).filter(value=>value >= 0 && value <= totalFrames + 1).sort((a,b)=>a-b);
+      const projected = [];
+      for(let i=0;i<positions.length-1;i++){
+        const startFrame = positions[i];
+        const endFrame = positions[i+1] - 1;
+        if(startFrame > totalFrames || endFrame < startFrame) continue;
+        const objects = [];
+        normalized.forEach(layer=>{
+          const active = layer.frames.find(frame=>startFrame >= frame.startFrame && endFrame <= frame.endFrame);
+          if(active && active.object && !active.blank){
+            active.object.timelineLayerId = layer.id;
+            active.object.timelineLayerOrder = layer.order;
+            active.object.frameLinkId = active.id;
+            active.object.frameLinkStart = active.startFrame;
+            active.object.frameLinkEnd = active.endFrame;
+            objects.push(active.object);
+          }
+        });
+        projected.push({
+          id:'wick-projection-' + startFrame + '-' + endFrame,
+          startFrame,
+          endFrame,
+          objects,
+          explicitKey:normalized.some(layer=>layer.frames.some(frame=>frame.startFrame===startFrame)),
+          frameOnly:false,
+          wickLayerProjection:true
+        });
+      }
+      if(projected.length === 0){
+        projected.push({id:'wick-projection-0-' + totalFrames,startFrame:0,endFrame:totalFrames,objects:[],explicitKey:false,frameOnly:false,wickLayerProjection:true});
+      }
+      if(Array.isArray(targetFrames)){
+        targetFrames.splice(0,targetFrames.length,...projected);
+        return targetFrames;
+      }
+      return projected;
+    }finally{
+      wickProjectionBusy = false;
+    }
+  }
+
+  function wickEnsureCurrentDrawingLayers(){
+    if(!Array.isArray(wickDrawingLayers)){
+      wickDrawingLayers = editingClipId && clips[editingClipId]
+        ? wickEnsureClipDrawingLayers(clips[editingClipId])
+        : wickMainDrawingLayers;
+    }
+    if(wickDrawingLayers.length === 0){
+      const migrated = wickMigrateSceneFrames(sceneFrames, drawObjects, timelineDuration);
+      if(migrated.length){
+        wickDrawingLayers.splice(0,wickDrawingLayers.length,...migrated);
+      }
+    }
+    wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
+    return wickDrawingLayers;
+  }
+
+  const wickNormalizeSceneFrameListBase = normalizeSceneFrameList;
+  normalizeSceneFrameList = function(frameList, durationValue, fallbackObjects){
+    const model = wickModelForFrameList(frameList);
+    if(model) return wickProjectLayerModel(model, frameList, durationValue);
+    return wickNormalizeSceneFrameListBase(frameList,durationValue,fallbackObjects);
+  };
+
+  const wickEnsureClipSceneFramesBase = ensureClipSceneFrames;
+  ensureClipSceneFrames = function(clip){
+    if(!clip) return [];
+    if(!Array.isArray(clip.sceneFrames)) clip.sceneFrames=[];
+    const model = wickEnsureClipDrawingLayers(clip);
+    wickProjectLayerModel(model,clip.sceneFrames,clip.timelineDuration);
+    const first = sceneFrameAtIndex(clip.sceneFrames,0);
+    clip.drawObjects = first && Array.isArray(first.objects) ? first.objects : [];
+    return clip.sceneFrames;
+  };
+
+  function wickSelectedLayerIds(){
+    const ids=[];
+    Array.from(selectedDrawIndices).forEach(index=>{
+      const object=drawObjects[index];
+      if(object && object.timelineLayerId && !ids.includes(object.timelineLayerId)) ids.push(object.timelineLayerId);
+    });
+    return ids;
+  }
+
+  function wickFrameAt(layer, frameIndex){
+    if(!layer || !Array.isArray(layer.frames)) return null;
+    return layer.frames.find(frame=>frameIndex >= frame.startFrame && frameIndex <= frame.endFrame) || null;
+  }
+
+  function wickLayerById(layerId){
+    return wickEnsureCurrentDrawingLayers().find(layer=>String(layer.id)===String(layerId)) || null;
+  }
+
+  function wickCurrentFrameIndex(){
+    return frameIndexForTime(t,timelineDuration);
+  }
+
+  syncActiveSceneFrameForTime = function(timeValue, refreshUI){
+    wickEnsureCurrentDrawingLayers();
+    const selectedLayerIds = wickSelectedLayerIds();
+    wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);
+    const target = sceneFrameAtIndex(sceneFrames,frameIndexForTime(timeValue,timelineDuration)) || sceneFrames[0] || null;
+    if(!target) return null;
+    const changed = drawObjects !== target.objects || activeSceneFrameId !== target.id;
+    drawObjects = target.objects;
+    activeSceneFrameId = target.id;
+    if(changed){
+      selectedDrawIndices.clear();
+      selectedLayerIds.forEach(layerId=>{
+        const index=drawObjects.findIndex(object=>object && String(object.timelineLayerId)===String(layerId));
+        if(index>=0) selectedDrawIndices.add(index);
+      });
+      isolatedGroupEdit=null;
+      shapePointEditMode=false;
+      shapePointAddMode=false;
+      shapePointEditObjectId=null;
+      bezierCurveObjectId=null;
+      const selectedCount=document.getElementById('selected-count');
+      if(selectedCount) selectedCount.textContent=selectedDrawIndices.size+' selected';
+    }
+    if(refreshUI){
+      renderLayerList();
+      updateInspector();
+      renderTimeline();
+      renderTransformHandles();
+    }
+    return target;
+  };
+
+  ensureCurrentSceneFrames = function(){
+    return syncActiveSceneFrameForTime(t,false);
+  };
+
+  activeIndependentSceneFrame = function(){
+    return syncActiveSceneFrameForTime(t,false);
+  };
+
+  ensureFrameOwnedDrawingForMutation = function(){
+    return syncActiveSceneFrameForTime(t,false);
+  };
+
+  function wickCloneObjectAtTime(source, sampleTime){
+    if(!source) return null;
+    const clone=wickDeepClone(source);
+    delete clone.id;
+    delete clone.timelineLayerId;
+    delete clone.timelineLayerOrder;
+    delete clone.frameLinkId;
+    delete clone.frameLinkStart;
+    delete clone.frameLinkEnd;
+    clone.keyframes=[];
+    const snapshot=makeObjectKeyframeSnapshot(source,sampleTime);
+    Object.entries(snapshot).forEach(([key,value])=>{
+      if(key==='time' || key==='easing') return;
+      clone[key]=wickDeepClone(value);
+    });
+    ensureDrawObjectMetadata(clone);
+    return clone;
+  }
+
+  function wickCreateLayer(name){
+    const layer={id:wickNextLayerId(),name:String(name||('Layer '+(wickDrawingLayers.length+1))),order:wickNextLayerOrder(),frames:[]};
+    wickDrawingLayers.push(layer);
+    wickActiveDrawingLayerId=layer.id;
+    return layer;
+  }
+
+  function wickRegisterObjectLayer(object, startFrame, endFrame){
+    if(!object) return null;
+    wickEnsureCurrentDrawingLayers();
+    ensureDrawObjectMetadata(object);
+    let layer=object.timelineLayerId ? wickLayerById(object.timelineLayerId) : null;
+    if(!layer){
+      layer=wickCreateLayer(object.name || objectLayerName(object));
+    }
+    object.timelineLayerId=layer.id;
+    object.timelineLayerOrder=layer.order;
+    const frame={
+      id:wickNextFrameId(),
+      startFrame:Math.max(0,Math.round(Number(startFrame)||0)),
+      endFrame:Math.max(Math.max(0,Math.round(Number(startFrame)||0)),Math.min(wickTotalFrameIndex(timelineDuration),Math.round(Number(endFrame)!==Number(endFrame)?wickTotalFrameIndex(timelineDuration):Number(endFrame)))),
+      blank:false,
+      object,
+      _sequence:layer.frames.length
+    };
+    object.frameLinkId=frame.id;
+    object.frameLinkStart=frame.startFrame;
+    object.frameLinkEnd=frame.endFrame;
+    layer.frames.push(frame);
+    wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
+    wickActiveDrawingLayerId=layer.id;
+    return frame;
+  }
+
+  function wickPreviousDrawableFrame(layer, frameIndex){
+    if(!layer) return null;
+    return layer.frames.filter(frame=>frame.startFrame < frameIndex && frame.object && !frame.blank).sort((a,b)=>b.startFrame-a.startFrame)[0] || null;
+  }
+
+  function wickInsertLayerFrame(layer, frameIndex, mode){
+    const totalFrames=wickTotalFrameIndex(timelineDuration);
+    frameIndex=Math.max(0,Math.min(totalFrames,Math.round(Number(frameIndex)||0)));
+    wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
+    const current=wickFrameAt(layer,frameIndex);
+    const next=layer.frames.filter(frame=>frame.startFrame>frameIndex).sort((a,b)=>a.startFrame-b.startFrame)[0] || null;
+    let newEnd=current ? current.endFrame : (next ? next.startFrame-1 : totalFrames);
+    let source=current && current.object ? current : wickPreviousDrawableFrame(layer,frameIndex);
+
+    if(current){
+      if(current.startFrame < frameIndex){
+        current.endFrame=frameIndex-1;
+        if(current.object) current.object.frameLinkEnd=current.endFrame;
+      }else{
+        layer.frames=layer.frames.filter(frame=>frame!==current);
+      }
+    }
+
+    let object=null;
+    let blank=true;
+    if(mode==='duplicate' && source && source.object){
+      object=wickCloneObjectAtTime(source.object,frameIndex/getTimelineFPS());
+      object.timelineLayerId=layer.id;
+      object.timelineLayerOrder=layer.order;
+      blank=false;
+    }
+    const frame={id:wickNextFrameId(),startFrame:frameIndex,endFrame:Math.max(frameIndex,newEnd),blank,object,_sequence:layer.frames.length+1};
+    if(object){
+      object.frameLinkId=frame.id;
+      object.frameLinkStart=frame.startFrame;
+      object.frameLinkEnd=frame.endFrame;
+    }
+    layer.frames.push(frame);
+    wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
+    return frame;
+  }
+
+  function wickRefreshAfterLayerFrameChange(layer, frameIndex, selectObject){
+    wickActiveDrawingLayerId=layer ? layer.id : wickActiveDrawingLayerId;
+    t=Math.max(0,Math.min(timelineDuration,frameIndex/getTimelineFPS()));
+    playing=false;
+    stopAudioIfLoaded();
+    syncActiveSceneFrameForTime(t,false);
+    selectedDrawIndices.clear();
+    if(selectObject && layer){
+      const index=drawObjects.findIndex(object=>object && String(object.timelineLayerId)===String(layer.id));
+      if(index>=0) selectedDrawIndices.add(index);
+    }
+    updateSelectedCountUI();
+    renderLayerList();
+    updateInspector();
+    renderTimeline();
+    renderTransformHandles();
+    renderPoints();
+  }
+
+  insertIndependentSceneFrame = function(mode, requestedFrame){
+    wickEnsureCurrentDrawingLayers();
+    const targetFrame=Math.max(0,Math.min(wickTotalFrameIndex(timelineDuration),Math.round(requestedFrame!==undefined?Number(requestedFrame):wickCurrentFrameIndex())||0));
+    const selectedLayerIds=wickSelectedLayerIds();
+    let layer=selectedLayerIds.length ? wickLayerById(selectedLayerIds[selectedLayerIds.length-1]) : wickLayerById(wickActiveDrawingLayerId);
+    if(!layer) layer=wickCreateLayer('Drawing Layer ' + (wickDrawingLayers.length + 1));
+    pushUndo();
+    const frame=wickInsertLayerFrame(layer,targetFrame,mode==='duplicate'?'duplicate':'blank');
+    wickRefreshAfterLayerFrameChange(layer,targetFrame,!!frame.object);
+    return frame;
+  };
+
+  clearActiveIndependentSceneFrame = function(){
+    return insertIndependentSceneFrame('blank');
+  };
+
+  function wickResizeLayerFrame(frameId, requestedEnd){
+    wickEnsureCurrentDrawingLayers();
+    let owner=null,target=null;
+    wickDrawingLayers.some(layer=>{
+      const found=layer.frames.find(frame=>String(frame.id)===String(frameId));
+      if(found){ owner=layer; target=found; return true; }
+      return false;
+    });
+    if(!target) return null;
+    const totalFrames=wickTotalFrameIndex(timelineDuration);
+    const nextEnd=Math.max(target.startFrame,Math.min(totalFrames,Math.round(Number(requestedEnd)||0)));
+    if(nextEnd===target.endFrame) return target;
+    if(nextEnd>target.endFrame){
+      owner.frames.slice().forEach(frame=>{
+        if(frame===target || frame.startFrame>nextEnd || frame.endFrame<target.startFrame) return;
+        if(frame.endFrame<=nextEnd){ owner.frames=owner.frames.filter(item=>item!==frame); }
+        else{
+          frame.startFrame=nextEnd+1;
+          if(frame.object) frame.object.frameLinkStart=frame.startFrame;
+        }
+      });
+    }
+    target.endFrame=nextEnd;
+    if(target.object) target.object.frameLinkEnd=nextEnd;
+    wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
+    return target;
+  }
+
+  setIndependentSceneFrameEnd = function(_frame, requestedEnd){
+    const layer=wickLayerById(wickActiveDrawingLayerId) || wickLayerById(wickSelectedLayerIds()[0]);
+    const frame=layer ? wickFrameAt(layer,wickCurrentFrameIndex()) : null;
+    if(!frame) return false;
+    return !!wickResizeLayerFrame(frame.id,requestedEnd);
+  };
+
+  function wickRemoveLayersByIds(layerIds){
+    const remove=new Set((layerIds||[]).map(String));
+    if(!remove.size) return false;
+    wickDrawingLayers.splice(0,wickDrawingLayers.length,...wickDrawingLayers.filter(layer=>!remove.has(String(layer.id))));
+    if(remove.has(String(wickActiveDrawingLayerId))) wickActiveDrawingLayerId=wickDrawingLayers.length?wickDrawingLayers[wickDrawingLayers.length-1].id:null;
+    syncActiveSceneFrameForTime(t,false);
+    return true;
+  }
+
+  const wickCommitDrawObjectBase = commitDrawObject;
+  commitDrawObject = function(object){
+    wickCommitDrawObjectBase(object);
+    const currentFrame=wickCurrentFrameIndex();
+    let layer=object&&object.timelineLayerId?wickLayerById(object.timelineLayerId):null;
+    let active=layer?wickFrameAt(layer,currentFrame):null;
+    if(!active || active.object!==object){
+      wickRegisterObjectLayer(object,currentFrame,wickTotalFrameIndex(timelineDuration));
+    }
+    syncActiveSceneFrameForTime(t,false);
+    selectedDrawIndices.clear();
+    const index=drawObjects.findIndex(item=>item===object || (item && object && item.frameLinkId===object.frameLinkId));
+    if(index>=0) selectedDrawIndices.add(index);
+    updateSelectedCountUI();
+    renderLayerList();
+    renderTimeline();
+    renderTransformHandles();
+    return object;
+  };
+
+  function wickIngestUnregisteredCurrentObjects(){
+    if(wickProjectionBusy || wickReconcileBusy) return;
+    wickReconcileBusy=true;
+    try{
+      wickEnsureCurrentDrawingLayers();
+      const frameIndex=wickCurrentFrameIndex();
+      let changed=false;
+      drawObjects.forEach(object=>{
+        if(!object) return;
+        ensureDrawObjectMetadata(object);
+        let layer=object.timelineLayerId ? wickLayerById(object.timelineLayerId) : null;
+        if(!layer){
+          wickRegisterObjectLayer(object,frameIndex,wickTotalFrameIndex(timelineDuration));
+          changed=true;
+          return;
+        }
+        const active=wickFrameAt(layer,frameIndex);
+        if(!active || active.object!==object){
+          const frame=wickInsertLayerFrame(layer,frameIndex,'blank');
+          frame.blank=false;
+          frame.object=object;
+          object.timelineLayerId=layer.id;
+          object.timelineLayerOrder=layer.order;
+          object.frameLinkId=frame.id;
+          object.frameLinkStart=frame.startFrame;
+          object.frameLinkEnd=frame.endFrame;
+          changed=true;
+        }
+      });
+      if(changed) syncActiveSceneFrameForTime(t,false);
+    }finally{
+      wickReconcileBusy=false;
+    }
+  }
+
+  function wickRebuildCanonicalFromCurrentComposite(){
+    if(wickProjectionBusy || wickReconcileBusy) return;
+    wickReconcileBusy=true;
+    try{
+      wickEnsureCurrentDrawingLayers();
+      const frameIndex=wickCurrentFrameIndex();
+      const presentIds=new Set();
+      drawObjects.forEach(object=>{
+        if(!object) return;
+        ensureDrawObjectMetadata(object);
+        if(object.timelineLayerId) presentIds.add(String(object.timelineLayerId));
+      });
+      const activeIds=wickDrawingLayers.filter(layer=>{
+        const frame=wickFrameAt(layer,frameIndex);
+        return !!(frame && frame.object && !frame.blank);
+      }).map(layer=>String(layer.id));
+      wickRemoveLayersByIds(activeIds.filter(id=>!presentIds.has(id)));
+      wickIngestUnregisteredCurrentObjects();
+    }finally{
+      wickReconcileBusy=false;
+    }
+  }
+
+  const wickRenderLayerListBase = renderLayerList;
+  renderLayerList = function(){
+    wickIngestUnregisteredCurrentObjects();
+    return wickRenderLayerListBase();
+  };
+
+  const wickSelectDrawObjectBase = selectDrawObject;
+  selectDrawObject = function(index, additive, openOwnerPanel){
+    const result=wickSelectDrawObjectBase(index,additive,openOwnerPanel);
+    const object=drawObjects[index];
+    if(object && object.timelineLayerId) wickActiveDrawingLayerId=object.timelineLayerId;
+    return result;
+  };
+
+  const wickDeleteDrawObjectBase = deleteDrawObject;
+  deleteDrawObject = function(index){
+    if(index<0 || index>=drawObjects.length) return;
+    const object=drawObjects[index];
+    if(!object || !object.timelineLayerId){ wickDeleteDrawObjectBase(index); return; }
+    pushUndo();
+    wickRemoveLayersByIds([object.timelineLayerId]);
+    selectedDrawIndices.clear();
+    updateSelectedCountUI();
+    renderLayerList();
+    renderTimeline();
+    renderTransformHandles();
+    renderPoints();
+  };
+
+  const wickDeleteSelectedDrawObjectsBase = deleteSelectedDrawObjects;
+  deleteSelectedDrawObjects = function(){
+    if(getIsolatedGroupInfo()) return wickDeleteSelectedDrawObjectsBase();
+    const ids=wickSelectedLayerIds();
+    if(!ids.length) return false;
+    pushUndo();
+    wickRemoveLayersByIds(ids);
+    selectedDrawIndices.clear();
+    updateSelectedCountUI();
+    renderLayerList();
+    renderTimeline();
+    renderTransformHandles();
+    renderPoints();
+    return true;
+  };
+
+  // Adjacent frame keys must remain separate. The old fixed 0.05 second window
+  // merged keys that were one frame apart at common frame rates.
+  upsertObjectKeyframe = function(object,keyframe){
+    if(!object.keyframes) object.keyframes=[];
+    const tolerance=0.49/Math.max(1,getTimelineFPS());
+    const existingIndex=object.keyframes.findIndex(item=>Math.abs((Number(item.time)||0)-(Number(keyframe.time)||0))<tolerance);
+    if(existingIndex>=0){
+      const previous=object.keyframes[existingIndex];
+      keyframe.easing=normalizeKeyframeEasing(previous.easing||keyframe.easing);
+      object.keyframes[existingIndex]=Object.assign({},previous,keyframe);
+    }else{
+      keyframe.easing=normalizeKeyframeEasing(keyframe.easing);
+      object.keyframes.push(keyframe);
+    }
+    object.keyframes.sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
+  };
+
+  function wickTimelineInfo(){
+    const info=getTimelineFrameInfo();
+    return Object.assign({},info,{totalCells:info.totalFrames+1});
+  }
+
+  function wickFrameFromTrackClientX(track,clientX,info){
+    const rect=track.getBoundingClientRect();
+    const fraction=Math.max(0,Math.min(0.999999,(clientX-rect.left)/Math.max(1,rect.width)));
+    return Math.max(0,Math.min(info.totalFrames,Math.floor(fraction*info.totalCells)));
+  }
+
+  function wickFrameBoundaryPercent(frameIndex,info){
+    return Math.max(0,Math.min(100,(frameIndex/info.totalCells)*100));
+  }
+
+  function wickSelectLayerFrame(layer,frame,movePlayhead){
+    wickActiveDrawingLayerId=layer.id;
+    if(movePlayhead){
+      t=Math.max(0,Math.min(timelineDuration,frame.startFrame/getTimelineFPS()));
+      playing=false;
+      stopAudioIfLoaded();
+      syncActiveSceneFrameForTime(t,false);
+    }
+    selectedDrawIndices.clear();
+    if(frame.object && !frame.blank){
+      const index=drawObjects.findIndex(object=>object && String(object.timelineLayerId)===String(layer.id) && String(object.frameLinkId)===String(frame.id));
+      if(index>=0){
+        selectedDrawIndices.add(index);
+        routeSelectionToPanel(panelForDrawObject(drawObjects[index]),true);
+      }
+    }
+    const selectedCount=document.getElementById('selected-count');
+    if(selectedCount) selectedCount.textContent=selectedDrawIndices.size+' selected';
+    updateInspector();
+    renderLayerList();
+    renderTransformHandles();
+  }
+
+  function wickBeginFrameBarDrag(event,layer,frame,track,span,label){
+    if(event.button!==0) return;
+    event.stopPropagation();
+    wickActiveDrawingLayerId=layer.id;
+    const info=wickTimelineInfo();
+    const rect=track.getBoundingClientRect();
+    const cellWidth=Math.max(1,rect.width/info.totalCells);
+    const startX=event.clientX;
+    const originalEnd=frame.endFrame;
+    const pointerId=event.pointerId;
+    let previewEnd=originalEnd;
+    let moved=false;
+    let readout=null;
+
+    const startPointerFrame=wickFrameFromTrackClientX(track,startX,info);
+    function preview(clientX){
+      const pointerFrame=wickFrameFromTrackClientX(track,clientX,info);
+      const deltaFrames=pointerFrame-startPointerFrame;
+      previewEnd=Math.max(frame.startFrame,Math.min(info.totalFrames,originalEnd+deltaFrames));
+      moved=previewEnd!==originalEnd;
+      if(!moved) return;
+      span.classList.add('dragging');
+      span.style.width=((previewEnd-frame.startFrame+1)/info.totalCells*100)+'%';
+      label.textContent=frame.startFrame===previewEnd?String(frame.startFrame+1):(frame.startFrame+1)+'–'+(previewEnd+1);
+      if(!readout){
+        readout=document.createElement('div');
+        readout.className='wick-frame-drag-readout';
+        document.body.appendChild(readout);
+      }
+      readout.textContent='Frames '+(frame.startFrame+1)+'–'+(previewEnd+1);
+      readout.style.left=(rect.left+((previewEnd+1)/info.totalCells)*rect.width)+'px';
+      readout.style.top=rect.top+'px';
+    }
+
+    function cleanup(){
+      window.removeEventListener('pointermove',onMove,true);
+      window.removeEventListener('pointerup',onUp,true);
+      window.removeEventListener('pointercancel',onCancel,true);
+      window.removeEventListener('blur',onCancel);
+      try{ if(span.hasPointerCapture(pointerId)) span.releasePointerCapture(pointerId); }catch(_error){}
+      document.documentElement.style.userSelect='';
+      document.body.style.cursor='';
+      span.classList.remove('dragging');
+      if(readout) readout.remove();
+    }
+
+    function onMove(moveEvent){
+      if(moveEvent.pointerId!==pointerId) return;
+      moveEvent.preventDefault();
+      if(!moved && Math.abs(moveEvent.clientX-startX)<3) return;
+      preview(moveEvent.clientX);
+    }
+
+    function onUp(upEvent){
+      if(upEvent.pointerId!==pointerId) return;
+      preview(upEvent.clientX);
+      if(moved) upEvent.preventDefault();
+      cleanup();
+      if(moved){
+        pushUndo();
+        wickResizeLayerFrame(frame.id,previewEnd);
+        syncActiveSceneFrameForTime(t,false);
+        renderTimeline();
+        renderLayerList();
+        updateInspector();
+        renderTransformHandles();
+      }else{
+        // Delay ordinary selection very briefly so a second click can insert a
+        // drawing key without the first click rebuilding the timeline element.
+        clearTimeout(span._wickSingleClickTimer);
+        span._wickSingleClickTimer=setTimeout(()=>wickSelectLayerFrame(layer,frame,true),240);
+      }
+    }
+
+    function onCancel(){
+      cleanup();
+      renderTimeline();
+    }
+
+    document.documentElement.style.userSelect='none';
+    document.body.style.cursor='ew-resize';
+    try{ span.setPointerCapture(pointerId); }catch(_error){}
+    window.addEventListener('pointermove',onMove,{capture:true,passive:false});
+    window.addEventListener('pointerup',onUp,{capture:true,passive:false});
+    window.addEventListener('pointercancel',onCancel,{capture:true,passive:false});
+    window.addEventListener('blur',onCancel,{once:true});
+  }
+
+  function wickBuildDrawingLayerRows(tracksElement){
+    wickEnsureCurrentDrawingLayers();
+    const info=wickTimelineInfo();
+    const currentFrame=wickCurrentFrameIndex();
+    const firstBoneRow=Array.from(tracksElement.children).find(row=>{
+      const name=row.querySelector('.timeline-track-name');
+      return name && /^Bone\s/.test(name.textContent||'');
+    }) || null;
+
+    wickDrawingLayers.forEach(layer=>{
+      const row=document.createElement('div');
+      row.className='timeline-track-row wick-drawing-layer';
+      row.dataset.timelineKind='wick-object-layer';
+      row.dataset.timelineKey=String(layer.id);
+
+      const name=document.createElement('div');
+      name.className='timeline-track-name'+(String(wickActiveDrawingLayerId)===String(layer.id)?' active-layer':'');
+      name.textContent=layer.name||'Layer';
+      name.title='This drawing layer can contain any number of independent frames.';
+
+      const track=document.createElement('div');
+      track.className='timeline-track';
+      track.title='Click to select this layer. Double-click a frame position to create an independent duplicate key.';
+      const hint=document.createElement('div');
+      hint.className='wick-layer-empty-cell-hint';
+      track.appendChild(hint);
+
+      layer.frames.forEach(frame=>{
+        const span=document.createElement('div');
+        const active=currentFrame>=frame.startFrame && currentFrame<=frame.endFrame;
+        span.className='wick-layer-frame'+(frame.blank?' blank':'')+(active && String(wickActiveDrawingLayerId)===String(layer.id)?' active-frame':'');
+        span.style.left=wickFrameBoundaryPercent(frame.startFrame,info)+'%';
+        span.style.width=((frame.endFrame-frame.startFrame+1)/info.totalCells*100)+'%';
+        span.title=(frame.blank?'Blank':'Drawing')+' frame '+(frame.startFrame+1)+' through '+(frame.endFrame+1)+' — drag the green bar to change its final frame';
+        const label=document.createElement('span');
+        label.className='wick-layer-frame-label';
+        label.textContent=frame.startFrame===frame.endFrame?String(frame.startFrame+1):(frame.startFrame+1)+'–'+(frame.endFrame+1);
+        span.appendChild(label);
+        let lastFramePointerDownAt=0;
+        span.addEventListener('pointerdown',event=>{
+          const now=performance.now();
+          if(event.button===0 && now-lastFramePointerDownAt<900){
+            lastFramePointerDownAt=0;
+            clearTimeout(span._wickSingleClickTimer);
+            event.preventDefault();
+            event.stopPropagation();
+            wickActiveDrawingLayerId=layer.id;
+            const targetFrame=wickFrameFromTrackClientX(track,event.clientX,info);
+            insertIndependentSceneFrame(event.shiftKey?'blank':'duplicate',targetFrame);
+            return;
+          }
+          lastFramePointerDownAt=now;
+          wickBeginFrameBarDrag(event,layer,frame,track,span,label);
+        });
+        span.addEventListener('dblclick',event=>{
+          if(event.button!==0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          wickActiveDrawingLayerId=layer.id;
+          const targetFrame=wickFrameFromTrackClientX(track,event.clientX,info);
+          insertIndependentSceneFrame(event.shiftKey?'blank':'duplicate',targetFrame);
+        });
+        span.addEventListener('contextmenu',event=>{
+          event.preventDefault();
+          event.stopPropagation();
+          wickActiveDrawingLayerId=layer.id;
+          openKeyframeContextMenu(event,{
+            actions:[
+              {label:'Duplicate drawing key at Frame '+(frame.startFrame+1),hint:'Independent copy on this layer',icon:'⎘',pushHistory:false,callback:()=>insertIndependentSceneFrame('duplicate',frame.startFrame)},
+              {label:'Blank key at Frame '+(frame.startFrame+1),hint:'Only this layer becomes blank',icon:'□',pushHistory:false,callback:()=>insertIndependentSceneFrame('blank',frame.startFrame)},
+              {label:'Add transform key at playhead',hint:frame.object?'This object may have any number of transform keys':'This is a blank drawing frame',icon:'◆',disabled:!frame.object,pushHistory:true,callback:()=>addObjectKeyAtTime(frame.object,null,t)}
+            ]
+          });
+        });
+        track.appendChild(span);
+        if(frame.object){
+          addObjectKeyframeDots(track,frame.object);
+          addFrameGizmoKeyframeDots(track,frame.object);
+        }
+      });
+
+      name.addEventListener('click',event=>{
+        event.stopPropagation();
+        wickActiveDrawingLayerId=layer.id;
+        const frame=wickFrameAt(layer,currentFrame);
+        selectedDrawIndices.clear();
+        if(frame && frame.object){
+          const index=drawObjects.findIndex(object=>object && String(object.timelineLayerId)===String(layer.id));
+          if(index>=0) selectedDrawIndices.add(index);
+        }
+        updateSelectedCountUI();
+        updateInspector();
+        renderTimeline();
+        renderLayerList();
+        renderTransformHandles();
+      });
+
+      track.addEventListener('click',event=>{
+        if(event.target.closest('.wick-layer-frame') || event.target.closest('.timeline-key-dot')) return;
+        wickActiveDrawingLayerId=layer.id;
+        const targetFrame=wickFrameFromTrackClientX(track,event.clientX,info);
+        t=targetFrame/getTimelineFPS();
+        playing=false;
+        stopAudioIfLoaded();
+        syncActiveSceneFrameForTime(t,false);
+        selectedDrawIndices.clear();
+        const activeFrame=wickFrameAt(layer,targetFrame);
+        if(activeFrame && activeFrame.object){
+          const index=drawObjects.findIndex(object=>object && String(object.timelineLayerId)===String(layer.id));
+          if(index>=0) selectedDrawIndices.add(index);
+        }
+        updateSelectedCountUI();
+        updateInspector();
+        renderTimeline();
+        renderLayerList();
+        renderTransformHandles();
+      });
+
+      track.addEventListener('dblclick',event=>{
+        if(event.target.closest('.timeline-key-dot')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        wickActiveDrawingLayerId=layer.id;
+        const targetFrame=wickFrameFromTrackClientX(track,event.clientX,info);
+        insertIndependentSceneFrame(event.shiftKey?'blank':'duplicate',targetFrame);
+      });
+
+      track.addEventListener('contextmenu',event=>{
+        if(event.target.closest('.wick-layer-frame')) return;
+        const targetFrame=wickFrameFromTrackClientX(track,event.clientX,info);
+        wickActiveDrawingLayerId=layer.id;
+        const activeFrame=wickFrameAt(layer,targetFrame);
+        openKeyframeContextMenu(event,{
+          actions:[
+            {label:'Duplicate drawing key at Frame '+(targetFrame+1),hint:'Adds another independent frame on this layer',icon:'⎘',pushHistory:false,callback:()=>insertIndependentSceneFrame('duplicate',targetFrame)},
+            {label:'Blank key at Frame '+(targetFrame+1),hint:'Other layers are unchanged',icon:'□',pushHistory:false,callback:()=>insertIndependentSceneFrame('blank',targetFrame)},
+            {label:'Add transform key at Frame '+(targetFrame+1),hint:activeFrame&&activeFrame.object?'This object may have any number of keys':'Create a drawing key first',icon:'◆',disabled:!(activeFrame&&activeFrame.object),pushHistory:true,callback:()=>{t=targetFrame/getTimelineFPS();addObjectKeyAtTime(activeFrame.object,null,t);renderTimeline();}}
+          ]
+        });
+      });
+
+      row.appendChild(name);
+      row.appendChild(track);
+      tracksElement.insertBefore(row,firstBoneRow);
+    });
+  }
+
+  // The old project-wide frame row is deliberately removed. Wick frames belong
+  // to individual layers, so each layer row remains available at every frame.
+  renderIndependentFrameTrack = function(){};
+
+  const wickRenderTimelineBase=renderTimeline;
+  renderTimeline=function(){
+    wickIngestUnregisteredCurrentObjects();
+    syncActiveSceneFrameForTime(t,false);
+    wickRenderTimelineBase();
+    const tracks=document.getElementById('timeline-tracks');
+    if(!tracks) return;
+    tracks.querySelectorAll('[data-timeline-kind="legacy-object-row"],[data-timeline-kind="wick-object-layer"]').forEach(row=>row.remove());
+    Array.from(tracks.querySelectorAll('.timeline-track-row')).forEach(row=>{
+      const name=row.querySelector('.timeline-track-name');
+      if(name && (name.textContent==='Frames' || name.textContent==='Clip Frames')) row.remove();
+    });
+    wickBuildDrawingLayerRows(tracks);
+    if(typeof fulfilPendingTimelineLayerReveal==='function') fulfilPendingTimelineLayerReveal();
+  };
+
+  const wickCaptureMainSceneAsContextBase=captureMainSceneAsContext;
+  captureMainSceneAsContext=function(){
+    const data=wickCaptureMainSceneAsContextBase();
+    data.drawingLayers=wickDrawingLayers;
+    return data;
+  };
+
+  const wickApplyContextBase=applyContext;
+  applyContext=function(data){
+    let nextModel=data && Array.isArray(data.drawingLayers)?data.drawingLayers:null;
+    if(!nextModel && editingClipId && clips[editingClipId]) nextModel=wickEnsureClipDrawingLayers(clips[editingClipId]);
+    if(!nextModel) nextModel=wickMainDrawingLayers;
+    wickDrawingLayers=nextModel;
+    if(!editingClipId) wickMainDrawingLayers=wickDrawingLayers;
+    wickApplyContextBase(data);
+    syncActiveSceneFrameForTime(t,false);
+  };
+
+  const wickSaveCurrentClipEditingContextBase=saveCurrentClipEditingContext;
+  saveCurrentClipEditingContext=function(){
+    if(editingClipId && clips[editingClipId]){
+      clips[editingClipId].drawingLayers=wickDrawingLayers;
+      wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);
+    }
+    wickSaveCurrentClipEditingContextBase();
+    if(editingClipId && clips[editingClipId]) clips[editingClipId].drawingLayers=wickDrawingLayers;
+  };
+
+  const wickMakeClipBase=makeClip;
+  makeClip=function(name){
+    const clip=wickMakeClipBase(name);
+    // Leave the canonical layer model uninitialised until the Clip's artwork
+    // has been assigned. This preserves converted artwork inside new Clips.
+    delete clip.drawingLayers;
+    return clip;
+  };
+
+  const wickSnapshotStateBase=snapshotState;
+  snapshotState=function(){
+    if(!editingClipId) wickMainDrawingLayers=wickDrawingLayers;
+    else if(clips[editingClipId]) clips[editingClipId].drawingLayers=wickDrawingLayers;
+    const snapshot=wickSnapshotStateBase();
+    snapshot.mainDrawingLayers=wickDeepClone(wickMainDrawingLayers);
+    snapshot.activeDrawingLayers=wickDeepClone(wickDrawingLayers);
+    snapshot.activeDrawingLayerId=wickActiveDrawingLayerId;
+    snapshot.drawingLayerCounter=wickDrawingLayerCounter;
+    snapshot.drawingFrameCounter=wickDrawingFrameCounter;
+    snapshot.drawingLayerOrderCounter=wickDrawingLayerOrderCounter;
+    snapshot.frameModelVersion=3;
+    return snapshot;
+  };
+
+  const wickRestoreStateBase=restoreState;
+  restoreState=function(snapshot){
+    wickDrawingLayerCounter=Math.max(0,Number(snapshot&&snapshot.drawingLayerCounter)||wickDrawingLayerCounter);
+    wickDrawingFrameCounter=Math.max(0,Number(snapshot&&snapshot.drawingFrameCounter)||wickDrawingFrameCounter);
+    wickDrawingLayerOrderCounter=Math.max(0,Number(snapshot&&snapshot.drawingLayerOrderCounter)||wickDrawingLayerOrderCounter);
+    wickMainDrawingLayers=Array.isArray(snapshot&&snapshot.mainDrawingLayers)
+      ? wickDeepClone(snapshot.mainDrawingLayers)
+      : wickMigrateSceneFrames(snapshot&&snapshot.sceneFrames,snapshot&&snapshot.drawObjects,snapshot&&snapshot.timelineDuration);
+    wickDrawingLayers=editingClipId && snapshot&&snapshot.clips&&snapshot.clips[editingClipId]&&Array.isArray(snapshot.clips[editingClipId].drawingLayers)
+      ? wickDeepClone(snapshot.clips[editingClipId].drawingLayers)
+      : (Array.isArray(snapshot&&snapshot.activeDrawingLayers)?wickDeepClone(snapshot.activeDrawingLayers):wickMainDrawingLayers);
+    wickActiveDrawingLayerId=snapshot&&snapshot.activeDrawingLayerId||null;
+    wickRestoreStateBase(snapshot);
+    if(editingClipId && clips[editingClipId]){
+      clips[editingClipId].drawingLayers=Array.isArray(clips[editingClipId].drawingLayers)?clips[editingClipId].drawingLayers:wickDrawingLayers;
+      wickDrawingLayers=clips[editingClipId].drawingLayers;
+    }else{
+      wickDrawingLayers=wickMainDrawingLayers;
+    }
+    syncActiveSceneFrameForTime(t,false);
+    renderTimeline();
+  };
+
+  // The Inspector Add Key button can create a drawing key on the active layer
+  // even when that layer is blank at the playhead. Its object then receives the
+  // transform key, and subsequent presses can add unlimited adjacent keys.
+  const wickAddKeyButton=document.getElementById('btn-add-keyframe');
+  if(wickAddKeyButton){
+    wickAddKeyButton.addEventListener('click',event=>{
+      if(getSelectedSingleObject()) return;
+      const layer=wickLayerById(wickActiveDrawingLayerId);
+      if(!layer) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const targetFrame=wickCurrentFrameIndex();
+      pushUndo();
+      let frame=wickFrameAt(layer,targetFrame);
+      if(!frame || !frame.object){
+        frame=wickInsertLayerFrame(layer,targetFrame,'duplicate');
+      }
+      if(frame && frame.object){
+        addObjectKeyAtTime(frame.object,null,t);
+        wickRefreshAfterLayerFrameChange(layer,targetFrame,true);
+      }
+    },true);
+  }
+
+  // Keep the public extension API on the same layer-frame model.
+  if(typeof LukeAnimatePluginAPI==='object' && LukeAnimatePluginAPI){
+    const wickPluginAddDrawObjectBase=LukeAnimatePluginAPI.addDrawObject;
+    LukeAnimatePluginAPI.addDrawObject=function(object,panelId){
+      const result=wickPluginAddDrawObjectBase.call(this,object,panelId);
+      wickRegisterObjectLayer(result,wickCurrentFrameIndex(),wickTotalFrameIndex(timelineDuration));
+      syncActiveSceneFrameForTime(t,false);
+      renderTimeline();
+      return result;
+    };
+  }
+
+  // Initialise/migrate the current main-stage model before the normal v110 init.
+  wickMainDrawingLayers=wickMigrateSceneFrames(sceneFrames,drawObjects,timelineDuration);
+  wickDrawingLayers=wickMainDrawingLayers;
+  wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);
+
+
+
+  // Public read-only helpers for external Luke Animate tools and diagnostics.
+  window.LukeAnimateFrameAPI={
+    getDrawingLayers:()=>wickDrawingLayers,
+    getTimelineFrameInfo:()=>getTimelineFrameInfo(),
+    getFramePixelWidth:()=>timelineFramePixelWidth,
+    getCurrentFrame:()=>frameIndexForTime(t,timelineDuration),
+    addDrawingFrame:(mode,frame)=>insertIndependentSceneFrame(mode||'duplicate',frame),
+    setFramePixelWidth:value=>setTimelineFramePixelWidth(value,true)
+  };
+
+  // ---------------- compact timeline zoom ----------------
+  function initialiseTimelineFrameZoom(){
+    try{
+      const stored=Number(localStorage.getItem('lukeAnimateTimelineFramePixelWidthCompact'));
+      if(Number.isFinite(stored)) timelineFramePixelWidth=Math.max(TIMELINE_MIN_FRAME_PX,Math.min(TIMELINE_MAX_FRAME_PX,stored));
+    }catch(_error){}
+    const slider=document.getElementById('timeline-frame-zoom');
+    const zoomOut=document.getElementById('btn-timeline-zoom-out');
+    const zoomIn=document.getElementById('btn-timeline-zoom-in');
+    if(slider){
+      slider.value=String(timelineFramePixelWidth);
+      slider.addEventListener('input',()=>setTimelineFramePixelWidth(slider.value,true));
+    }
+    if(zoomOut) zoomOut.addEventListener('click',()=>setTimelineFramePixelWidth(timelineFramePixelWidth-2,true));
+    if(zoomIn) zoomIn.addEventListener('click',()=>setTimelineFramePixelWidth(timelineFramePixelWidth+2,true));
+    const dock=document.getElementById('timeline-dock');
+    if(dock){
+      dock.addEventListener('wheel',event=>{
+        if(!event.ctrlKey&&!event.metaKey)return;
+        event.preventDefault();
+        setTimelineFramePixelWidth(timelineFramePixelWidth+(event.deltaY<0?2:-2),true);
+      },{passive:false});
+    }
+    setTimelineFramePixelWidth(timelineFramePixelWidth,false);
+  }
+  initialiseTimelineFrameZoom();
+
   // ---------------- init ----------------
+  // v126 remains based on the user's v110 file. It keeps clip double-click
+  // editing, frame naming, parent navigation, gizmos, conditional particles, parent-timeline Frame Gizmo keys and
+  // the liftable timeline, while replacing the project-wide drawing snapshot
+  // with independent per-layer frames and unlimited transform keys.
   // Start blank — no preset path, no points. The person picks a preset,
   // draws their own curve, or adds a point themselves.
   rebuildPath();
+  normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+  syncActiveSceneFrameForTime(t, false);
   normalizeAllDrawObjects();
   renderPoints();
   setAutoKeyframe(false);
