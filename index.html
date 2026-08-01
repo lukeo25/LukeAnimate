@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -3229,6 +3228,14 @@ ctx.fill();</textarea>
     if((e.key === 'Delete' || e.key === 'Backspace') && shapePointEditMode){
       const obj=currentShapePointEditObject();
       if(obj){e.preventDefault();deleteEditableShapePoint(obj,shapePointSelectedIndex,true);return;}
+    }
+    // Drawing-frame deletion is handled before the old object deletion path.
+    // Delete clears the selected frame's contents. Shift+Delete removes the
+    // drawing key itself and lets the preceding exposure continue through it.
+    if((e.key === 'Delete' || e.key === 'Backspace') &&
+       typeof wickHandleTimelineDeleteKey === 'function' &&
+       wickHandleTimelineDeleteKey(e)){
+      return;
     }
     if((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawIndices.size > 0){
       e.preventDefault();
@@ -12752,6 +12759,10 @@ ctx.fill();</textarea>
   let wickMainDrawingLayers = [];
   let wickDrawingLayers = wickMainDrawingLayers;
   let wickActiveDrawingLayerId = null;
+  // The selected drawing frame is separate from the selected stage object.
+  // This lets Delete clear the frame contents and Shift+Delete remove the
+  // drawing key even when the selected frame is already blank.
+  let wickSelectedDrawingFrameId = null;
   let wickProjectionBusy = false;
   let wickReconcileBusy = false;
 
@@ -13213,6 +13224,7 @@ ctx.fill();</textarea>
     if(!layer) layer=wickCreateLayer('Drawing Layer ' + (wickDrawingLayers.length + 1));
     pushUndo();
     const frame=wickInsertLayerFrame(layer,targetFrame,mode==='duplicate'?'duplicate':'blank');
+    wickSelectedDrawingFrameId=frame ? frame.id : null;
     wickRefreshAfterLayerFrameChange(layer,targetFrame,!!frame.object);
     return frame;
   };
@@ -13256,11 +13268,141 @@ ctx.fill();</textarea>
     return !!wickResizeLayerFrame(frame.id,requestedEnd);
   };
 
+  function wickFrameOwnerById(frameId){
+    const wanted=String(frameId||'');
+    if(!wanted) return null;
+    for(const layer of wickEnsureCurrentDrawingLayers()){
+      const frame=(layer.frames||[]).find(item=>String(item.id)===wanted);
+      if(frame) return {layer,frame};
+    }
+    return null;
+  }
+
+  function wickResolveDeletionTargets(){
+    wickEnsureCurrentDrawingLayers();
+    const currentFrame=wickCurrentFrameIndex();
+    const selectedIds=wickSelectedLayerIds();
+    const targets=[];
+    const seen=new Set();
+
+    selectedIds.forEach(layerId=>{
+      const layer=wickLayerById(layerId);
+      const frame=layer ? wickFrameAt(layer,currentFrame) : null;
+      if(layer && frame && !seen.has(String(frame.id))){
+        seen.add(String(frame.id));
+        targets.push({layer,frame});
+      }
+    });
+
+    if(!targets.length && wickSelectedDrawingFrameId){
+      const owned=wickFrameOwnerById(wickSelectedDrawingFrameId);
+      if(owned){
+        seen.add(String(owned.frame.id));
+        targets.push(owned);
+      }
+    }
+
+    // Do not delete merely because a layer happens to be active. A drawing
+    // object or timeline frame must have been explicitly selected first.
+    return targets;
+  }
+
+  function wickRefreshAfterFrameDelete(preferredLayer, preferredFrameIndex){
+    wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
+    const frameIndex=Math.max(0,Math.min(wickTotalFrameIndex(timelineDuration),Math.round(Number(preferredFrameIndex)||0)));
+    if(preferredLayer) wickActiveDrawingLayerId=preferredLayer.id;
+    t=Math.max(0,Math.min(timelineDuration,frameIndex/getTimelineFPS()));
+    playing=false;
+    stopAudioIfLoaded();
+    syncActiveSceneFrameForTime(t,false);
+    selectedDrawIndices.clear();
+    const layer=preferredLayer ? wickLayerById(preferredLayer.id) : null;
+    const active=layer ? wickFrameAt(layer,frameIndex) : null;
+    wickSelectedDrawingFrameId=active ? active.id : null;
+    if(active && active.object && !active.blank){
+      const index=drawObjects.findIndex(object=>object &&
+        String(object.timelineLayerId)===String(layer.id) &&
+        String(object.frameLinkId)===String(active.id));
+      if(index>=0) selectedDrawIndices.add(index);
+    }
+    updateSelectedCountUI();
+    renderLayerList();
+    updateInspector();
+    renderTimeline();
+    renderTransformHandles();
+    renderPoints();
+  }
+
+  function wickClearDrawingFrames(targets, recordHistory){
+    const list=Array.isArray(targets)?targets.filter(item=>item&&item.layer&&item.frame):[];
+    if(!list.length) return false;
+    const changed=list.some(item=>item.frame.object || !item.frame.blank);
+    if(!changed) return false;
+    if(recordHistory!==false) pushUndo();
+    list.forEach(({frame})=>{
+      frame.object=null;
+      frame.blank=true;
+    });
+    const first=list[0];
+    wickSelectedDrawingFrameId=first.frame.id;
+    wickRefreshAfterFrameDelete(first.layer,first.frame.startFrame);
+    return true;
+  }
+
+  function wickDeleteDrawingFrames(targets, recordHistory){
+    const list=Array.isArray(targets)?targets.filter(item=>item&&item.layer&&item.frame):[];
+    if(!list.length) return false;
+    if(recordHistory!==false) pushUndo();
+    let refreshLayer=list[0].layer;
+    let refreshFrame=list[0].frame.startFrame;
+
+    list.forEach(({layer,frame})=>{
+      const ordered=(layer.frames||[]).slice().sort((a,b)=>a.startFrame-b.startFrame || a._sequence-b._sequence);
+      const index=ordered.indexOf(frame);
+      const previous=index>0?ordered[index-1]:null;
+      layer.frames=(layer.frames||[]).filter(item=>item!==frame);
+      // Removing a key has Wick-style exposure behaviour: the preceding frame
+      // continues across the removed key's former range. When there is no
+      // preceding key, the uncovered range remains blank.
+      if(previous){
+        previous.endFrame=Math.max(previous.endFrame,frame.endFrame);
+        if(previous.object) previous.object.frameLinkEnd=previous.endFrame;
+      }
+    });
+
+    wickSelectedDrawingFrameId=null;
+    wickRefreshAfterFrameDelete(refreshLayer,refreshFrame);
+    return true;
+  }
+
+  function wickClearSelectedFrameContents(){
+    if(getIsolatedGroupInfo()) return false;
+    return wickClearDrawingFrames(wickResolveDeletionTargets(),true);
+  }
+
+  function wickDeleteSelectedDrawingFrame(){
+    if(getIsolatedGroupInfo()) return false;
+    return wickDeleteDrawingFrames(wickResolveDeletionTargets(),true);
+  }
+
+  function wickHandleTimelineDeleteKey(event){
+    if(getIsolatedGroupInfo()) return false;
+    const targets=wickResolveDeletionTargets();
+    if(!targets.length) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    if(event.shiftKey) wickDeleteDrawingFrames(targets,true);
+    else wickClearDrawingFrames(targets,true);
+    return true;
+  }
+
   function wickRemoveLayersByIds(layerIds){
     const remove=new Set((layerIds||[]).map(String));
     if(!remove.size) return false;
     wickDrawingLayers.splice(0,wickDrawingLayers.length,...wickDrawingLayers.filter(layer=>!remove.has(String(layer.id))));
     if(remove.has(String(wickActiveDrawingLayerId))) wickActiveDrawingLayerId=wickDrawingLayers.length?wickDrawingLayers[wickDrawingLayers.length-1].id:null;
+    const selectedOwner=wickFrameOwnerById(wickSelectedDrawingFrameId);
+    if(!selectedOwner || remove.has(String(selectedOwner.layer.id))) wickSelectedDrawingFrameId=null;
     syncActiveSceneFrameForTime(t,false);
     return true;
   }
@@ -13375,17 +13517,9 @@ ctx.fill();</textarea>
   const wickDeleteSelectedDrawObjectsBase = deleteSelectedDrawObjects;
   deleteSelectedDrawObjects = function(){
     if(getIsolatedGroupInfo()) return wickDeleteSelectedDrawObjectsBase();
-    const ids=wickSelectedLayerIds();
-    if(!ids.length) return false;
-    pushUndo();
-    wickRemoveLayersByIds(ids);
-    selectedDrawIndices.clear();
-    updateSelectedCountUI();
-    renderLayerList();
-    renderTimeline();
-    renderTransformHandles();
-    renderPoints();
-    return true;
+    // Delete removes content from the selected drawing frame only. The layer
+    // list's X button still deliberately deletes the complete drawing layer.
+    return wickClearSelectedFrameContents();
   };
 
   // Adjacent frame keys must remain separate. The old fixed 0.05 second window
@@ -13422,6 +13556,7 @@ ctx.fill();</textarea>
 
   function wickSelectLayerFrame(layer,frame,movePlayhead){
     wickActiveDrawingLayerId=layer.id;
+    wickSelectedDrawingFrameId=frame ? frame.id : null;
     if(movePlayhead){
       t=Math.max(0,Math.min(timelineDuration,frame.startFrame/getTimelineFPS()));
       playing=false;
@@ -13553,7 +13688,7 @@ ctx.fill();</textarea>
 
       const track=document.createElement('div');
       track.className='timeline-track';
-      track.title='Click to select this layer. Double-click a frame position to create an independent duplicate key.';
+      track.title='Click to select this layer. Double-click to create a duplicate key. Delete clears selected frame content; Shift+Delete removes the selected drawing key.';
       const hint=document.createElement('div');
       hint.className='wick-layer-empty-cell-hint';
       track.appendChild(hint);
@@ -13597,8 +13732,11 @@ ctx.fill();</textarea>
           event.preventDefault();
           event.stopPropagation();
           wickActiveDrawingLayerId=layer.id;
+          wickSelectedDrawingFrameId=frame.id;
           openKeyframeContextMenu(event,{
             actions:[
+              {label:'Clear contents of Frame '+(frame.startFrame+1),hint:'Keeps the drawing key and exposure, but makes it blank',icon:'⌫',disabled:!frame.object||frame.blank,pushHistory:false,callback:()=>wickClearDrawingFrames([{layer,frame}],true)},
+              {label:'Delete drawing frame at '+(frame.startFrame+1),hint:'Removes this key; the preceding exposure continues through its range',icon:'✕',pushHistory:false,callback:()=>wickDeleteDrawingFrames([{layer,frame}],true)},
               {label:'Duplicate drawing key at Frame '+(frame.startFrame+1),hint:'Independent copy on this layer',icon:'⎘',pushHistory:false,callback:()=>insertIndependentSceneFrame('duplicate',frame.startFrame)},
               {label:'Blank key at Frame '+(frame.startFrame+1),hint:'Only this layer becomes blank',icon:'□',pushHistory:false,callback:()=>insertIndependentSceneFrame('blank',frame.startFrame)},
               {label:'Add transform key at playhead',hint:frame.object?'This object may have any number of transform keys':'This is a blank drawing frame',icon:'◆',disabled:!frame.object,pushHistory:true,callback:()=>addObjectKeyAtTime(frame.object,null,t)}
@@ -13616,6 +13754,7 @@ ctx.fill();</textarea>
         event.stopPropagation();
         wickActiveDrawingLayerId=layer.id;
         const frame=wickFrameAt(layer,currentFrame);
+        wickSelectedDrawingFrameId=frame ? frame.id : null;
         selectedDrawIndices.clear();
         if(frame && frame.object){
           const index=drawObjects.findIndex(object=>object && String(object.timelineLayerId)===String(layer.id));
@@ -13638,6 +13777,7 @@ ctx.fill();</textarea>
         syncActiveSceneFrameForTime(t,false);
         selectedDrawIndices.clear();
         const activeFrame=wickFrameAt(layer,targetFrame);
+        wickSelectedDrawingFrameId=activeFrame ? activeFrame.id : null;
         if(activeFrame && activeFrame.object){
           const index=drawObjects.findIndex(object=>object && String(object.timelineLayerId)===String(layer.id));
           if(index>=0) selectedDrawIndices.add(index);
@@ -13743,6 +13883,7 @@ ctx.fill();</textarea>
     snapshot.mainDrawingLayers=wickDeepClone(wickMainDrawingLayers);
     snapshot.activeDrawingLayers=wickDeepClone(wickDrawingLayers);
     snapshot.activeDrawingLayerId=wickActiveDrawingLayerId;
+    snapshot.selectedDrawingFrameId=wickSelectedDrawingFrameId;
     snapshot.drawingLayerCounter=wickDrawingLayerCounter;
     snapshot.drawingFrameCounter=wickDrawingFrameCounter;
     snapshot.drawingLayerOrderCounter=wickDrawingLayerOrderCounter;
@@ -13762,6 +13903,7 @@ ctx.fill();</textarea>
       ? wickDeepClone(snapshot.clips[editingClipId].drawingLayers)
       : (Array.isArray(snapshot&&snapshot.activeDrawingLayers)?wickDeepClone(snapshot.activeDrawingLayers):wickMainDrawingLayers);
     wickActiveDrawingLayerId=snapshot&&snapshot.activeDrawingLayerId||null;
+    wickSelectedDrawingFrameId=snapshot&&snapshot.selectedDrawingFrameId||null;
     wickRestoreStateBase(snapshot);
     if(editingClipId && clips[editingClipId]){
       clips[editingClipId].drawingLayers=Array.isArray(clips[editingClipId].drawingLayers)?clips[editingClipId].drawingLayers:wickDrawingLayers;
@@ -13819,6 +13961,8 @@ ctx.fill();</textarea>
   // Public read-only helpers for external Luke Animate tools and diagnostics.
   window.LukeAnimateFrameAPI={
     getDrawingLayers:()=>wickDrawingLayers,
+    clearSelectedFrameContents:()=>wickClearSelectedFrameContents(),
+    deleteSelectedDrawingFrame:()=>wickDeleteSelectedDrawingFrame(),
     getTimelineFrameInfo:()=>getTimelineFrameInfo(),
     getFramePixelWidth:()=>timelineFramePixelWidth,
     getCurrentFrame:()=>frameIndexForTime(t,timelineDuration),
