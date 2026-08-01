@@ -36,6 +36,14 @@
           "action": "animate",
           "F_Screen": 0
         }
+                {
+          "id": "Lip_Service",
+          "label": "Lip Service",
+          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Lip.svg",
+          "toolUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Lip_Service.txt",
+          "action": "animate",
+          "F_Screen": 1
+        },
       ]
     },
     {
@@ -218,14 +226,6 @@
       "label": "Tools",
       "tabIcon": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Tools.svg",
       "items": [
-        {
-          "id": "Lip_Service",
-          "label": "Lip Service",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Lip.svg",
-          "toolUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Lip_Service.txt",
-          "action": "tool",
-          "F_Screen": 1
-        },
         {
           "id": "Texture Pen",
           "label": "Texture Pen",
