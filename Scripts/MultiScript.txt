@@ -1,0 +1,496 @@
+(function () {
+  "use strict";
+
+  var API = LukeAnimate;
+  var TOOL_ID = String((item && (item.id || item.label)) || "Multi_Asset_Importer");
+  var GROUP_ID = String((group && group.id) || "import");
+  var PANEL_ID = "lukeanimate-multi-script-panel";
+  var STYLE_ID = "lukeanimate-multi-script-style";
+
+  if (!API || Number(API.version || 0) < 110) {
+    throw new Error("Multi Script requires LukeAnimate Plugin API version 110 or newer.");
+  }
+
+  var requiredMethods = [
+    "getActiveDrawingLayer",
+    "createDrawingLayer",
+    "ensureTimelineFrameCount",
+    "createImageObject",
+    "createImageClip",
+    "createClipInstance",
+    "clearDrawingLayerRange",
+    "setDrawingLayerFrameObject",
+    "pushUndo",
+    "refreshUI",
+    "setFrame"
+  ];
+
+  requiredMethods.forEach(function (methodName) {
+    if (typeof API[methodName] !== "function") {
+      throw new Error("LukeAnimate is missing the required method: " + methodName);
+    }
+  });
+
+  var previousPanel = document.getElementById(PANEL_ID);
+  if (previousPanel) {
+    previousPanel.style.display = "flex";
+    previousPanel.style.zIndex = String(nextPanelZIndex());
+    API.setConfiguredToolActive(GROUP_ID, TOOL_ID, true);
+    return;
+  }
+
+  installStyles();
+
+  var state = {
+    files: [],
+    busy: false
+  };
+
+  var panel = document.createElement("section");
+  panel.id = PANEL_ID;
+  panel.className = "la-multi-panel";
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Multi Script image sequence importer");
+  panel.innerHTML = [
+    '<header class="la-multi-header">',
+    '  <div class="la-multi-title-wrap">',
+    '    <div class="la-multi-icon">M</div>',
+    '    <div>',
+    '      <div class="la-multi-title">Multi Script</div>',
+    '      <div class="la-multi-subtitle">Image Sequence Importer</div>',
+    '    </div>',
+    '  </div>',
+    '  <button class="la-multi-close" type="button" title="Close" aria-label="Close">×</button>',
+    '</header>',
+    '<div class="la-multi-body">',
+    '  <label class="la-multi-file-box" for="la-multi-files">',
+    '    <strong>Select image sequence</strong>',
+    '    <span>PNG, JPEG, WebP, GIF, BMP or SVG files</span>',
+    '    <input id="la-multi-files" type="file" accept="image/*,.svg" multiple>',
+    '  </label>',
+    '  <div class="la-multi-file-summary" id="la-multi-file-summary">No files selected.</div>',
+    '  <div class="la-multi-grid">',
+    '    <label>Start Frame',
+    '      <input id="la-multi-start-frame" type="number" min="1" step="1">',
+    '    </label>',
+    '    <label>Destination',
+    '      <select id="la-multi-destination">',
+    '        <option value="active">Active layer</option>',
+    '        <option value="new">New layer</option>',
+    '      </select>',
+    '    </label>',
+    '  </div>',
+    '  <label class="la-multi-new-layer-row" id="la-multi-new-layer-row">New Layer Name',
+    '    <input id="la-multi-layer-name" type="text" value="Image Sequence" maxlength="80">',
+    '  </label>',
+    '  <div class="la-multi-options">',
+    '    <label><input id="la-multi-wrap" type="checkbox" checked> Wrap each image as its own Clip</label>',
+    '    <label><input id="la-multi-name" type="checkbox" checked> Name each Clip from its filename</label>',
+    '    <label><input id="la-multi-clear" type="checkbox" checked> Clear existing frame contents in the destination range</label>',
+    '    <label><input id="la-multi-extend" type="checkbox" checked> Extend the timeline when required</label>',
+    '    <label><input id="la-multi-fit" type="checkbox"> Fit oversized images inside the stage</label>',
+    '  </div>',
+    '  <div class="la-multi-actions">',
+    '    <button id="la-multi-import" class="la-multi-primary" type="button">Build Animation Sequence</button>',
+    '    <button id="la-multi-clear-log" class="la-multi-secondary" type="button">Clear Log</button>',
+    '  </div>',
+    '  <div class="la-multi-progress" id="la-multi-progress" aria-hidden="true"><span></span></div>',
+    '  <pre class="la-multi-log" id="la-multi-log" aria-live="polite">Ready.</pre>',
+    '  <p class="la-multi-hint">Files are sorted naturally by filename. Each image is centred on the stage and placed on one consecutive frame of a single LukeAnimate drawing layer.</p>',
+    '</div>'
+  ].join("\n");
+
+  document.body.appendChild(panel);
+  API.setConfiguredToolActive(GROUP_ID, TOOL_ID, true);
+
+  var fileInput = panel.querySelector("#la-multi-files");
+  var fileSummary = panel.querySelector("#la-multi-file-summary");
+  var startFrameInput = panel.querySelector("#la-multi-start-frame");
+  var destinationSelect = panel.querySelector("#la-multi-destination");
+  var newLayerRow = panel.querySelector("#la-multi-new-layer-row");
+  var layerNameInput = panel.querySelector("#la-multi-layer-name");
+  var wrapInput = panel.querySelector("#la-multi-wrap");
+  var nameInput = panel.querySelector("#la-multi-name");
+  var clearRangeInput = panel.querySelector("#la-multi-clear");
+  var extendTimelineInput = panel.querySelector("#la-multi-extend");
+  var fitInput = panel.querySelector("#la-multi-fit");
+  var importButton = panel.querySelector("#la-multi-import");
+  var clearLogButton = panel.querySelector("#la-multi-clear-log");
+  var closeButton = panel.querySelector(".la-multi-close");
+  var logElement = panel.querySelector("#la-multi-log");
+  var progressElement = panel.querySelector("#la-multi-progress");
+  var progressBar = progressElement.querySelector("span");
+
+  startFrameInput.value = String(Math.max(1, Math.round(Number(API.getCurrentFrame()) || 1)));
+  updateDestinationFields();
+  makePanelDraggable(panel, panel.querySelector(".la-multi-header"));
+
+  panel.addEventListener("pointerdown", function () {
+    panel.style.zIndex = String(nextPanelZIndex());
+  });
+
+  fileInput.addEventListener("change", function () {
+    state.files = naturalSortFiles(Array.prototype.slice.call(fileInput.files || []));
+    updateFileSummary();
+  });
+
+  destinationSelect.addEventListener("change", updateDestinationFields);
+
+  closeButton.addEventListener("click", closePanel);
+
+  clearLogButton.addEventListener("click", function () {
+    setLog("Ready.");
+  });
+
+  importButton.addEventListener("click", function () {
+    buildSequence().catch(function (error) {
+      logError(error);
+      setBusy(false);
+    });
+  });
+
+  function nextPanelZIndex() {
+    var highest = 12000;
+    Array.prototype.forEach.call(document.querySelectorAll(".la-multi-panel"), function (element) {
+      var value = parseInt(window.getComputedStyle(element).zIndex, 10);
+      if (Number.isFinite(value)) highest = Math.max(highest, value);
+    });
+    return highest + 1;
+  }
+
+  function installStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+    var style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".la-multi-panel{position:fixed;top:86px;right:28px;width:390px;max-width:calc(100vw - 24px);max-height:calc(100vh - 110px);display:flex;flex-direction:column;background:#20242a;color:#eef2f4;border:1px solid #4b555f;border-radius:10px;box-shadow:0 18px 60px rgba(0,0,0,.45);font:13px/1.35 Arial,sans-serif;z-index:12001;overflow:hidden}",
+      ".la-multi-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#171a1f;border-bottom:1px solid #3a424a;cursor:move;user-select:none;touch-action:none}",
+      ".la-multi-title-wrap{display:flex;align-items:center;gap:9px;min-width:0}",
+      ".la-multi-icon{width:30px;height:30px;display:grid;place-items:center;border-radius:6px;background:#20ae68;color:white;font-weight:800;font-size:16px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.16)}",
+      ".la-multi-title{font-size:14px;font-weight:700;color:#fff}",
+      ".la-multi-subtitle{font-size:11px;color:#aab4bc}",
+      ".la-multi-close{width:30px;height:30px;border:0;border-radius:5px;background:transparent;color:#dbe1e5;font-size:22px;line-height:1;cursor:pointer}",
+      ".la-multi-close:hover{background:#3a4149;color:#fff}",
+      ".la-multi-body{padding:12px;overflow:auto;display:flex;flex-direction:column;gap:11px}",
+      ".la-multi-file-box{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:66px;padding:10px;border:1px dashed #65717c;border-radius:8px;background:#191d22;text-align:center;cursor:pointer}",
+      ".la-multi-file-box:hover{border-color:#20ae68;background:#1b2421}",
+      ".la-multi-file-box strong{font-size:13px;color:#fff}",
+      ".la-multi-file-box span{font-size:11px;color:#9eabb4}",
+      ".la-multi-file-box input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}",
+      ".la-multi-file-summary{min-height:17px;padding:7px 8px;background:#15191d;border:1px solid #333b43;border-radius:6px;color:#b8c3ca;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+      ".la-multi-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}",
+      ".la-multi-panel label{display:flex;flex-direction:column;gap:5px;color:#cbd3d8;font-size:12px}",
+      ".la-multi-panel input[type=number],.la-multi-panel input[type=text],.la-multi-panel select{width:100%;box-sizing:border-box;padding:8px 9px;border:1px solid #4b5660;border-radius:6px;background:#15191d;color:#f3f5f6;font:inherit;outline:none}",
+      ".la-multi-panel input[type=number]:focus,.la-multi-panel input[type=text]:focus,.la-multi-panel select:focus{border-color:#20ae68;box-shadow:0 0 0 2px rgba(32,174,104,.16)}",
+      ".la-multi-new-layer-row{display:none!important}",
+      ".la-multi-new-layer-row.is-visible{display:flex!important}",
+      ".la-multi-options{display:flex;flex-direction:column;gap:7px;padding:9px;border:1px solid #394149;border-radius:7px;background:#1b1f24}",
+      ".la-multi-options label{flex-direction:row;align-items:flex-start;gap:8px;cursor:pointer}",
+      ".la-multi-options input[type=checkbox]{margin:2px 0 0;accent-color:#20ae68}",
+      ".la-multi-actions{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:8px}",
+      ".la-multi-actions button{min-height:38px;border:0;border-radius:7px;font:700 12px Arial,sans-serif;cursor:pointer}",
+      ".la-multi-primary{background:#20ae68;color:white}",
+      ".la-multi-primary:hover{background:#27bd75}",
+      ".la-multi-secondary{background:#3a424a;color:#eef2f4}",
+      ".la-multi-secondary:hover{background:#46515b}",
+      ".la-multi-actions button:disabled{opacity:.55;cursor:default}",
+      ".la-multi-progress{display:none;height:5px;background:#111418;border-radius:999px;overflow:hidden}",
+      ".la-multi-progress.is-visible{display:block}",
+      ".la-multi-progress span{display:block;width:0;height:100%;background:#20ae68;transition:width .12s linear}",
+      ".la-multi-log{height:120px;margin:0;padding:9px;box-sizing:border-box;overflow:auto;border:1px solid #343c44;border-radius:7px;background:#101316;color:#8ff0b7;font:11px/1.4 Consolas,monospace;white-space:pre-wrap;word-break:break-word}",
+      ".la-multi-hint{margin:0;color:#9ba6ae;font-size:11px}",
+      "@media(max-width:520px){.la-multi-panel{top:56px;right:12px;left:12px;width:auto}.la-multi-grid{grid-template-columns:1fr}.la-multi-actions{grid-template-columns:1fr}}"
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function closePanel() {
+    if (state.busy) return;
+    if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+    API.setConfiguredToolActive(GROUP_ID, TOOL_ID, false);
+  }
+
+  function updateDestinationFields() {
+    var useNewLayer = destinationSelect.value === "new";
+    newLayerRow.classList.toggle("is-visible", useNewLayer);
+  }
+
+  function naturalSortFiles(files) {
+    return files.slice().sort(function (a, b) {
+      return String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+        numeric: true,
+        sensitivity: "base"
+      });
+    });
+  }
+
+  function updateFileSummary() {
+    if (!state.files.length) {
+      fileSummary.textContent = "No files selected.";
+      return;
+    }
+    var first = state.files[0].name;
+    var last = state.files[state.files.length - 1].name;
+    fileSummary.textContent = state.files.length + " image" + (state.files.length === 1 ? "" : "s") + " selected: " + first + (state.files.length > 1 ? "  →  " + last : "");
+    setLog("Selected " + state.files.length + " image" + (state.files.length === 1 ? "." : "s.") + "\nNatural order:\n" + state.files.map(function (file, index) {
+      return String(index + 1).padStart(3, "0") + "  " + file.name;
+    }).join("\n"));
+  }
+
+  function setBusy(busy) {
+    state.busy = !!busy;
+    importButton.disabled = state.busy;
+    fileInput.disabled = state.busy;
+    startFrameInput.disabled = state.busy;
+    destinationSelect.disabled = state.busy;
+    layerNameInput.disabled = state.busy;
+    wrapInput.disabled = state.busy;
+    nameInput.disabled = state.busy;
+    clearRangeInput.disabled = state.busy;
+    extendTimelineInput.disabled = state.busy;
+    fitInput.disabled = state.busy;
+    closeButton.disabled = state.busy;
+    progressElement.classList.toggle("is-visible", state.busy);
+    progressElement.setAttribute("aria-hidden", state.busy ? "false" : "true");
+    if (!state.busy) progressBar.style.width = "0%";
+  }
+
+  function setProgress(completed, total) {
+    var percentage = total > 0 ? Math.max(0, Math.min(100, completed / total * 100)) : 0;
+    progressBar.style.width = percentage.toFixed(2) + "%";
+  }
+
+  function setLog(message) {
+    logElement.textContent = String(message || "");
+    logElement.scrollTop = logElement.scrollHeight;
+  }
+
+  function log(message) {
+    var text = String(message || "");
+    logElement.textContent += (logElement.textContent ? "\n" : "") + text;
+    logElement.scrollTop = logElement.scrollHeight;
+  }
+
+  function logError(error) {
+    var message = error && error.message ? error.message : String(error || "Unknown error");
+    log("ERROR: " + message);
+    console.error("LukeAnimate Multi Script:", error);
+  }
+
+  function baseName(fileName) {
+    return String(fileName || "Image").replace(/\.[^.]+$/, "") || "Image";
+  }
+
+  function readFileAsDataURL(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(String(reader.result || "")); };
+      reader.onerror = function () { reject(reader.error || new Error("Could not read " + file.name)); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function getImageDimensions(dataUrl, fileName) {
+    return new Promise(function (resolve, reject) {
+      var image = new Image();
+      image.onload = function () {
+        resolve({
+          width: Math.max(1, Number(image.naturalWidth || image.width) || 1),
+          height: Math.max(1, Number(image.naturalHeight || image.height) || 1)
+        });
+      };
+      image.onerror = function () {
+        reject(new Error("The browser could not decode " + fileName));
+      };
+      image.src = dataUrl;
+    });
+  }
+
+  async function loadImageFile(file) {
+    var dataUrl = await readFileAsDataURL(file);
+    var dimensions = await getImageDimensions(dataUrl, file.name);
+    return {
+      file: file,
+      name: baseName(file.name),
+      dataUrl: dataUrl,
+      width: dimensions.width,
+      height: dimensions.height
+    };
+  }
+
+  function fittedDimensions(width, height) {
+    var naturalWidth = Math.max(1, Number(width) || 1);
+    var naturalHeight = Math.max(1, Number(height) || 1);
+    if (!fitInput.checked) {
+      return { width: naturalWidth, height: naturalHeight };
+    }
+    var scale = Math.min(1, Number(API.width || 1) / naturalWidth, Number(API.height || 1) / naturalHeight);
+    return {
+      width: Math.max(1, naturalWidth * scale),
+      height: Math.max(1, naturalHeight * scale)
+    };
+  }
+
+  function timelineFrameCount() {
+    return Math.max(1, Math.round(Number(API.getTimelineDuration()) * Math.max(1, Number(API.fps) || 1)));
+  }
+
+  function resolveTargetLayer() {
+    if (destinationSelect.value === "new") {
+      var requestedName = String(layerNameInput.value || "").trim() || "Image Sequence";
+      return API.createDrawingLayer(requestedName, { pushUndo: false, refresh: false });
+    }
+    var layer = API.getActiveDrawingLayer();
+    if (!layer) {
+      return API.createDrawingLayer("Image Sequence", { pushUndo: false, refresh: false });
+    }
+    return layer;
+  }
+
+  async function buildSequence() {
+    if (state.busy) return;
+    state.files = naturalSortFiles(Array.prototype.slice.call(fileInput.files || state.files || []));
+    if (!state.files.length) {
+      throw new Error("Select at least one image file.");
+    }
+
+    var startFrame = Math.max(1, Math.round(Number(startFrameInput.value) || 1));
+    startFrameInput.value = String(startFrame);
+    var endFrame = startFrame + state.files.length - 1;
+    var currentFrameCount = timelineFrameCount();
+
+    if (endFrame > currentFrameCount && !extendTimelineInput.checked) {
+      throw new Error("The sequence ends on frame " + endFrame + ", but the timeline currently ends on frame " + currentFrameCount + ". Enable Extend Timeline or choose an earlier start frame.");
+    }
+
+    setBusy(true);
+    setProgress(0, state.files.length);
+    setLog("Preparing " + state.files.length + " image" + (state.files.length === 1 ? "" : "s") + "...\nFrames " + startFrame + " to " + endFrame + ".");
+
+    var loadedImages = [];
+    var index;
+    for (index = 0; index < state.files.length; index += 1) {
+      log("Reading " + (index + 1) + "/" + state.files.length + ": " + state.files[index].name);
+      loadedImages.push(await loadImageFile(state.files[index]));
+      setProgress(index + 0.35, state.files.length);
+    }
+
+    API.pushUndo();
+
+    if (endFrame > currentFrameCount) {
+      API.ensureTimelineFrameCount(endFrame, { pushUndo: false, refresh: false });
+      log("Timeline extended to frame " + endFrame + ".");
+    }
+
+    var targetLayer = resolveTargetLayer();
+    if (!targetLayer || !targetLayer.id) {
+      throw new Error("LukeAnimate could not resolve a destination layer.");
+    }
+    log("Destination layer: " + String(targetLayer.name || targetLayer.id));
+
+    if (clearRangeInput.checked) {
+      API.clearDrawingLayerRange(targetLayer.id, startFrame, endFrame, { pushUndo: false, refresh: false });
+      log("Cleared existing layer content from frames " + startFrame + " to " + endFrame + ".");
+    }
+
+    var firstObject = null;
+    for (index = 0; index < loadedImages.length; index += 1) {
+      var loaded = loadedImages[index];
+      var frameNumber = startFrame + index;
+      var dimensions = fittedDimensions(loaded.width, loaded.height);
+      var object;
+
+      if (wrapInput.checked) {
+        var clipName = nameInput.checked ? loaded.name : "Image Clip " + String(index + 1).padStart(3, "0");
+        var clip = API.createImageClip({
+          src: loaded.dataUrl,
+          name: loaded.name,
+          width: dimensions.width,
+          height: dimensions.height
+        }, {
+          name: clipName,
+          imageName: loaded.name,
+          width: dimensions.width,
+          height: dimensions.height,
+          pushUndo: false,
+          refresh: false
+        });
+        object = API.createClipInstance(clip.id, {
+          name: clipName,
+          x: Number(API.width) / 2,
+          y: Number(API.height) / 2
+        });
+      } else {
+        object = API.createImageObject({
+          src: loaded.dataUrl,
+          name: loaded.name,
+          width: dimensions.width,
+          height: dimensions.height
+        }, {
+          name: loaded.name,
+          width: dimensions.width,
+          height: dimensions.height,
+          x: (Number(API.width) - dimensions.width) / 2,
+          y: (Number(API.height) - dimensions.height) / 2
+        });
+      }
+
+      API.setDrawingLayerFrameObject(targetLayer.id, frameNumber, object, {
+        pushUndo: false,
+        refresh: false
+      });
+
+      if (!firstObject) firstObject = object;
+      log("Frame " + frameNumber + ": " + loaded.file.name + (wrapInput.checked ? "  [Clip]" : "  [Image]"));
+      setProgress(index + 1, loadedImages.length);
+    }
+
+    API.setFrame(startFrame);
+    API.refreshUI();
+    if (firstObject && typeof API.selectDrawObject === "function") {
+      API.selectDrawObject(firstObject);
+      API.refreshUI();
+    }
+
+    log("Complete. Imported " + loadedImages.length + " image" + (loadedImages.length === 1 ? "" : "s") + " across frames " + startFrame + " to " + endFrame + ".");
+    setBusy(false);
+  }
+
+  function makePanelDraggable(element, handle) {
+    var drag = null;
+
+    handle.addEventListener("pointerdown", function (event) {
+      if (event.button !== 0 || event.target.closest("button")) return;
+      var rect = element.getBoundingClientRect();
+      drag = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top
+      };
+      element.style.left = rect.left + "px";
+      element.style.top = rect.top + "px";
+      element.style.right = "auto";
+      handle.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+
+    handle.addEventListener("pointermove", function (event) {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      var maxLeft = Math.max(0, window.innerWidth - element.offsetWidth);
+      var maxTop = Math.max(0, window.innerHeight - 44);
+      var left = Math.max(0, Math.min(maxLeft, event.clientX - drag.offsetX));
+      var top = Math.max(0, Math.min(maxTop, event.clientY - drag.offsetY));
+      element.style.left = left + "px";
+      element.style.top = top + "px";
+    });
+
+    function stopDrag(event) {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      try { handle.releasePointerCapture(event.pointerId); } catch (ignore) {}
+      drag = null;
+    }
+
+    handle.addEventListener("pointerup", stopDrag);
+    handle.addEventListener("pointercancel", stopDrag);
+  }
+}());
