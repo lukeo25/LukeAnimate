@@ -1,8 +1,9 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v128</title>
+<title>Luke Animate v132</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -7988,8 +7989,260 @@ ctx.fill();</textarea>
     try{ logToSandbox(message); }catch(err){}
   }
 
+
+  // ---------------- Lip Service integration ----------------
+  // Lip Service is deliberately baked into Clip-instance hold keys rather than
+  // depending on an editor-only runtime script. The result previews, saves and
+  // exports with the normal Luke Animate project data.
+  const lukeAnimateLipServiceTargetCache = new Map();
+
+  function lipServiceNormaliseName(value){
+    return String(value || '').trim().toLowerCase().replace(/[\s_\-]+/g, '');
+  }
+
+  function lipServiceLabelAliases(value){
+    const key = lipServiceNormaliseName(value);
+    const aliases = {
+      a:['a','mbp'], b:['b','o'], c:['c','etc'], d:['d','e'], e:['e','ai'],
+      f:['f','fv'], g:['g','l'], h:['h','u'], i:['i','wq'], rest:['rest','neutral','closed']
+    };
+    if(aliases[key]) return aliases[key];
+    for(const list of Object.values(aliases)) if(list.includes(key)) return list;
+    return [key];
+  }
+
+  function lipServiceClipLabels(clip){
+    if(!clip) return [];
+    const labels = normalizedClipFrameLabels(clip).map(label=>({
+      name:String(label && label.name || '').trim(),
+      frame:Math.max(1, Math.round(Number(label && label.frame) || 1)),
+      time:Math.max(0, Number(label && label.time) || 0)
+    })).filter(label=>label.name);
+    return labels;
+  }
+
+  function lipServiceClipLooksLikeMouth(clip, instanceName){
+    const name = lipServiceNormaliseName((instanceName || '') + ' ' + (clip && clip.name || ''));
+    if(/mouth|lip|viseme|phoneme/.test(name)) return true;
+    const labels = lipServiceClipLabels(clip).map(label=>lipServiceNormaliseName(label.name));
+    const recognised = labels.filter(label=>['a','b','c','d','e','f','g','h','i','rest','mbp','o','etc','ai','fv','l','u','wq'].includes(label));
+    return recognised.length >= 4;
+  }
+
+  function lipServiceObjectsInClip(clip){
+    if(!clip) return [];
+    const found=[];
+    const seen=new Set();
+    const layers=wickEnsureClipDrawingLayers(clip);
+    layers.forEach(layer=>(layer.frames||[]).forEach(frame=>{
+      const object=frame && frame.object;
+      if(!object) return;
+      ensureDrawObjectMetadata(object);
+      const key=String(object.id || object);
+      if(seen.has(key)) return;
+      seen.add(key);
+      found.push(object);
+    }));
+    return found;
+  }
+
+  function lipServiceCollectTargets(){
+    lukeAnimateLipServiceTargetCache.clear();
+    const descriptors=[];
+    const seenObjects=new Set();
+    const selectedObjects=Array.from(selectedDrawIndices).map(index=>drawObjects[index]).filter(Boolean);
+
+    function add(instance, ownerClip, path, rank, selected, depth){
+      if(!instance || instance.type!=='clipinstance' || depth>10) return;
+      ensureDrawObjectMetadata(instance);
+      const ref=clips[instance.clipId];
+      if(!ref) return;
+      const objectKey=String(instance.id || instance.clipId || path);
+      const ownerId=ownerClip ? String(ownerClip.id) : 'main';
+      const cacheKey=ownerId+'::'+objectKey;
+      if(!seenObjects.has(cacheKey)){
+        seenObjects.add(cacheKey);
+        const labels=lipServiceClipLabels(ref);
+        const looksLikeMouth=lipServiceClipLooksLikeMouth(ref, instance.name);
+        const descriptor={
+          key:cacheKey,
+          name:String(instance.name || ref.name || 'Clip'),
+          path:String(path || instance.name || ref.name || 'Clip'),
+          clipId:String(instance.clipId || ''),
+          clipName:String(ref.name || instance.name || 'Clip'),
+          ownerClipId:ownerClip ? String(ownerClip.id) : '',
+          ownerClipName:ownerClip ? String(ownerClip.name || '') : 'Main Stage',
+          labels:labels,
+          selected:!!selected,
+          looksLikeMouth:!!looksLikeMouth,
+          rank:Number(rank)||0
+        };
+        lukeAnimateLipServiceTargetCache.set(cacheKey,{object:instance,ownerClip:ownerClip||null,clip:ref,descriptor});
+        if(looksLikeMouth || selected || labels.length) descriptors.push(descriptor);
+      }
+      lipServiceObjectsInClip(ref).forEach(child=>{
+        if(child && child.type==='clipinstance'){
+          const childName=String(child.name || (clips[child.clipId] && clips[child.clipId].name) || 'Clip');
+          add(child, ref, (path ? path+' / ' : '')+childName, (Number(rank)||0)+1, false, depth+1);
+        }
+      });
+    }
+
+    selectedObjects.forEach((object,index)=>{
+      if(object && object.type==='clipinstance') add(object, editingClipId ? clips[editingClipId] : null, String(object.name || 'Selected Clip'), index, true, 0);
+    });
+    drawObjects.forEach((object,index)=>{
+      if(object && object.type==='clipinstance') add(object, editingClipId ? clips[editingClipId] : null, String(object.name || 'Stage Clip'), 20+index, selectedObjects.includes(object), 0);
+    });
+    Object.values(clips).forEach((clip,index)=>{
+      lipServiceObjectsInClip(clip).forEach((object,objectIndex)=>{
+        if(object && object.type==='clipinstance'){
+          const childName=String(object.name || (clips[object.clipId] && clips[object.clipId].name) || 'Clip');
+          add(object, clip, String(clip.name || 'Clip')+' / '+childName, 100+index+objectIndex/100, false, 0);
+        }
+      });
+    });
+
+    return descriptors.sort((a,b)=>{
+      const selectedDelta=(b.selected?1:0)-(a.selected?1:0);
+      if(selectedDelta) return selectedDelta;
+      const mouthDelta=(b.looksLikeMouth?1:0)-(a.looksLikeMouth?1:0);
+      if(mouthDelta) return mouthDelta;
+      const labelDelta=(b.labels.length)-(a.labels.length);
+      if(labelDelta) return labelDelta;
+      return a.rank-b.rank || a.path.localeCompare(b.path);
+    });
+  }
+
+  function lipServiceTargetForKey(key){
+    const id=String(key || '');
+    if(!lukeAnimateLipServiceTargetCache.has(id)) lipServiceCollectTargets();
+    return lukeAnimateLipServiceTargetCache.get(id) || null;
+  }
+
+  function lipServiceLabelTime(clip, label, fpsValue){
+    const fps=Math.max(1, Number(fpsValue)||getTimelineFPS());
+    const aliases=lipServiceLabelAliases(label);
+    const labels=lipServiceClipLabels(clip);
+    let match=null;
+    for(const alias of aliases){
+      match=labels.find(entry=>lipServiceNormaliseName(entry.name)===alias);
+      if(match) break;
+    }
+    if(match){
+      if(Number.isFinite(Number(match.time))) return Math.max(0,Number(match.time));
+      return Math.max(0,(Math.max(1,match.frame)-1)/fps);
+    }
+    const key=lipServiceNormaliseName(label);
+    const frameMap={a:1,mbp:1,b:2,o:2,c:3,etc:3,d:4,e:5,ai:5,f:6,fv:6,g:7,l:7,h:8,u:8,i:9,wq:9,rest:10,neutral:10,closed:10};
+    const fallbackFrame=Math.max(1,frameMap[key] || 10);
+    const maxFrame=Math.max(1,Math.round((Number(clip && clip.timelineDuration)||0)*fps)+1);
+    return (Math.min(fallbackFrame,maxFrame)-1)/fps;
+  }
+
+  function lipServiceCleanPreviousKeys(instance){
+    if(!instance || !Array.isArray(instance.keyframes)) return;
+    const kept=[];
+    instance.keyframes.forEach(key=>{
+      if(!key || !key._lukeAnimateLipServiceKey){ kept.push(key); return; }
+      if(key._lukeAnimateLipServiceCreatedKey){
+        const remaining=Object.keys(key).filter(name=>!['time','easing','clipStopTime','_lukeAnimateLipServiceKey','_lukeAnimateLipServiceCreatedKey','_lukeAnimateLipServiceLabel','_lukeAnimateLipServicePreviousEasing','_lukeAnimateLipServiceHadClipStopTime','_lukeAnimateLipServicePreviousClipStopTime'].includes(name));
+        if(remaining.length===0) return;
+      }
+      if(key._lukeAnimateLipServiceHadClipStopTime) key.clipStopTime=key._lukeAnimateLipServicePreviousClipStopTime;
+      else delete key.clipStopTime;
+      if(key._lukeAnimateLipServicePreviousEasing!==undefined) key.easing=key._lukeAnimateLipServicePreviousEasing;
+      delete key._lukeAnimateLipServiceKey;
+      delete key._lukeAnimateLipServiceCreatedKey;
+      delete key._lukeAnimateLipServiceLabel;
+      delete key._lukeAnimateLipServicePreviousEasing;
+      delete key._lukeAnimateLipServiceHadClipStopTime;
+      delete key._lukeAnimateLipServicePreviousClipStopTime;
+      kept.push(key);
+    });
+    instance.keyframes=kept;
+  }
+
+  function lipServiceApplySequence(payload){
+    const settings=payload && typeof payload==='object' ? payload : {};
+    const target=lipServiceTargetForKey(settings.targetKey);
+    if(!target) throw new Error('Select a valid mouth Clip instance and refresh the target list.');
+    const blocks=Array.isArray(settings.blocks) ? settings.blocks.slice() : [];
+    const fps=Math.max(1,Math.min(120,Number(settings.fps)||getTimelineFPS()));
+    const startFrame=Math.max(1,Math.round(Number(settings.startFrame)||1));
+    const instance=target.object;
+    const ownerClip=target.ownerClip;
+    const mouthClip=target.clip;
+    pushUndo();
+    if(!Array.isArray(instance.keyframes)) instance.keyframes=[];
+    lipServiceCleanPreviousKeys(instance);
+
+    const sorted=blocks.map(block=>({
+      startFrame:Math.max(0,Math.round(Number(block && block.startFrame)||0)),
+      endFrame:Math.max(1,Math.round(Number(block && block.endFrame)||1)),
+      label:String(block && (block.label || block.mouth) || 'Rest')
+    })).filter(block=>block.endFrame>block.startFrame).sort((a,b)=>a.startFrame-b.startFrame);
+
+    const tolerance=0.25/fps;
+    sorted.forEach(block=>{
+      const time=(startFrame-1+block.startFrame)/fps;
+      let key=instance.keyframes.find(entry=>entry && Math.abs((Number(entry.time)||0)-time)<=tolerance);
+      if(!key){
+        key={time:time,easing:'hold',_lukeAnimateLipServiceCreatedKey:true};
+        instance.keyframes.push(key);
+      }else{
+        key._lukeAnimateLipServicePreviousEasing=key.easing;
+        key._lukeAnimateLipServiceHadClipStopTime=Object.prototype.hasOwnProperty.call(key,'clipStopTime');
+        if(key._lukeAnimateLipServiceHadClipStopTime) key._lukeAnimateLipServicePreviousClipStopTime=key.clipStopTime;
+      }
+      key.clipStopTime=lipServiceLabelTime(mouthClip,block.label,fps);
+      key.easing='hold';
+      key._lukeAnimateLipServiceKey=true;
+      key._lukeAnimateLipServiceLabel=block.label;
+    });
+    instance.keyframes.sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
+    instance._lukeAnimateLipService={
+      version:1,
+      targetKey:String(settings.targetKey||''),
+      startFrame:startFrame,
+      fps:fps,
+      blocks:sorted,
+      appliedAt:new Date().toISOString()
+    };
+
+    const endFrame=sorted.reduce((max,block)=>Math.max(max,startFrame-1+block.endFrame),startFrame);
+    const requiredDuration=Math.max(1/fps,endFrame/fps);
+    if(ownerClip){
+      ownerClip.timelineDuration=Math.max(Number(ownerClip.timelineDuration)||0,requiredDuration);
+      wickNormalizeLayerModel(wickEnsureClipDrawingLayers(ownerClip),ownerClip.timelineDuration);
+      ensureClipSceneFrames(ownerClip);
+    }else{
+      if(requiredDuration>timelineDuration){
+        timelineDuration=requiredDuration;
+        wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
+        wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);
+        const timelineDurationInput=document.getElementById('inp-timelineduration');
+        const exportDurationInput=document.getElementById('inp-duration');
+        if(timelineDurationInput) timelineDurationInput.value=String(timelineDuration);
+        if(exportDurationInput) exportDurationInput.value=String(timelineDuration);
+      }
+    }
+    if(editingClipId && ownerClip && String(editingClipId)===String(ownerClip.id)){
+      syncActiveSceneFrameForTime(t,false);
+    }
+    renderClipLibrary();
+    LukeAnimatePluginAPI.refreshUI();
+    return {
+      target:target.descriptor.path,
+      keys:sorted.length,
+      startFrame:startFrame,
+      endFrame:endFrame,
+      labels:lipServiceClipLabels(mouthClip)
+    };
+  }
+
   const LukeAnimatePluginAPI = {
-    version: 110,
+    version: 111,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -8376,6 +8629,18 @@ ctx.fill();</textarea>
       wickActiveDrawingLayerId = layer.id;
       if(settings.refresh !== false) this.refreshUI();
       return frame;
+    },
+    getLipServiceTargets(){ return lipServiceCollectTargets(); },
+    applyLipServiceSequence(payload){ return lipServiceApplySequence(payload); },
+    clearLipServiceSequence(targetKey){
+      const target=lipServiceTargetForKey(targetKey);
+      if(!target) return false;
+      pushUndo();
+      lipServiceCleanPreviousKeys(target.object);
+      delete target.object._lukeAnimateLipService;
+      if(target.ownerClip) ensureClipSceneFrames(target.ownerClip);
+      this.refreshUI();
+      return true;
     },
     reloadConfig(){ return loadLukeAnimateConfig(true); }
   };
