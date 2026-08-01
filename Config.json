@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 9,
+  "version": 10,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -172,9 +172,10 @@
         {
           "id": "Multi_Asset_Importer",
           "label": "Multi Script",
+          "description": "Import a naturally sorted image sequence onto consecutive LukeAnimate layer frames.",
           "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Multi.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/MultiImport.txt",
-          "action": "script",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/MultiScript.txt",
+          "action": "tool",
           "F_Screen": 0
         },
         {
