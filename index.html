@@ -2900,7 +2900,7 @@ ctx.fill();</textarea>
     updateInspector();
     return selectionInspectorSuppressors.size > 0;
   }
-  ['freehand','line','rect','ellipse','text','clipinstance','group'].forEach(type=> registerObjectPanelOwner(type, 'animate'));
+  ['freehand','line','rect','ellipse','text','image','clipinstance','group'].forEach(type=> registerObjectPanelOwner(type, 'animate'));
 
   function panelForDrawObject(obj){
     return (obj && obj.panelId) || objectPanelOwners[obj && obj.type] || 'animate';
@@ -2909,7 +2909,7 @@ ctx.fill();</textarea>
   function drawObjectTypeLabel(type){
     return {
       freehand:'Drawing', line:'Line', rect:'Rectangle', ellipse:'Ellipse',
-      text:'Text', clipinstance:'Clip', group:'Group'
+      text:'Text', image:'Image', clipinstance:'Clip', group:'Group'
     }[type] || (type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Object');
   }
 
@@ -2936,6 +2936,17 @@ ctx.fill();</textarea>
       if(obj.fillEnabled === undefined) obj.fillEnabled = true;
       if(obj.strokeEnabled === undefined) obj.strokeEnabled = Math.max(0, Number(obj.strokeWidth) || 0) > 0;
       if(!['left','center','right'].includes(obj.textAlign)) obj.textAlign = 'left';
+    }
+    if(obj.type === 'image'){
+      obj.src = String(obj.src || obj.dataUrl || '');
+      obj.width = Math.max(1, Number(obj.width || obj.naturalWidth) || 1);
+      obj.height = Math.max(1, Number(obj.height || obj.naturalHeight) || 1);
+      obj.x = Number.isFinite(Number(obj.x)) ? Number(obj.x) : 0;
+      obj.y = Number.isFinite(Number(obj.y)) ? Number(obj.y) : 0;
+      if(obj.opacity === undefined) obj.opacity = 1;
+      if(!Array.isArray(obj.keyframes)) obj.keyframes = [];
+      obj.fillEnabled = false;
+      obj.strokeEnabled = false;
     }
     if(obj.penStroke){
       obj.penWidth=Math.max(1,Number(obj.penWidth!==undefined?obj.penWidth:obj.strokeWidth)||32);
@@ -4063,6 +4074,22 @@ ctx.fill();</textarea>
     context.fillStyle=color;context.fill();
   }
 
+  const drawImageCache = new Map();
+
+  function getDrawImageResource(source){
+    const src = String(source || '');
+    if(!src) return null;
+    let record = drawImageCache.get(src);
+    if(record) return record.image;
+    const image = new Image();
+    record = { image, loaded:false, failed:false };
+    drawImageCache.set(src, record);
+    image.onload = ()=>{ record.loaded = true; };
+    image.onerror = ()=>{ record.failed = true; };
+    image.src = src;
+    return image;
+  }
+
   function renderOneDrawObject(obj, isPreview, idx){
     const eff = getEffectiveObj(obj, t);
 
@@ -4150,6 +4177,16 @@ ctx.fill();</textarea>
       ellipsePath.ellipse(cx,cy,Math.max(.5,rx),Math.max(.5,ry),0,0,Math.PI*2);
       if(fillEnabled){ctx.save();ctx.fillStyle=fillColor;ctx.fill(ellipsePath);ctx.restore();}
       if(strokeEnabled&&strokeWidth>0) strokeVectorPathEvenly(ctx,ellipsePath,strokeColor,strokeWidth,'round','round');
+    } else if(obj.type === 'image'){
+      const source = eff.src !== undefined ? eff.src : obj.src;
+      const image = getDrawImageResource(source);
+      const imageX = eff.x !== undefined ? Number(eff.x) || 0 : Number(obj.x) || 0;
+      const imageY = eff.y !== undefined ? Number(eff.y) || 0 : Number(obj.y) || 0;
+      const imageWidth = Math.max(1, eff.width !== undefined ? Number(eff.width) || 1 : Number(obj.width) || 1);
+      const imageHeight = Math.max(1, eff.height !== undefined ? Number(eff.height) || 1 : Number(obj.height) || 1);
+      if(image && image.complete && image.naturalWidth > 0){
+        ctx.drawImage(image, imageX, imageY, imageWidth, imageHeight);
+      }
     } else if(obj.type === 'text'){
       const weight = obj.bold ? '700' : '400';
       const style = obj.italic ? 'italic ' : '';
@@ -4214,6 +4251,13 @@ ctx.fill();</textarea>
     }
     if(obj.type === 'line' || obj.type === 'rect' || obj.type === 'ellipse'){
       return { x1:Math.min(obj.x1,obj.x2), y1:Math.min(obj.y1,obj.y2), x2:Math.max(obj.x1,obj.x2), y2:Math.max(obj.y1,obj.y2) };
+    }
+    if(obj.type === 'image'){
+      const x = Number(obj.x) || 0;
+      const y = Number(obj.y) || 0;
+      const width = Math.max(1, Number(obj.width) || 1);
+      const height = Math.max(1, Number(obj.height) || 1);
+      return { x1:x, y1:y, x2:x+width, y2:y+height };
     }
     if(obj.type === 'text'){
       const fontSize = Math.max(1, Number(obj.fontSize) || 32);
@@ -5005,7 +5049,7 @@ ctx.fill();</textarea>
   }
 
   function drawFillBarrierObject(context,obj,gap){
-    if(!obj||obj.enabled===false||obj.fillRegion||obj.type==='clipinstance'||obj.type==='text') return;
+    if(!obj||obj.enabled===false||obj.fillRegion||obj.type==='clipinstance'||obj.type==='text'||obj.type==='image') return;
     const eff=getEffectiveObj(obj,t);context.save();applyDrawObjectTransformToContext(context,obj,eff);
     context.strokeStyle='#000';context.fillStyle='#000';context.lineCap='round';context.lineJoin='round';
     const baseStroke=Math.max(1,Number(eff.strokeWidth!==undefined?eff.strokeWidth:obj.strokeWidth)||1);
@@ -7135,7 +7179,7 @@ ctx.fill();</textarea>
       ? (objectLayerName(sel.group) + ' › ' + objectLayerName(obj))
       : (isClip ? (clips[obj.clipId] ? clips[obj.clipId].name : 'Clip instance') : drawObjectTypeLabel(obj.type));
     const canFill = !isClip && obj.type !== 'group' && (obj.type === 'rect' || obj.type === 'ellipse' || obj.type === 'text' || (obj.type === 'freehand' && obj.closedPath));
-    const canStroke = !isClip && obj.type !== 'group';
+    const canStroke = !isClip && obj.type !== 'group' && obj.type !== 'image';
     const canRoundCorners = !isClip && obj.type === 'rect';
     document.getElementById('insp-fill-row').style.display = canFill ? 'flex' : 'none';
     document.getElementById('insp-stroke-row').style.display = canStroke ? 'flex' : 'none';
@@ -7468,7 +7512,7 @@ ctx.fill();</textarea>
       if(Number.isFinite(Number(object.x2))) object.x2=Number(object.x2)+dx;
       if(Number.isFinite(Number(object.y2))) object.y2=Number(object.y2)+dy;
     }
-    if(object.type==='text'||object.type==='clipinstance'){
+    if(object.type==='text'||object.type==='image'||object.type==='clipinstance'){
       if(Number.isFinite(Number(object.x))) object.x=Number(object.x)+dx;
       if(Number.isFinite(Number(object.y))) object.y=Number(object.y)+dy;
     }
@@ -7924,7 +7968,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 109,
+    version: 110,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -8111,6 +8155,206 @@ ctx.fill();</textarea>
       renderTimeline();
       updateInspector();
       return result;
+    },
+    getDrawingLayers(){
+      return wickEnsureCurrentDrawingLayers();
+    },
+    getActiveDrawingLayer(){
+      wickEnsureCurrentDrawingLayers();
+      return wickLayerById(wickActiveDrawingLayerId) || null;
+    },
+    createDrawingLayer(name, options){
+      const settings = options && typeof options === 'object' ? options : {};
+      if(settings.pushUndo !== false) pushUndo();
+      const layer = wickCreateLayer(String(name || ('Image Sequence ' + (wickDrawingLayers.length + 1))));
+      if(settings.refresh !== false) this.refreshUI();
+      return layer;
+    },
+    ensureTimelineFrameCount(frameCount, options){
+      const settings = options && typeof options === 'object' ? options : {};
+      const requestedCount = Math.max(1, Math.round(Number(frameCount) || 1));
+      const requiredDuration = requestedCount / Math.max(1, this.fps);
+      if(requiredDuration <= timelineDuration + 1e-9) return getTimelineFrameInfo().frameCount;
+      if(settings.pushUndo !== false) pushUndo();
+      timelineDuration = Math.max(0.5, requiredDuration);
+      normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+      Object.values(clips).forEach(ensureClipSceneFrames);
+      t = Math.min(t, timelineDuration);
+      syncActiveSceneFrameForTime(t, false);
+      const timelineDurationInput = document.getElementById('inp-timelineduration');
+      const exportDurationInput = document.getElementById('inp-duration');
+      if(timelineDurationInput) timelineDurationInput.value = String(timelineDuration);
+      if(exportDurationInput) exportDurationInput.value = String(timelineDuration);
+      if(settings.refresh !== false) this.refreshUI();
+      return getTimelineFrameInfo().frameCount;
+    },
+    createImageObject(source, options){
+      const settings = options && typeof options === 'object' ? options : {};
+      const sourceObject = source && typeof source === 'object' ? source : { src:source };
+      const width = Math.max(1, Number(settings.width !== undefined ? settings.width : sourceObject.width) || 1);
+      const height = Math.max(1, Number(settings.height !== undefined ? settings.height : sourceObject.height) || 1);
+      const object = {
+        type:'image',
+        name:String(settings.name || sourceObject.name || 'Image'),
+        src:String(settings.src || sourceObject.src || sourceObject.dataUrl || ''),
+        x:Number.isFinite(Number(settings.x)) ? Number(settings.x) : ((W - width) / 2),
+        y:Number.isFinite(Number(settings.y)) ? Number(settings.y) : ((H - height) / 2),
+        width,
+        height,
+        tx:Number(settings.tx) || 0,
+        ty:Number(settings.ty) || 0,
+        tscale:settings.tscale === undefined ? 1 : Number(settings.tscale) || 1,
+        tscaleX:settings.tscaleX === undefined ? 1 : Number(settings.tscaleX) || 1,
+        tscaleY:settings.tscaleY === undefined ? 1 : Number(settings.tscaleY) || 1,
+        trotation:Number(settings.trotation) || 0,
+        opacity:settings.opacity === undefined ? 1 : Math.max(0, Math.min(1, Number(settings.opacity) || 0)),
+        fillEnabled:false,
+        strokeEnabled:false,
+        keyframes:Array.isArray(settings.keyframes) ? JSON.parse(JSON.stringify(settings.keyframes)) : []
+      };
+      ensureDrawObjectMetadata(object);
+      return object;
+    },
+    createImageClip(source, options){
+      const settings = options && typeof options === 'object' ? options : {};
+      if(settings.pushUndo !== false) pushUndo();
+      const sourceObject = source && typeof source === 'object' ? source : { src:source };
+      const width = Math.max(1, Number(settings.width !== undefined ? settings.width : sourceObject.width) || 1);
+      const height = Math.max(1, Number(settings.height !== undefined ? settings.height : sourceObject.height) || 1);
+      const clip = makeClip(String(settings.name || sourceObject.name || ('Image Clip ' + (clipCounter + 1))));
+      clip.timelineDuration = Math.max(1 / Math.max(1, this.fps), Number(settings.durationSeconds) || (1 / Math.max(1, this.fps)));
+      const imageObject = this.createImageObject(sourceObject, {
+        name:String(settings.imageName || settings.name || sourceObject.name || clip.name),
+        src:String(settings.src || sourceObject.src || sourceObject.dataUrl || ''),
+        width,
+        height,
+        x:-width / 2,
+        y:-height / 2,
+        opacity:settings.opacity === undefined ? 1 : settings.opacity
+      });
+      clip.drawObjects = [imageObject];
+      clip.sceneFrames = [makeIndependentSceneFrame(0, totalFrameIndexForDuration(clip.timelineDuration), clip.drawObjects)];
+      clip.layers = [];
+      clip.pivotX = 0;
+      clip.pivotY = 0;
+      clips[clip.id] = clip;
+      clip.drawingLayers = wickMigrateSceneFrames(clip.sceneFrames, clip.drawObjects, clip.timelineDuration);
+      ensureClipSceneFrames(clip);
+      if(settings.refresh !== false){
+        renderClipLibrary();
+        this.refreshUI();
+      }
+      return clip;
+    },
+    createClipInstance(clipId, options){
+      const settings = options && typeof options === 'object' ? options : {};
+      const clip = clips[clipId];
+      if(!clip) throw new Error('Unknown Clip: ' + clipId);
+      return ensureDrawObjectMetadata({
+        type:'clipinstance',
+        clipId:clip.id,
+        name:String(settings.name || clip.name),
+        x:Number.isFinite(Number(settings.x)) ? Number(settings.x) : W / 2,
+        y:Number.isFinite(Number(settings.y)) ? Number(settings.y) : H / 2,
+        scale:settings.scale === undefined ? 1 : Number(settings.scale) || 1,
+        scaleX:settings.scaleX === undefined ? 1 : Number(settings.scaleX) || 1,
+        scaleY:settings.scaleY === undefined ? 1 : Number(settings.scaleY) || 1,
+        rotation:Number(settings.rotation) || 0,
+        timeOffset:Number(settings.timeOffset) || 0,
+        opacity:settings.opacity === undefined ? 1 : Math.max(0, Math.min(1, Number(settings.opacity) || 0)),
+        keyframes:Array.isArray(settings.keyframes) ? JSON.parse(JSON.stringify(settings.keyframes)) : []
+      });
+    },
+    clearDrawingLayerRange(layerId, startFrame, endFrame, options){
+      const settings = options && typeof options === 'object' ? options : {};
+      const layer = wickLayerById(layerId);
+      if(!layer) throw new Error('Drawing layer not found: ' + layerId);
+      const startIndex = Math.max(0, Math.round(Number(startFrame) || 1) - 1);
+      const endIndex = Math.max(startIndex, Math.round(Number(endFrame) || Number(startFrame) || 1) - 1);
+      if(settings.pushUndo !== false) pushUndo();
+      const nextFrames = [];
+      const copyFrameObject = object=>{
+        if(!object) return null;
+        const clone = wickDeepClone(object);
+        delete clone.id;
+        delete clone.timelineLayerId;
+        delete clone.timelineLayerOrder;
+        delete clone.frameLinkId;
+        delete clone.frameLinkStart;
+        delete clone.frameLinkEnd;
+        ensureDrawObjectMetadata(clone);
+        return clone;
+      };
+      layer.frames.forEach(frame=>{
+        if(frame.endFrame < startIndex || frame.startFrame > endIndex){
+          nextFrames.push(frame);
+          return;
+        }
+        if(frame.startFrame < startIndex){
+          frame.endFrame = startIndex - 1;
+          if(frame.object) frame.object.frameLinkEnd = frame.endFrame;
+          nextFrames.push(frame);
+        }
+        if(frame.endFrame > endIndex){
+          const rightObject = copyFrameObject(frame.object);
+          const rightFrame = {
+            id:wickNextFrameId(),
+            startFrame:endIndex + 1,
+            endFrame:frame.endFrame,
+            blank:!rightObject,
+            object:rightObject,
+            _sequence:layer.frames.length + nextFrames.length + 1
+          };
+          if(rightObject){
+            rightObject.timelineLayerId = layer.id;
+            rightObject.timelineLayerOrder = layer.order;
+            rightObject.frameLinkId = rightFrame.id;
+            rightObject.frameLinkStart = rightFrame.startFrame;
+            rightObject.frameLinkEnd = rightFrame.endFrame;
+          }
+          nextFrames.push(rightFrame);
+        }
+      });
+      layer.frames = nextFrames;
+      wickNormalizeLayerModel(wickDrawingLayers, timelineDuration);
+      wickProjectLayerModel(wickDrawingLayers, sceneFrames, timelineDuration);
+      syncActiveSceneFrameForTime(t, false);
+      if(settings.refresh !== false) this.refreshUI();
+      return true;
+    },
+    setDrawingLayerFrameObject(layerId, frameNumber, object, options){
+      const settings = options && typeof options === 'object' ? options : {};
+      const layer = wickLayerById(layerId);
+      if(!layer) throw new Error('Drawing layer not found: ' + layerId);
+      const visibleFrame = Math.max(1, Math.round(Number(frameNumber) || 1));
+      this.ensureTimelineFrameCount(visibleFrame, { pushUndo:false, refresh:false });
+      if(settings.pushUndo !== false) pushUndo();
+      this.clearDrawingLayerRange(layer.id, visibleFrame, visibleFrame, { pushUndo:false, refresh:false });
+      const frameIndex = visibleFrame - 1;
+      const frame = {
+        id:wickNextFrameId(),
+        startFrame:frameIndex,
+        endFrame:frameIndex,
+        blank:!object,
+        object:object || null,
+        _sequence:layer.frames.length + 1
+      };
+      if(object){
+        ensureDrawObjectMetadata(object);
+        object.timelineLayerId = layer.id;
+        object.timelineLayerOrder = layer.order;
+        object.frameLinkId = frame.id;
+        object.frameLinkStart = frameIndex;
+        object.frameLinkEnd = frameIndex;
+        layer.name = object.name || layer.name;
+      }
+      layer.frames.push(frame);
+      wickNormalizeLayerModel(wickDrawingLayers, timelineDuration);
+      wickProjectLayerModel(wickDrawingLayers, sceneFrames, timelineDuration);
+      syncActiveSceneFrameForTime(t, false);
+      wickActiveDrawingLayerId = layer.id;
+      if(settings.refresh !== false) this.refreshUI();
+      return frame;
     },
     reloadConfig(){ return loadLukeAnimateConfig(true); }
   };
