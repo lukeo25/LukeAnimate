@@ -1187,9 +1187,23 @@
   /* ---------- v125 Wick-style drawing layers and independent frames ---------- */
   .timeline-track-row.wick-drawing-layer .timeline-track-name{
     cursor:pointer; font-weight:650; color:#45515f;
+    display:flex; align-items:center; gap:3px; padding-right:2px;
   }
   .timeline-track-row.wick-drawing-layer .timeline-track-name.active-layer{
-    color:var(--accent); background:#e3f7f3; border-radius:4px; padding-left:4px;
+    color:var(--accent); background:#e3f7f3; border-radius:4px; padding-left:2px;
+  }
+  .wick-layer-delete-button{
+    flex:0 0 15px; width:15px; height:15px; min-width:15px; padding:0;
+    display:inline-flex; align-items:center; justify-content:center;
+    border:0; border-radius:3px; background:transparent; color:#d53f45;
+    font:700 15px/15px Arial,sans-serif; cursor:pointer;
+  }
+  .wick-layer-delete-button:hover,
+  .wick-layer-delete-button:focus-visible{
+    background:#ffe6e7; color:#a5141b; outline:none;
+  }
+  .wick-layer-name-text{
+    min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   .wick-layer-frame{
     position:absolute; top:2px; bottom:2px; min-width:6px;
@@ -12744,6 +12758,9 @@ ctx.fill();</textarea>
 
 
 
+  // v131 — each drawing-layer timeline row now has a visible × button that
+  // deletes the complete layer while preserving frame-level Delete behaviour.
+
   // ========================================================================
   // v125 — real Wick-style drawing layers
   // ------------------------------------------------------------------------
@@ -13407,6 +13424,21 @@ ctx.fill();</textarea>
     return true;
   }
 
+  function wickDeleteDrawingLayer(layer){
+    if(!layer || !wickLayerById(layer.id)) return false;
+    pushUndo();
+    const removed=wickRemoveLayersByIds([layer.id]);
+    if(!removed) return false;
+    selectedDrawIndices.clear();
+    updateSelectedCountUI();
+    renderLayerList();
+    updateInspector();
+    renderTimeline();
+    renderTransformHandles();
+    renderPoints();
+    return true;
+  }
+
   const wickCommitDrawObjectBase = commitDrawObject;
   commitDrawObject = function(object){
     wickCommitDrawObjectBase(object);
@@ -13683,8 +13715,26 @@ ctx.fill();</textarea>
 
       const name=document.createElement('div');
       name.className='timeline-track-name'+(String(wickActiveDrawingLayerId)===String(layer.id)?' active-layer':'');
-      name.textContent=layer.name||'Layer';
       name.title='This drawing layer can contain any number of independent frames.';
+
+      const deleteLayerButton=document.createElement('button');
+      deleteLayerButton.type='button';
+      deleteLayerButton.className='wick-layer-delete-button';
+      deleteLayerButton.textContent='×';
+      deleteLayerButton.title='Delete layer';
+      deleteLayerButton.setAttribute('aria-label','Delete '+(layer.name||'layer'));
+      deleteLayerButton.addEventListener('click',event=>{
+        event.preventDefault();
+        event.stopPropagation();
+        wickDeleteDrawingLayer(layer);
+      });
+
+      const nameText=document.createElement('span');
+      nameText.className='wick-layer-name-text';
+      nameText.textContent=layer.name||'Layer';
+      nameText.title=layer.name||'Layer';
+      name.appendChild(deleteLayerButton);
+      name.appendChild(nameText);
 
       const track=document.createElement('div');
       track.className='timeline-track';
