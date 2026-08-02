@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 14,
+  "version": 16,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -14,7 +14,7 @@
           "label": "StickRig",
           "description": "Animate selected Luke Animate Clips with move, scale, rotation and opacity keys.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Stick.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/StickRig.txt",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/StickRig.txt",
           "action": "animate",
           "F_Screen": 0
         },
@@ -22,8 +22,8 @@
           "id": "DemBones",
           "label": "Dem Bones",
           "description": "Create, bind and animate vector bones directly in Luke Animate.",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Bone.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DemBones.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Bone.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/DemBones.txt",
           "action": "animate",
           "F_Screen": 0
         },
@@ -32,16 +32,16 @@
           "label": "Frame Gizmo",
           "description": "Show a circular named-frame dial beside the stage only while a Clip instance is selected.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/FrameGizmo.txt",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.txt",
           "action": "animate",
           "F_Screen": 0
         },
         {
           "id": "Lip_Service",
           "label": "Lip Service",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Lip.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/LipService.txt",
-          "action": "animate",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Lip.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/LipService.txt",
+          "action": "tool",
           "F_Screen": 1,
           "description": "Create and edit audio-driven mouth timing, then apply hold keys to a LukeAnimate mouth Clip instance."
         }
@@ -56,29 +56,29 @@
     {
       "id": "behaviours",
       "label": "Behaviours",
-      "tabIcon": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Behaviours.svg",
+      "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Behaviours.svg",
       "items": [
         {
           "id": "Sine_Block",
           "label": "Sine Block",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Sine.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/SineBlock.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Sine.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/SineBlock.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Rando",
           "label": "Rando",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Rando.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Rando.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Rando.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Rando.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Jump_Through",
           "label": "Jump Through",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/JThrough.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/JumpThrough.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/JThrough.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/JumpThrough.txt",
           "action": "script",
           "F_Screen": 0
         }
@@ -88,85 +88,85 @@
     {
       "id": "type",
       "label": "Type",
-      "tabIcon": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Type.svg",
+      "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Type.svg",
       "items": [
         {
           "id": "Side_Runner",
           "label": "Side Runner",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/GameCharacter.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/SideRunner.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/GameCharacter.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/SideRunner.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Fontasaur",
           "label": "Fontasaur",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Fonto.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Fontasaur.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Fonto.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Fontasaur.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Old Timer",
           "label": "Old Timer",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Timer.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Old_Timer.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Timer.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Old_Timer.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Life",
           "label": "Life",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Life.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Life.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Life.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Life.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Directions",
           "label": "Directions",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Directions.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Directions.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Directions.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Directions.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Car",
           "label": "Car",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Car.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Car.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Car.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Car.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Drag Drop",
           "label": "Drag Drop",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Drag.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/DragDrop.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Drag.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/DragDrop.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Solid",
           "label": "Solid",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Solid.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Solid.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Solid.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Solid.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Parallax_BG",
           "label": "Parallax BG",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Parallax.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/ParallaxSlots.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Parallax.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/ParallaxSlots.txt",
           "action": "script",
           "F_Screen": 1
         },
         {
           "id": "Bullets_And_Field",
           "label": "Bullets And Field",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/BulletsAndField.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/BulletsAndField.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/BulletsAndField.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/BulletsAndField.txt",
           "action": "script",
           "F_Screen": 0
         }
@@ -176,46 +176,46 @@
     {
       "id": "import",
       "label": "Import / Export",
-      "tabIcon": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Import.svg",
+      "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Import.svg",
       "items": [
         {
           "id": "Multi_Asset_Importer",
           "label": "Multi Script",
           "description": "Import a naturally sorted image sequence onto consecutive LukeAnimate layer frames.",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Multi.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/MultiScript.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Multi.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/MultiScript.txt",
           "action": "tool",
           "F_Screen": 0
         },
         {
           "id": "Spriter",
           "label": "Spriter",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Spriter.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Sprite_Maker.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Spriter.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Sprite_Maker.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "SVG Layers",
           "label": "SVG Layers",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/SVGL.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/SVG_Layer_Importer.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/SVGL.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/SVG_Layer_Importer.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Import_SVG",
           "label": "SVG Import",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/SVG.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/SVG_Importer.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/SVG.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/SVG_Importer.txt",
           "action": "script",
           "F_Screen": 0
         },
         {
           "id": "Stop Mo",
           "label": "Stop Mo",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/StopMo.svg",
-          "scriptUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/StopMo.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/StopMo.svg",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/StopMo.txt",
           "action": "script",
           "F_Screen": 0
         }
@@ -225,61 +225,61 @@
     {
       "id": "tools",
       "label": "Tools",
-      "tabIcon": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Tools.svg",
+      "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Tools.svg",
       "items": [
         {
           "id": "Texture Pen",
           "label": "Texture Pen",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Pen.svg",
-          "toolUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/LukeInk.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Pen.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/LukeInk.txt",
           "action": "tool",
           "F_Screen": 0
         },
         {
           "id": "Dem Bones",
           "label": "Dem Bones",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Bone.svg",
-          "toolUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/RotoBones.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Bone.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/RotoBones.txt",
           "action": "tool",
           "F_Screen": 1
         },
         {
           "id": "Screen Record",
           "label": "Screen Record",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main//scripts/Panel_SVG/Record.svg",
-          "toolUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main//scripts/Tools/Clipper.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Record.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Clipper.txt",
           "action": "tool",
           "F_Screen": 0
         },
         {
           "id": "Nuke",
           "label": "Nuke",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Nuke.svg",
-          "toolUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Nuke.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Nuke.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Nuke.txt",
           "action": "tool",
           "F_Screen": 0
         },
         {
           "id": "Node_Coder",
           "label": "Node Coder",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Node.svg",
-          "toolUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Nodecoder.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Node.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Nodecoder.txt",
           "action": "tool",
           "F_Screen": 1
         },
         {
           "id": "Shapes",
           "label": "Shapes",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Shapes.svg",
-          "toolUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/ShapeLibrary.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Shapes.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/ShapeLibrary.txt",
           "action": "tool",
           "F_Screen": 0
         },
         {
           "id": "Gradient",
           "label": "Gradient",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Gradient.svg",
-          "toolUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Tools/Gradient.txt",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Gradient.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Gradient.txt",
           "action": "tool",
           "F_Screen": 0
         }
@@ -289,7 +289,7 @@
     {
       "id": "sandbox",
       "label": "Sandbox",
-      "tabIcon": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Sandbox.svg",
+      "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Sandbox.svg",
       "items": []
     }
   ]
