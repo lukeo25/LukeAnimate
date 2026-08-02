@@ -1,0 +1,122 @@
+name: Sync WickTools SVGs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-svgs:
+    name: Copy SVGs into LukeAnimate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout LukeAnimate
+        uses: actions/checkout@v6
+        with:
+          repository: lukeo25/LukeAnimate
+          fetch-depth: 0
+
+      - name: Download WickTools
+        run: |
+          rm -rf /tmp/WickTools
+
+          git clone \
+            --depth 1 \
+            --branch main \
+            https://github.com/lukeo25/WickTools.git \
+            /tmp/WickTools
+
+      - name: Clear previous copied SVGs
+        run: |
+          rm -rf WickEditorSVGs
+          mkdir -p WickEditorSVGs
+
+      - name: Copy all SVG files
+        shell: bash
+        run: |
+          SOURCE_DIRECTORY="/tmp/WickTools"
+          DESTINATION_DIRECTORY="$GITHUB_WORKSPACE/WickEditorSVGs"
+
+          cd "$SOURCE_DIRECTORY"
+
+          SVG_COUNT=0
+
+          while IFS= read -r -d '' SVG_FILE
+          do
+            RELATIVE_PATH="${SVG_FILE#./}"
+            DESTINATION_FILE="$DESTINATION_DIRECTORY/$RELATIVE_PATH"
+            DESTINATION_FOLDER="$(dirname "$DESTINATION_FILE")"
+
+            mkdir -p "$DESTINATION_FOLDER"
+            cp "$SVG_FILE" "$DESTINATION_FILE"
+
+            echo "Copied: $RELATIVE_PATH"
+
+            SVG_COUNT=$((SVG_COUNT + 1))
+          done < <(
+            find . \
+              -type f \
+              \( -iname "*.svg" -o -iname "*.svgz" \) \
+              -print0
+          )
+
+          echo "Copied $SVG_COUNT SVG files."
+
+          if [ "$SVG_COUNT" -eq 0 ]
+          then
+            echo "No SVG files were found in WickTools."
+            exit 1
+          fi
+
+      - name: Create SVG manifest
+        shell: bash
+        run: |
+          python3 <<'PYTHON'
+          import json
+          from pathlib import Path
+
+          svg_root = Path("WickEditorSVGs")
+
+          files = sorted(
+              str(path.relative_to(svg_root)).replace("\\", "/")
+              for path in svg_root.rglob("*")
+              if path.is_file() and path.suffix.lower() in {".svg", ".svgz"}
+          )
+
+          manifest = {
+              "format": "LukeAnimateSVGManifest",
+              "version": 1,
+              "sourceRepository": "lukeo25/WickTools",
+              "sourceBranch": "main",
+              "svgCount": len(files),
+              "files": files
+          }
+
+          manifest_path = svg_root / "manifest.json"
+
+          manifest_path.write_text(
+              json.dumps(manifest, indent=2),
+              encoding="utf-8"
+          )
+
+          print(f"Created {manifest_path} containing {len(files)} files.")
+          PYTHON
+
+      - name: Commit copied SVGs
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add WickEditorSVGs
+
+          if git diff --cached --quiet
+          then
+            echo "The SVG files are already current."
+            exit 0
+          fi
+
+          git commit -m "Sync SVG files from WickTools"
+          git push
