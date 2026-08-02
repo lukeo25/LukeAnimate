@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 12,
+  "version": 14,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -35,6 +35,15 @@
           "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/FrameGizmo.txt",
           "action": "animate",
           "F_Screen": 0
+        },
+        {
+          "id": "Lip_Service",
+          "label": "Lip Service",
+          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Lip.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/LipService.txt",
+          "action": "animate",
+          "F_Screen": 1,
+          "description": "Create and edit audio-driven mouth timing, then apply hold keys to a LukeAnimate mouth Clip instance."
         }
       ]
     },
@@ -218,15 +227,6 @@
       "label": "Tools",
       "tabIcon": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Tools.svg",
       "items": [
-        {
-          "id": "Lip_Service",
-          "label": "Lip Service",
-          "iconUrl": "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Lip.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/LipService.txt",
-          "action": "tool",
-          "F_Screen": 1,
-          "description": "Create and edit audio-driven mouth timing, then bake hold keys into a LukeAnimate mouth Clip instance."
-        },
         {
           "id": "Texture Pen",
           "label": "Texture Pen",
