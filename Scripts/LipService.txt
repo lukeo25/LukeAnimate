@@ -35,7 +35,6 @@
   panel.querySelector(".la-lip-back").addEventListener("click", closePanel);
   panel.querySelector(".la-lip-close").addEventListener("click", closePanel);
   panel.addEventListener("pointerdown", function () { panel.style.zIndex = String(nextZ()); });
-  makeDraggable(panel, panel.querySelector(".la-lip-host-header"));
   document.addEventListener("keydown", onLipServiceKeyDown);
 
   function onLipServiceKeyDown(event) {
@@ -49,7 +48,7 @@
     if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
     try { delete window.LukeAnimateLipServiceHost; } catch (error) { window.LukeAnimateLipServiceHost = null; }
     API.setConfiguredToolActive(GROUP_ID, TOOL_ID, false);
-    try { API.openPanel("particles"); } catch (error) {}
+    try { API.openPanel("animate"); } catch (error) {}
     try {
       if (API.canvas) {
         API.canvas.setAttribute("tabindex", "-1");
@@ -76,7 +75,7 @@
     style.id = STYLE_ID;
     style.textContent = [
       ".la-lip-host{position:fixed;inset:42px 14px 14px;display:flex;flex-direction:column;overflow:hidden;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.26);z-index:12001}",
-      ".la-lip-host-header{height:42px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex:0 0 42px;padding:6px 8px 6px 12px;background:var(--panel-2);border-bottom:1px solid var(--line);cursor:move;user-select:none;touch-action:none}",
+      ".la-lip-host-header{height:42px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex:0 0 42px;padding:6px 8px 6px 12px;background:var(--panel-2);border-bottom:1px solid var(--line);cursor:default;user-select:none}",
       ".la-lip-host-title{display:flex;align-items:baseline;gap:10px;min-width:0}",
       ".la-lip-host-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}",
       ".la-lip-host-header strong{font-size:13px;color:var(--text)}",
@@ -89,24 +88,5 @@
       "@media(max-width:700px){.la-lip-host{inset:8px}.la-lip-host-header span{display:none}.la-lip-back{padding:0 8px!important}}"
     ].join("\n");
     document.head.appendChild(style);
-  }
-  function makeDraggable(target, handle) {
-    var drag = null;
-    handle.addEventListener("pointerdown", function (event) {
-      if (event.target.closest("button")) return;
-      var rect = target.getBoundingClientRect();
-      drag = { id:event.pointerId, dx:event.clientX-rect.left, dy:event.clientY-rect.top, width:rect.width, height:rect.height };
-      handle.setPointerCapture(event.pointerId);
-      target.style.right = "auto"; target.style.bottom = "auto";
-      event.preventDefault();
-    });
-    handle.addEventListener("pointermove", function (event) {
-      if (!drag || drag.id !== event.pointerId) return;
-      var left = Math.max(0, Math.min(window.innerWidth-drag.width, event.clientX-drag.dx));
-      var top = Math.max(0, Math.min(window.innerHeight-drag.height, event.clientY-drag.dy));
-      target.style.left = left + "px"; target.style.top = top + "px";
-    });
-    function end(event) { if (drag && drag.id === event.pointerId) { drag = null; try { handle.releasePointerCapture(event.pointerId); } catch (error) {} } }
-    handle.addEventListener("pointerup", end); handle.addEventListener("pointercancel", end);
   }
 })();
