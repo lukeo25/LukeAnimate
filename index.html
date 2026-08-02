@@ -1,8 +1,9 @@
 <!DOCTYPE html>
+<!-- LukeAnimate GPT v138: independent multiple FX layers and restored FX delete controls -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v132</title>
+<title>Luke Animate v138</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -845,6 +846,9 @@
   }
   .layer-btn:hover{ color:var(--accent); }
   .layer-btn.del:hover{ color:#c0392b; }
+  .layer-row.effect-layer .wick-layer-delete-button{
+    flex:0 0 17px; width:17px; height:17px; min-width:17px;
+  }
 
   #point-list{ display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }
   .point-row{
@@ -1185,7 +1189,8 @@
 
 
   /* ---------- v125 Wick-style drawing layers and independent frames ---------- */
-  .timeline-track-row.wick-drawing-layer .timeline-track-name{
+  .timeline-track-row.wick-drawing-layer .timeline-track-name,
+  .timeline-track-row.fx-timeline-layer .timeline-track-name{
     cursor:pointer; font-weight:650; color:#45515f;
     display:flex; align-items:center; gap:3px; padding-right:2px;
   }
@@ -1642,10 +1647,10 @@
     <h2>All Layers</h2>
     <div id="layer-list"></div>
     <div class="btn-row">
-      <button class="btn small" id="btn-add-layer">+ Add Layer</button>
+      <button class="btn small" id="btn-add-layer" title="Add another independent layer using the currently selected effect type">+ Add Current Type</button>
       <button class="btn small danger" id="btn-del-layer">Delete Selected</button>
     </div>
-    <div class="hint">Every particle effect, shape, line, text item and Clip has its own layer. Selecting an <b style="color:var(--warn);">FX</b> layer opens Particles; selecting a shape layer opens the panel that owns that object. New tools can assign their own panel automatically.</div>
+    <div class="hint">Every particle effect, point effect, flowing line and other object has its own independent layer. Choosing a different Effect Type creates a new FX layer instead of replacing the current one. Use <b>+ Add Current Type</b> to add another layer of the same type.</div>
   </div>
 
   <div class="group">
@@ -2853,6 +2858,14 @@ ctx.fill();</textarea>
       rain:'Rain', fireworks:'Fireworks', sparkles:'Sparkles', explosion:'Explosion',
       audiopulse:'Audio Pulse', lightning:'Lightning', dust:'Dust', smoke:'Smoke', smokedust:'Smoke Dust', clouds:'Clouds', custom:'Custom'
     }[type] || type;
+  }
+
+  function effectLayerDisplayName(layer, index){
+    const base = effectLabel(layer && layer.type);
+    const sameTypeCount = layers.reduce((count, candidate)=> count + (candidate && candidate.type === layer.type ? 1 : 0), 0);
+    if(sameTypeCount < 2) return base;
+    const ordinal = layers.slice(0, Math.max(0, index) + 1).reduce((count, candidate)=> count + (candidate && candidate.type === layer.type ? 1 : 0), 0);
+    return base + ' ' + Math.max(1, ordinal);
   }
 
   // ---------------- universal layer ownership ----------------
@@ -10062,7 +10075,7 @@ ctx.fill();</textarea>
 
       const name = document.createElement('span');
       name.className = 'layer-name' + (layer.enabled ? '' : ' off');
-      name.textContent = effectLabel(layer.type);
+      name.textContent = effectLayerDisplayName(layer, idx);
 
       const visBtn = document.createElement('button');
       visBtn.className = 'layer-btn';
@@ -10076,19 +10089,22 @@ ctx.fill();</textarea>
       });
 
       const delBtn = document.createElement('button');
-      delBtn.className = 'layer-btn del';
-      delBtn.title = 'Delete effect layer';
-      delBtn.textContent = '✕';
+      delBtn.type = 'button';
+      delBtn.className = 'wick-layer-delete-button';
+      delBtn.title = 'Delete ' + effectLayerDisplayName(layer, idx);
+      delBtn.setAttribute('aria-label', delBtn.title);
+      delBtn.textContent = '×';
       delBtn.addEventListener('click', (e)=>{
+        e.preventDefault();
         e.stopPropagation();
         deleteLayer(idx);
       });
 
+      row.appendChild(delBtn);
       row.appendChild(badge);
       row.appendChild(dot);
       row.appendChild(name);
       row.appendChild(visBtn);
-      row.appendChild(delBtn);
       row.addEventListener('click', ()=> selectEffectLayer(idx, true));
       list.appendChild(row);
     });
@@ -10732,12 +10748,29 @@ ctx.fill();</textarea>
 
     layers.forEach((layer, idx)=>{
       const row = document.createElement('div');
-      row.className = 'timeline-track-row';
+      row.className = 'timeline-track-row fx-timeline-layer';
 
       const name = document.createElement('div');
       name.className = 'timeline-track-name';
-      name.textContent = 'FX ' + effectLabel(layer.type);
       name.title = 'Selects this effect and opens Particles';
+
+      const deleteLayerButton = document.createElement('button');
+      deleteLayerButton.type = 'button';
+      deleteLayerButton.className = 'wick-layer-delete-button';
+      deleteLayerButton.textContent = '×';
+      deleteLayerButton.title = 'Delete ' + effectLayerDisplayName(layer, idx);
+      deleteLayerButton.setAttribute('aria-label', deleteLayerButton.title);
+      deleteLayerButton.addEventListener('click', event=>{
+        event.preventDefault();
+        event.stopPropagation();
+        deleteLayer(idx);
+      });
+
+      const nameText = document.createElement('span');
+      nameText.className = 'wick-layer-name-text';
+      nameText.textContent = 'FX ' + effectLayerDisplayName(layer, idx);
+      name.appendChild(deleteLayerButton);
+      name.appendChild(nameText);
 
       const track = document.createElement('div');
       track.className = 'timeline-track';
@@ -11096,14 +11129,29 @@ ctx.fill();</textarea>
 
   document.getElementById('btn-add-layer').addEventListener('click', ()=>{
     pushUndo();
-    const newType = layers.length % 2 === 0 ? 'particles' : 'ripple';
-    layers.push(makeLayer(newType));
+    const current = activeLayer();
+    const selector = document.getElementById('sel-effect');
+    const newType = String((current && current.type) || (selector && selector.value) || 'particles');
+    const newLayer = makeLayer(newType);
+    if(current){
+      newLayer.p.startTime = current.p.startTime;
+      newLayer.p.endTime = current.p.endTime;
+      newLayer.p.fadeIn = current.p.fadeIn;
+      newLayer.p.fadeOut = current.p.fadeOut;
+      if(typeSupportsPoint(newType) && current.p.target !== 'path') newLayer.p.target = current.p.target;
+    }
+    layers.push(newLayer);
     activeIndex = layers.length - 1;
     refreshAllUIFromLayer(activeLayer());
     renderLayerList();
     renderPoints();
+    renderTimeline();
   });
   document.getElementById('btn-del-layer').addEventListener('click', ()=>{
+    if(selectedDrawIndices.size > 0){
+      deleteSelectedDrawObjects();
+      return;
+    }
     deleteLayer(activeIndex);
   });
 
@@ -11231,14 +11279,29 @@ ctx.fill();</textarea>
   });
 
   document.getElementById('sel-effect').addEventListener('change', e=>{
-    const layer = activeLayer(); if(!layer) return;
+    const requestedType = String(e.target.value || 'particles');
+    const current = activeLayer();
+    if(current && current.type === requestedType) return;
+
     pushUndo();
-    layer.type = e.target.value;
-    layer.state = {}; // reset any runtime state (e.g. ripple rings) on type change
-    updateEffectGroupVisibility(layer.type);
-    populateTargetSelect(layer);
+    const newLayer = makeLayer(requestedType);
+    if(current){
+      newLayer.p.startTime = current.p.startTime;
+      newLayer.p.endTime = current.p.endTime;
+      newLayer.p.fadeIn = current.p.fadeIn;
+      newLayer.p.fadeOut = current.p.fadeOut;
+      if(typeSupportsPoint(requestedType) && current.p.target !== 'path') newLayer.p.target = current.p.target;
+      layers.splice(activeIndex + 1, 0, newLayer);
+      activeIndex += 1;
+    }else{
+      layers.push(newLayer);
+      activeIndex = layers.length - 1;
+    }
+
+    refreshAllUIFromLayer(newLayer);
     renderLayerList();
     renderPoints();
+    renderTimeline();
   });
 
   document.getElementById('sel-target').addEventListener('change', e=>{
