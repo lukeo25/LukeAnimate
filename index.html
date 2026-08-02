@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7929,8 +7928,9 @@ ctx.fill();</textarea>
     button.className = 'config-script-button';
     button.dataset.configGroup = String(group.id || '');
     button.dataset.configItem = String(item.id || item.label || '');
-    button.title = item.description || item.label || item.id || 'Configured tool';
-    button.setAttribute('aria-label', item.label || item.id || 'Configured tool');
+    const configuredLabel = (typeof item.label === 'string') ? item.label : '';
+    button.title = configuredLabel;
+    button.setAttribute('aria-label', configuredLabel);
     button.setAttribute('aria-pressed', 'false');
 
     if(item.iconUrl){
@@ -7943,7 +7943,7 @@ ctx.fill();</textarea>
 
     const label = document.createElement('span');
     label.className = 'config-script-label';
-    label.textContent = item.label || item.id || 'Tool';
+    label.textContent = configuredLabel;
     button.appendChild(label);
     button.addEventListener('click', ()=> runConfiguredItem(group, item, button));
     return button;
