@@ -1,6 +1,6 @@
 
 <!DOCTYPE html>
-<!-- LukeAnimate GPT v145: particles panel stage clicks are layer-locked, so media and rotoscope layers no longer steal selection while editing points or paths. -->
+<!-- LukeAnimate GPT v148: Flowing Line layers can use animated dashes, built-in shapes, custom text or an uploaded image as the moving path item. -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1284,6 +1284,8 @@
       <label class="toolbar-check" title="Show or hide the stage rulers"><input type="checkbox" id="chk-show-rulers" checked>Rulers</label>
       <label class="toolbar-check" title="Show or hide stored stage guides"><input type="checkbox" id="chk-show-guides" checked>Guides</label>
       <label class="toolbar-check" title="Snap moved and newly drawn objects to visible ruler guides"><input type="checkbox" id="chk-snap-guides" checked>Snap to Guides</label>
+      <button class="btn small" id="btn-project-save-top" style="flex:0 0 auto;" title="Save the complete editable LukeAnimate project (Ctrl+S)">💾 Save Project</button>
+      <button class="btn small" id="btn-project-load-top" style="flex:0 0 auto;" title="Load a saved LukeAnimate project">📂 Load Project</button>
       <button class="btn small primary" id="btn-export-webm-top" style="flex:0 0 auto;" title="Export the current animation as a WebM file">Export WebM</button>
       <button class="btn small" id="btn-undo" style="flex:0 0 auto;" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
       <button class="btn small" id="btn-redo" style="flex:0 0 auto;" disabled title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
@@ -1709,7 +1711,7 @@
       <input type="file" id="inp-layerimage" accept="image/png,image/*" style="display:none;">
     </div>
     <div id="image-slot-list" style="display:none;"></div>
-    <div class="hint" id="hint-useimage" style="display:none;">Add 1–5 images and each particle/blob fades through them across its lifetime — the 1st plays at the start, the last at the end, any in between spread evenly across the middle. One image just stamps that image throughout. Works for Particles, Sparkles, Dust, Smoke, Smoke Dust, Pulse, Ripple Rings, Fireworks, and Explosion debris — not line-based effects (Flowing Line, Sine, Lightning, Audio Pulse). Glow doesn't apply to images. Per-layer.</div>
+    <div class="hint" id="hint-useimage" style="display:none;">Add 1–5 images and each particle/blob fades through them across its lifetime — the 1st plays at the start, the last at the end, any in between spread evenly across the middle. One image just stamps that image throughout. Works for Particles, Sparkles, Dust, Smoke, Smoke Dust, Pulse, Ripple Rings, Fireworks, and Explosion debris. Flowing Line has its own Image moving-item control in the Flowing Line settings. Glow doesn't apply to images. Per-layer.</div>
   </div>
 
   <div class="group">
@@ -1754,9 +1756,44 @@
 
   <div class="group" id="group-line" style="display:none;">
     <h2>Flowing Line</h2>
-    <div class="row"><label>Width</label><input type="range" id="rng-lwidth" min="1" max="24" step="0.5" value="5"><span class="val" id="val-lwidth">5</span></div>
-    <div class="row"><label>Dash</label><input type="range" id="rng-ldash" min="4" max="80" step="1" value="24"><span class="val" id="val-ldash">24</span></div>
-    <div class="row"><label>Gap</label><input type="range" id="rng-lgap" min="2" max="80" step="1" value="16"><span class="val" id="val-lgap">16</span></div>
+    <div class="row">
+      <label>Moving Item</label>
+      <select id="sel-line-item-type">
+        <option value="dash">Animated Dashes</option>
+        <option value="shape">Shape Library</option>
+        <option value="text">Text</option>
+        <option value="image">Image</option>
+      </select>
+    </div>
+    <div class="row" id="row-line-width"><label>Width</label><input type="range" id="rng-lwidth" min="1" max="24" step="0.5" value="5"><span class="val" id="val-lwidth">5</span></div>
+    <div class="row" id="row-line-dash"><label>Dash</label><input type="range" id="rng-ldash" min="4" max="80" step="1" value="24"><span class="val" id="val-ldash">24</span></div>
+    <div class="row" id="row-line-gap"><label>Gap</label><input type="range" id="rng-lgap" min="2" max="80" step="1" value="16"><span class="val" id="val-lgap">16</span></div>
+    <div class="row" id="row-line-item-size" style="display:none;"><label>Item Size</label><input type="range" id="rng-line-item-size" min="4" max="120" step="1" value="24"><span class="val" id="val-line-item-size">24</span></div>
+    <div class="row" id="row-line-item-spacing" style="display:none;"><label>Spacing</label><input type="range" id="rng-line-item-spacing" min="8" max="240" step="2" value="64"><span class="val" id="val-line-item-spacing">64</span></div>
+    <div class="row" id="row-line-item-shape" style="display:none;">
+      <label>Shape</label>
+      <select id="sel-line-item-shape">
+        <option value="circle">Circle</option>
+        <option value="square">Square</option>
+        <option value="triangle">Triangle</option>
+        <option value="diamond">Diamond</option>
+        <option value="star">Star</option>
+        <option value="hexagon">Hexagon</option>
+        <option value="cross">Cross</option>
+        <option value="spark">Spark</option>
+      </select>
+    </div>
+    <div class="row" id="row-line-item-text" style="display:none;"><label>Text</label><input type="text" id="inp-line-item-text" value="Text" maxlength="80" style="flex:1;min-width:0;"></div>
+    <div id="row-line-item-image" style="display:none;">
+      <div class="row">
+        <label>Image</label>
+        <label class="btn small" for="inp-line-item-image" id="lbl-line-item-image" style="flex:1;cursor:pointer;text-align:center;">Choose Image…</label>
+        <input type="file" id="inp-line-item-image" accept="image/*,.png,.jpg,.jpeg,.gif,.svg,.webp" style="display:none;">
+      </div>
+      <div class="row"><label>Loaded</label><span id="line-item-image-name" class="audio-filename" style="flex:1;">No image selected</span><button class="btn small danger" id="btn-remove-line-item-image" type="button">Remove</button></div>
+    </div>
+    <label class="toggle-line" id="row-line-item-follow" style="display:none;"><input type="checkbox" id="chk-line-item-follow" checked> Rotate moving items to follow the path</label>
+    <div class="hint">The selected item repeats and travels along this Flowing Line layer. Shape, text and image settings belong only to this layer and are saved in the project.</div>
   </div>
 
   <div class="group" id="group-sine" style="display:none;">
@@ -2058,7 +2095,7 @@
     <div style="padding:10px 14px;">
       <div class="row"><label>From file</label>
         <label class="btn small" for="inp-import-file" style="flex:1;cursor:pointer;">Choose .json…</label>
-        <input type="file" id="inp-import-file" accept="application/json" style="display:none;">
+        <input type="file" id="inp-import-file" accept="application/json,.lukeanimate,.lukeanimate.json" style="display:none;">
       </div>
       <div class="row"><label>From URL</label>
         <input type="text" id="inp-import-url" placeholder="https://raw.githubusercontent.com/…/behaviours.json" style="flex:1;">
@@ -2076,13 +2113,13 @@
   </div>
 
   <div class="devpanel" id="devpanel-tools" style="display:none;">
-    <div class="hint" style="padding:12px 14px 0;">There's currently no autosave — everything (path, points, layers, behaviours) only lives in this browser tab. Save a project file to keep it.</div>
+    <div class="hint" style="padding:12px 14px 0;">Save the complete editable project, then load it later to continue working. The same controls are also available in the top bar.</div>
     <div style="padding:10px 14px;">
       <div class="btn-row" style="margin-bottom:8px;">
-        <button class="btn small primary" id="btn-project-save">Save Project (.json)</button>
+        <button class="btn small primary" id="btn-project-save">Save Complete Project</button>
       </div>
       <div class="btn-row" style="margin-bottom:8px;">
-        <label class="btn small" for="inp-project-load" style="flex:1;cursor:pointer;">Load Project (.json)…</label>
+        <label class="btn small" for="inp-project-load" style="flex:1;cursor:pointer;">Load Complete Project…</label>
         <input type="file" id="inp-project-load" accept="application/json" style="display:none;">
       </div>
       <div class="hint" style="padding:0;">More utilities:</div>
@@ -2314,6 +2351,12 @@ ctx.fill();</textarea>
   let audioLoaded = false;
   let audioDuration = 0;
   let includeAudioInExport = false;
+  // Project saves embed the source audio as a data URL so reopening the project
+  // restores the waveform/playback source without needing the original file.
+  let audioProjectDataUrl = null;
+  let audioProjectFileName = '';
+  let audioProjectMimeType = '';
+  let audioProjectDataPromise = Promise.resolve(null);
 
   // ---------------- Wick-style independent held frames ----------------
   // Drawing objects are frame-owned in both the main project timeline and every
@@ -2865,6 +2908,8 @@ ctx.fill();</textarea>
       pCount: 24, pSize: 6, pGlow: 14, pShape: 'circle',
       useImage: false, images: [], // each entry {src, filename}; positions along an image are spread evenly start→end
       lWidth: 5, lDash: 24, lGap: 16,
+      lItemType: 'dash', lItemSize: 24, lItemSpacing: 64,
+      lItemShape: 'circle', lItemText: 'Text', lItemImage: null, lItemFollowPath: true,
       sAmp: 24, sWave: 6, sWidth: 3.5,
       blobs: 1, blobSize: 20, trail: 26,
       rippleEmitters: 1, rippleRate: 1.5, rippleMaxR: 70, rippleWidth: 3,
@@ -5335,8 +5380,8 @@ ctx.fill();</textarea>
     const clipPivot = ensureClipPivot(clip);
     if(clipPivot.x || clipPivot.y) ctx.translate(-clipPivot.x, -clipPivot.y);
 
-    renderSceneLayers(true);
     renderDrawObjects(); // recurse — a clip's own drawObjects may include further clip instances
+    renderSceneLayers(true);
 
     ctx.restore();
 
@@ -9564,47 +9609,158 @@ ctx.fill();</textarea>
       });
   });
 
-  // ---- Tools: full project save/load, duplicate layer ----
-  document.getElementById('btn-project-save').addEventListener('click', ()=>{
+  // ---- Complete editable project save/load ----
+  function currentProjectPanelId(){
+    const activeTab = document.querySelector('.devtab.active');
+    return activeTab ? String(activeTab.dataset.panel || 'animate') : 'animate';
+  }
+
+  function projectTimestamp(){
+    const date = new Date();
+    const pad = value=>String(value).padStart(2,'0');
+    return date.getFullYear() + pad(date.getMonth()+1) + pad(date.getDate()) + '-' + pad(date.getHours()) + pad(date.getMinutes());
+  }
+
+  function updateProjectCountersAfterLoad(){
+    layerCounter = Math.max(layerCounter, ...layers.map(layer=>{
+      const match=String(layer && layer.id || '').match(/layer-(\d+)/); return match ? Number(match[1])||0 : 0;
+    }), 0);
+    pointIdCounter = Math.max(pointIdCounter, ...targetPoints.map(point=>{
+      const match=String(point && point.id || '').match(/(?:pt|point)-(\d+)/); return match ? Number(match[1])||0 : 0;
+    }), 0);
+    behaviourCounter = Math.max(behaviourCounter, ...behaviours.map(behaviour=>{
+      const match=String(behaviour && behaviour.id || '').match(/behaviour-(\d+)/); return match ? Number(match[1])||0 : 0;
+    }), 0);
+    normalizeAllDrawObjects();
+  }
+
+  async function buildCompleteProjectDocument(){
     const project = snapshotState();
-    project.behaviours = behaviours.map(b=>({ name:b.name, code:b.code, enabled:b.enabled }));
-    project.bgMode = bgMode;
-    project.stageColor = stageColor;
-    project.stageWidth = W;
-    project.stageHeight = H;
-    project.stageFPS = getTimelineFPS();
-    const blob = new Blob([JSON.stringify(project, null, 2)], { type:'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'luke-animate-project.json';
-    a.click();
-    setTimeout(()=> URL.revokeObjectURL(url), 2000);
-  });
-  document.getElementById('inp-project-load').addEventListener('change', (e)=>{
-    const file = e.target.files && e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev)=>{
-      let project;
-      try{ project = JSON.parse(ev.target.result); }
-      catch(err){ logToSandbox('Project load failed: invalid JSON', true); return; }
-      pushUndo();
-      behaviours = [];
-      (project.behaviours || []).forEach(item=>{
-        const b = makeBehaviour(item.name, item.code);
-        b.enabled = item.enabled !== false;
-        behaviours.push(b);
-      });
-      if(project.bgMode === 'green' && !project.stageColor){
-        project.bgMode = 'color';
-        project.stageColor = '#00ff00';
+    project.format = 'LukeAnimateProject';
+    project.projectVersion = 147;
+    project.savedAt = new Date().toISOString();
+    project.timelineFramePixelWidth = timelineFramePixelWidth;
+    project.currentTime = Math.max(0,Number(t)||0);
+    project.activePanel = currentProjectPanelId();
+    project.particlesTab = document.getElementById('tab-btn-points').classList.contains('active') ? 'points' : 'paths';
+    project.includeAudioInExport = !!includeAudioInExport;
+    project.audio = null;
+    if(audioLoaded){
+      const dataUrl = audioProjectDataUrl || await audioProjectDataPromise;
+      if(dataUrl){
+        project.audio = {
+          name:audioProjectFileName || 'project-audio',
+          type:audioProjectMimeType || 'audio/*',
+          dataUrl,
+          includeInExport:!!includeAudioInExport
+        };
       }
-      restoreState(project);
-      renderBehaviourList();
-      renderLayerBehaviourSelect();
-      document.getElementById('inp-project-load').value = '';
-    };
-    reader.readAsText(file);
+    }
+    return project;
+  }
+
+  async function saveCompleteProject(){
+    const topButton = document.getElementById('btn-project-save-top');
+    const toolsButton = document.getElementById('btn-project-save');
+    const originalTop = topButton ? topButton.textContent : '';
+    const originalTools = toolsButton ? toolsButton.textContent : '';
+    if(topButton){ topButton.disabled=true; topButton.textContent='Saving…'; }
+    if(toolsButton){ toolsButton.disabled=true; toolsButton.textContent='Saving…'; }
+    try{
+      const project = await buildCompleteProjectDocument();
+      const blob = new Blob([JSON.stringify(project, null, 2)], { type:'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'luke-animate-project-' + projectTimestamp() + '.lukeanimate.json';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 3000);
+      logToSandbox('Complete project saved: ' + anchor.download);
+    }catch(error){
+      logToSandbox('Project save failed: ' + (error && error.message ? error.message : error), true);
+    }finally{
+      if(topButton){ topButton.disabled=false; topButton.textContent=originalTop; }
+      if(toolsButton){ toolsButton.disabled=false; toolsButton.textContent=originalTools; }
+    }
+  }
+
+  function normaliseLoadedProject(project){
+    if(!project || typeof project !== 'object') throw new Error('The selected file is not a LukeAnimate project.');
+    if(!Array.isArray(project.points)) project.points=[];
+    if(!Array.isArray(project.targetPoints)) project.targetPoints=[];
+    if(!Array.isArray(project.layers)) project.layers=[];
+    if(!Array.isArray(project.drawObjects)) project.drawObjects=[];
+    if(!Array.isArray(project.sceneFrames)) project.sceneFrames=[];
+    if(!Array.isArray(project.behaviours)) project.behaviours=[];
+    if(!project.clips || typeof project.clips !== 'object') project.clips={};
+    if(project.bgMode === 'green' && !project.stageColor){ project.bgMode='color'; project.stageColor='#00ff00'; }
+    return project;
+  }
+
+  async function loadCompleteProjectFile(file){
+    if(!file) return;
+    const textContent = await file.text();
+    let project;
+    try{ project = normaliseLoadedProject(JSON.parse(textContent)); }
+    catch(error){ throw new Error(error && error.message ? error.message : 'Invalid project JSON.'); }
+
+    pushUndo();
+    restoreState(project);
+    updateProjectCountersAfterLoad();
+    timelineFramePixelWidth = Math.max(TIMELINE_MIN_FRAME_PX, Math.min(TIMELINE_MAX_FRAME_PX, Number(project.timelineFramePixelWidth)||timelineFramePixelWidth));
+    const zoomControl=document.getElementById('timeline-frame-zoom');
+    if(zoomControl) zoomControl.value=timelineFramePixelWidth;
+    t = Math.max(0,Math.min(timelineDuration,Number(project.currentTime)||0));
+    syncActiveSceneFrameForTime(t,true);
+    await restoreProjectAudio(project.audio);
+    includeAudioInExport = !!(project.audio && project.audio.includeInExport);
+    document.getElementById('chk-audioinclude').checked = includeAudioInExport && !document.getElementById('chk-audioinclude').disabled;
+
+    if(project.activePanel === 'particles'){
+      showParticlesPanel();
+      if(project.particlesTab === 'points') document.getElementById('tab-btn-points').click();
+      else document.getElementById('tab-btn-paths').click();
+    }else{
+      openDevPanel(panelTitles[project.activePanel] ? project.activePanel : 'animate');
+    }
+    renderBehaviourList();
+    renderLayerBehaviourSelect();
+    renderLayerList();
+    renderTimeline();
+    renderPoints();
+    updateMediaPanelSelection();
+    updateInspector();
+    renderTransformHandles();
+    logToSandbox('Complete project loaded: ' + file.name);
+  }
+
+  document.getElementById('btn-project-save').addEventListener('click', saveCompleteProject);
+  document.getElementById('btn-project-save-top').addEventListener('click', saveCompleteProject);
+  document.getElementById('btn-project-load-top').addEventListener('click', ()=>document.getElementById('inp-project-load').click());
+  document.getElementById('inp-project-load').addEventListener('change', async event=>{
+    const file = event.target.files && event.target.files[0];
+    if(!file) return;
+    const topButton=document.getElementById('btn-project-load-top');
+    const original=topButton ? topButton.textContent : '';
+    if(topButton){ topButton.disabled=true; topButton.textContent='Loading…'; }
+    try{ await loadCompleteProjectFile(file); }
+    catch(error){ logToSandbox('Project load failed: ' + (error && error.message ? error.message : error), true); }
+    finally{
+      event.target.value='';
+      if(topButton){ topButton.disabled=false; topButton.textContent=original; }
+    }
+  });
+
+  window.addEventListener('keydown', event=>{
+    const target=event.target;
+    const typing=target && (/INPUT|TEXTAREA|SELECT/.test(target.tagName) || target.isContentEditable);
+    if(typing) return;
+    if((event.ctrlKey || event.metaKey) && String(event.key).toLowerCase()==='s'){
+      event.preventDefault();
+      saveCompleteProject();
+    }
   });
   function remapSelectionAfterObjectDelete(deletedIndex){
     const remapped = new Set();
@@ -10771,6 +10927,36 @@ ctx.fill();</textarea>
     document.getElementById(valId).textContent = fmt ? fmt(value) : value;
   }
 
+  function ensureFlowingLineItemParams(p){
+    if(!p) return p;
+    if(!['dash','shape','text','image'].includes(p.lItemType)) p.lItemType = 'dash';
+    p.lItemSize = Math.max(4, Number(p.lItemSize) || 24);
+    p.lItemSpacing = Math.max(8, Number(p.lItemSpacing) || 64);
+    if(!['circle','square','triangle','diamond','star','hexagon','cross','spark'].includes(p.lItemShape)) p.lItemShape = 'circle';
+    if(typeof p.lItemText !== 'string') p.lItemText = 'Text';
+    if(!p.lItemImage || typeof p.lItemImage !== 'object' || !p.lItemImage.src) p.lItemImage = null;
+    if(p.lItemFollowPath === undefined) p.lItemFollowPath = true;
+    return p;
+  }
+
+  function updateFlowingLineItemControls(layer){
+    const p = ensureFlowingLineItemParams(layer && layer.p);
+    if(!p) return;
+    const type = p.lItemType;
+    const dashMode = type === 'dash';
+    document.getElementById('row-line-width').style.display = dashMode ? 'flex' : 'none';
+    document.getElementById('row-line-dash').style.display = dashMode ? 'flex' : 'none';
+    document.getElementById('row-line-gap').style.display = dashMode ? 'flex' : 'none';
+    document.getElementById('row-line-item-size').style.display = dashMode ? 'none' : 'flex';
+    document.getElementById('row-line-item-spacing').style.display = dashMode ? 'none' : 'flex';
+    document.getElementById('row-line-item-shape').style.display = type === 'shape' ? 'flex' : 'none';
+    document.getElementById('row-line-item-text').style.display = type === 'text' ? 'flex' : 'none';
+    document.getElementById('row-line-item-image').style.display = type === 'image' ? 'block' : 'none';
+    document.getElementById('row-line-item-follow').style.display = dashMode ? 'none' : 'flex';
+    document.getElementById('line-item-image-name').textContent = p.lItemImage ? (p.lItemImage.filename || 'Loaded image') : 'No image selected';
+    document.getElementById('btn-remove-line-item-image').disabled = !p.lItemImage;
+  }
+
   function refreshAllUIFromLayer(layer){
     if(!layer) return;
     document.getElementById('sel-effect').value = layer.type;
@@ -10786,9 +10972,17 @@ ctx.fill();</textarea>
     setRangeUI('rng-pointradius','val-pointradius', layer.p.pointRadius);
     document.getElementById('sel-pshape').value = layer.p.pShape;
     updateImageRowVisibility(layer);
+    ensureFlowingLineItemParams(layer.p);
+    document.getElementById('sel-line-item-type').value = layer.p.lItemType;
     setRangeUI('rng-lwidth','val-lwidth', layer.p.lWidth);
     setRangeUI('rng-ldash','val-ldash', layer.p.lDash);
     setRangeUI('rng-lgap','val-lgap', layer.p.lGap);
+    setRangeUI('rng-line-item-size','val-line-item-size', layer.p.lItemSize);
+    setRangeUI('rng-line-item-spacing','val-line-item-spacing', layer.p.lItemSpacing);
+    document.getElementById('sel-line-item-shape').value = layer.p.lItemShape;
+    document.getElementById('inp-line-item-text').value = layer.p.lItemText;
+    document.getElementById('chk-line-item-follow').checked = layer.p.lItemFollowPath !== false;
+    updateFlowingLineItemControls(layer);
     setRangeUI('rng-samp','val-samp', layer.p.sAmp);
     setRangeUI('rng-swave','val-swave', layer.p.sWave);
     setRangeUI('rng-swidth','val-swidth', layer.p.sWidth);
@@ -11876,14 +12070,64 @@ ctx.fill();</textarea>
     }
   }
 
-  function handleAudioFile(file){
+  function fileAsDataUrl(file){
+    return new Promise((resolve,reject)=>{
+      const reader = new FileReader();
+      reader.onload = event=>resolve(String(event.target.result || ''));
+      reader.onerror = ()=>reject(reader.error || new Error('Could not read file.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function dataUrlToBlob(dataUrl){
+    const parts = String(dataUrl || '').split(',');
+    if(parts.length < 2) throw new Error('Invalid embedded file data.');
+    const header = parts[0];
+    const mimeMatch = header.match(/^data:([^;,]+)/i);
+    const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+    const binary = header.includes(';base64') ? atob(parts.slice(1).join(',')) : decodeURIComponent(parts.slice(1).join(','));
+    const bytes = new Uint8Array(binary.length);
+    for(let index=0; index<binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return new Blob([bytes], {type:mime});
+  }
+
+  function clearLoadedAudio(){
+    audioEl.pause();
+    audioEl.removeAttribute('src');
+    audioEl.load();
+    if(audioObjectUrl){ URL.revokeObjectURL(audioObjectUrl); audioObjectUrl = null; }
+    audioLoaded = false;
+    audioDuration = 0;
+    includeAudioInExport = false;
+    audioProjectDataUrl = null;
+    audioProjectFileName = '';
+    audioProjectMimeType = '';
+    audioProjectDataPromise = Promise.resolve(null);
+    document.getElementById('inp-audiofile').value = '';
+    document.getElementById('audio-filename').textContent = 'No audio loaded';
+    document.getElementById('audio-track-row').style.display = 'none';
+    document.getElementById('btn-audio-remove').style.display = 'none';
+    document.getElementById('chk-audioinclude').checked = false;
+  }
+
+  function handleAudioFile(file, options){
     if(!file) return;
+    const settings = options || {};
     if(audioObjectUrl) URL.revokeObjectURL(audioObjectUrl);
     audioObjectUrl = URL.createObjectURL(file);
     audioEl.src = audioObjectUrl;
     audioEl.load();
 
-    document.getElementById('audio-filename').textContent = file.name;
+    audioProjectFileName = String(settings.name || file.name || 'project-audio');
+    audioProjectMimeType = String(settings.type || file.type || 'audio/*');
+    if(settings.dataUrl){
+      audioProjectDataUrl = String(settings.dataUrl);
+      audioProjectDataPromise = Promise.resolve(audioProjectDataUrl);
+    }else{
+      audioProjectDataPromise = fileAsDataUrl(file).then(dataUrl=>{ audioProjectDataUrl = dataUrl; return dataUrl; }).catch(()=>null);
+    }
+
+    document.getElementById('audio-filename').textContent = audioProjectFileName;
     document.getElementById('audio-track-row').style.display = 'flex';
     document.getElementById('btn-audio-remove').style.display = 'inline-block';
     audioLoaded = true;
@@ -11904,28 +12148,33 @@ ctx.fill();</textarea>
     const chk = document.getElementById('chk-audioinclude');
     const canCapture = typeof audioEl.captureStream === 'function' || typeof audioEl.mozCaptureStream === 'function';
     chk.disabled = !canCapture;
-    chk.checked = canCapture;
+    chk.checked = settings.includeInExport !== undefined ? (!!settings.includeInExport && canCapture) : canCapture;
     includeAudioInExport = chk.checked;
+  }
+
+  async function restoreProjectAudio(audioRecord){
+    if(!audioRecord || !audioRecord.dataUrl){
+      clearLoadedAudio();
+      return;
+    }
+    const blob = dataUrlToBlob(audioRecord.dataUrl);
+    const name = String(audioRecord.name || 'project-audio');
+    let file;
+    try{ file = new File([blob], name, {type:audioRecord.type || blob.type}); }
+    catch(error){ file = blob; try{ Object.defineProperty(file,'name',{value:name}); }catch(ignore){} }
+    handleAudioFile(file, {
+      name,
+      type:audioRecord.type || blob.type,
+      dataUrl:audioRecord.dataUrl,
+      includeInExport:audioRecord.includeInExport
+    });
   }
 
   document.getElementById('inp-audiofile').addEventListener('change', (e)=>{
     const file = e.target.files && e.target.files[0];
     handleAudioFile(file);
   });
-  document.getElementById('btn-audio-remove').addEventListener('click', ()=>{
-    audioEl.pause();
-    audioEl.removeAttribute('src');
-    audioEl.load();
-    if(audioObjectUrl){ URL.revokeObjectURL(audioObjectUrl); audioObjectUrl = null; }
-    audioLoaded = false;
-    audioDuration = 0;
-    includeAudioInExport = false;
-    document.getElementById('inp-audiofile').value = '';
-    document.getElementById('audio-filename').textContent = 'No audio loaded';
-    document.getElementById('audio-track-row').style.display = 'none';
-    document.getElementById('btn-audio-remove').style.display = 'none';
-    document.getElementById('chk-audioinclude').checked = false;
-  });
+  document.getElementById('btn-audio-remove').addEventListener('click', clearLoadedAudio);
   document.getElementById('chk-audioinclude').addEventListener('change', (e)=>{
     includeAudioInExport = e.target.checked;
   });
@@ -12045,6 +12294,8 @@ ctx.fill();</textarea>
   bindRange('rng-lwidth','lWidth','val-lwidth');
   bindRange('rng-ldash','lDash','val-ldash');
   bindRange('rng-lgap','lGap','val-lgap');
+  bindRange('rng-line-item-size','lItemSize','val-line-item-size');
+  bindRange('rng-line-item-spacing','lItemSpacing','val-line-item-spacing');
   bindRange('rng-samp','sAmp','val-samp');
   bindRange('rng-swave','sWave','val-swave');
   bindRange('rng-swidth','sWidth','val-swidth');
@@ -12144,6 +12395,57 @@ ctx.fill();</textarea>
     const layer = activeLayer(); if(!layer) return;
     pushUndo();
     layer.p.pShape = e.target.value;
+  });
+
+  document.getElementById('sel-line-item-type').addEventListener('change', e=>{
+    const layer = activeLayer(); if(!layer) return;
+    pushUndo();
+    ensureFlowingLineItemParams(layer.p);
+    layer.p.lItemType = e.target.value;
+    updateFlowingLineItemControls(layer);
+  });
+  document.getElementById('sel-line-item-shape').addEventListener('change', e=>{
+    const layer = activeLayer(); if(!layer) return;
+    pushUndo();
+    ensureFlowingLineItemParams(layer.p);
+    layer.p.lItemShape = e.target.value;
+  });
+  document.getElementById('inp-line-item-text').addEventListener('input', e=>{
+    const layer = activeLayer(); if(!layer) return;
+    if(!e.target.dataset.historyArmed){ pushUndo(); e.target.dataset.historyArmed = '1'; }
+    ensureFlowingLineItemParams(layer.p);
+    layer.p.lItemText = e.target.value;
+  });
+  document.getElementById('inp-line-item-text').addEventListener('change', e=>{ e.target.dataset.historyArmed = ''; });
+  document.getElementById('chk-line-item-follow').addEventListener('change', e=>{
+    const layer = activeLayer(); if(!layer) return;
+    pushUndo();
+    ensureFlowingLineItemParams(layer.p);
+    layer.p.lItemFollowPath = e.target.checked;
+  });
+  document.getElementById('inp-line-item-image').addEventListener('change', e=>{
+    const file = e.target.files && e.target.files[0];
+    const layer = activeLayer();
+    if(!file || !layer) return;
+    const reader = new FileReader();
+    reader.onload = event=>{
+      pushUndo();
+      ensureFlowingLineItemParams(layer.p);
+      layer.p.lItemImage = {src:event.target.result, filename:file.name};
+      layer.p.lItemType = 'image';
+      getLayerImage(event.target.result);
+      document.getElementById('sel-line-item-type').value = 'image';
+      document.getElementById('inp-line-item-image').value = '';
+      updateFlowingLineItemControls(layer);
+    };
+    reader.readAsDataURL(file);
+  });
+  document.getElementById('btn-remove-line-item-image').addEventListener('click', ()=>{
+    const layer = activeLayer(); if(!layer) return;
+    pushUndo();
+    ensureFlowingLineItemParams(layer.p);
+    layer.p.lItemImage = null;
+    updateFlowingLineItemControls(layer);
   });
 
   document.getElementById('sel-effect').addEventListener('change', e=>{
@@ -12912,25 +13214,90 @@ ctx.fill();</textarea>
     }
   }
 
+  function drawFlowingLineMovingItem(layer, sample, itemSize, frac){
+    const p = ensureFlowingLineItemParams(layer.p);
+    const css = colorCSS(layer);
+    const angle = p.lItemFollowPath !== false ? Math.atan2(sample.ty || 0, sample.tx || 1) : 0;
+    ctx.save();
+    ctx.translate(sample.x, sample.y);
+    if(angle) ctx.rotate(angle);
+    ctx.shadowColor = css;
+    ctx.shadowBlur = p.lItemType === 'image' ? 0 : Math.max(0, 4 + 10 * (p.pulseAmt/100));
+
+    if(p.lItemType === 'image'){
+      const entry = p.lItemImage;
+      const image = entry && entry.src ? getLayerImage(entry.src) : null;
+      if(image && image.complete && image.naturalWidth > 0){
+        const ratio = Math.max(0.01, image.naturalWidth / Math.max(1,image.naturalHeight));
+        const width = ratio >= 1 ? itemSize : itemSize * ratio;
+        const height = ratio >= 1 ? itemSize / ratio : itemSize;
+        ctx.drawImage(image, -width/2, -height/2, width, height);
+      }else{
+        ctx.fillStyle = css;
+        drawShape('diamond', 0, 0, itemSize * 0.35);
+        ctx.fill();
+      }
+    }else if(p.lItemType === 'text'){
+      const label = p.lItemText || 'Text';
+      ctx.fillStyle = css;
+      ctx.font = `700 ${Math.max(4,itemSize)}px Arial, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, 0, 0);
+    }else{
+      const shape = p.lItemShape || 'circle';
+      const radius = Math.max(2,itemSize/2);
+      if(shape === 'spark'){
+        ctx.strokeStyle = css;
+        ctx.lineWidth = Math.max(1,itemSize*0.14);
+        ctx.lineCap = 'round';
+        drawShape('spark', 0, 0, radius);
+        ctx.stroke();
+      }else{
+        ctx.fillStyle = css;
+        drawShape(shape, 0, 0, radius);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
   function drawLine(layer, pulseMod){
     if(samples.length < 2) return;
-    const p = layer.p;
-    const width = p.lWidth * (1 + 0.4*(p.pulseAmt/100)*pulseMod);
+    const p = ensureFlowingLineItemParams(layer.p);
     const css = colorCSS(layer);
-    ctx.save();
-    ctx.lineWidth = Math.max(0.5,width);
-    ctx.strokeStyle = css;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.setLineDash([p.lDash, p.lGap]);
-    ctx.lineDashOffset = -(t * p.speed * 60);
-    ctx.shadowColor = css;
-    ctx.shadowBlur = 6 + 14*(p.pulseAmt/100)*pulseMod;
-    ctx.beginPath();
-    samples.forEach((s,i)=>{ if(i===0) ctx.moveTo(s.x,s.y); else ctx.lineTo(s.x,s.y); });
-    if(closed) ctx.closePath();
-    ctx.stroke();
-    ctx.restore();
+
+    if(p.lItemType === 'dash'){
+      const width = p.lWidth * (1 + 0.4*(p.pulseAmt/100)*pulseMod);
+      ctx.save();
+      ctx.lineWidth = Math.max(0.5,width);
+      ctx.strokeStyle = css;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.setLineDash([p.lDash, p.lGap]);
+      ctx.lineDashOffset = -(t * p.speed * 60);
+      ctx.shadowColor = css;
+      ctx.shadowBlur = Math.max(0,6 + 14*(p.pulseAmt/100)*pulseMod);
+      ctx.beginPath();
+      samples.forEach((s,i)=>{ if(i===0) ctx.moveTo(s.x,s.y); else ctx.lineTo(s.x,s.y); });
+      if(closed) ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
+    if(pathLen <= 0) return;
+    const spacing = Math.max(8,p.lItemSpacing);
+    const count = Math.max(1,Math.min(400,Math.ceil(pathLen/spacing)));
+    const travel = ((t * p.speed * Math.max(24,spacing)) % pathLen + pathLen) % pathLen;
+    const pulseScale = 1 + 0.25*(p.pulseAmt/100)*pulseMod;
+    const itemSize = Math.max(4,p.lItemSize * pulseScale);
+    for(let index=0; index<count; index++){
+      const distance = (travel + index*spacing) % pathLen;
+      const sample = sampleAt(distance);
+      if(!sample) continue;
+      drawFlowingLineMovingItem(layer, sample, itemSize, count > 1 ? index/(count-1) : 0);
+    }
   }
 
   function drawSine(layer, pulseMod){
@@ -13570,8 +13937,8 @@ ctx.fill();</textarea>
     ctx.filter = filterValue;
     ctx.globalCompositeOperation = 'source-over';
     try{
-      renderSceneLayers(true);
       renderDrawObjects();
+      renderSceneLayers(true);
     }finally{
       ctx.restore();
       t = savedTime;
@@ -13687,9 +14054,11 @@ ctx.fill();</textarea>
     drawPathGuide();
 
     renderOnionSkins();
-    renderSceneLayers(false);
-
+    // Layer rows are interpreted as a camera looking down from the top of the
+    // stack. Regular draw/media objects therefore render first and the FX rows
+    // render afterwards, so a particle row above a graphic row appears above it.
     renderDrawObjects();
+    renderSceneLayers(false);
     ctx.restore();
     renderClipPivotCross();
     renderRegisteredStageOverlays();
