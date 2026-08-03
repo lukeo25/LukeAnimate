@@ -1,6 +1,6 @@
 
 <!DOCTYPE html>
-<!-- LukeAnimate GPT v144: media layers can be deleted directly from the media panel, All Layers list and timeline. -->
+<!-- LukeAnimate GPT v145: particles panel stage clicks are layer-locked, so media and rotoscope layers no longer steal selection while editing points or paths. -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -9913,7 +9913,58 @@ ctx.fill();</textarea>
       return;
     }
 
-    // Stage objects are selectable from every panel. Their owning panel opens automatically.
+    // When the Particles panel is open, the currently selected FX layer owns
+    // the edit session. Stage clicks must modify only that selected layer and
+    // must not be stolen by Animate media, rotoscope or other stage objects.
+    if(isParticlesPanelVisible()){
+      // Clicking directly on the selected editable curve inserts another point
+      // into that same selected path layer.
+      if(editMode && isIndependentPathLayer(activeLayer()) && points.length >= 2 && samples.length >= 2){
+        const { sample, dist } = closestSampleTo(c);
+        if(sample && dist <= INSERT_THRESHOLD){
+          const idx = insertIndexForLen(sample.len);
+          pushUndo();
+          points.splice(idx, 0, c);
+          rebuildPath();
+          saveActivePathEditor();
+          renderPoints();
+          return;
+        }
+      }
+
+      if(!editMode) return;
+
+      // Empty-canvas clicks are routed by the active Particles sub-tab.
+      // Paths adds a control point to the selected path layer. Points adds a
+      // point instance to the selected point layer. Neither tab modifies the
+      // geometry owned by a layer in the other tab.
+      const pointsTabActive = document.getElementById('tab-btn-points').classList.contains('active');
+      pushUndo();
+      if(pointsTabActive){
+        const pointLayer = ensureEditablePointLayer('ripple');
+        addPointToLayer(pointLayer, c);
+        activeIndex = layers.indexOf(pointLayer);
+        loadPathEditorForLayer(pointLayer);
+        setParticleEditorTabForLayer(pointLayer);
+        refreshAllUIFromLayer(pointLayer);
+        renderPointList();
+        renderLayerList();
+        renderPoints();
+        renderTimeline();
+        return;
+      }
+
+      ensureEditablePathLayer('line');
+      points.push(c);
+      rebuildPath();
+      saveActivePathEditor();
+      renderPoints();
+      renderLayerList();
+      renderTimeline();
+      return;
+    }
+
+    // Outside the Particles panel, stage objects are selectable and editable.
     let hitObjectIndex = -1;
     for(let i=drawObjects.length-1; i>=0; i--){
       const obj = ensureDrawObjectMetadata(drawObjects[i]);
@@ -9927,64 +9978,12 @@ ctx.fill();</textarea>
       return;
     }
 
-    // In the particle editor, clicking directly on the editable curve still inserts a point.
-    if(isParticlesPanelVisible() && editMode && isIndependentPathLayer(activeLayer()) && points.length >= 2 && samples.length >= 2){
-      const { sample, dist } = closestSampleTo(c);
-      if(sample && dist <= INSERT_THRESHOLD){
-        const idx = insertIndexForLen(sample.len);
-        pushUndo();
-        points.splice(idx, 0, c);
-        rebuildPath();
-        saveActivePathEditor();
-        renderPoints();
-        return;
-      }
-    }
-
-    // Clicking a visible effect selects its FX layer and opens the full Particles panel.
-    const hitEffectIndex = hitTestEffectLayer(c);
-    if(hitEffectIndex >= 0){
-      selectEffectLayer(hitEffectIndex, true);
-      return;
-    }
-
-    if(!isParticlesPanelVisible()){
-      if(!e.shiftKey){
-        selectedDrawIndices.clear();
-        updateSelectedCountUI();
-        renderLayerList();
-      }
-      return;
-    }
-
-    // Empty-canvas clicks are routed by the active Particles sub-tab.
-    // Paths adds a control point to the selected path layer. Points adds a
-    // point instance to the selected point layer. Neither tab modifies the
-    // geometry owned by a layer in the other tab.
-    if(!editMode) return;
-    const pointsTabActive = document.getElementById('tab-btn-points').classList.contains('active');
-    pushUndo();
-    if(pointsTabActive){
-      const pointLayer = ensureEditablePointLayer('ripple');
-      addPointToLayer(pointLayer, c);
-      activeIndex = layers.indexOf(pointLayer);
-      loadPathEditorForLayer(pointLayer);
-      setParticleEditorTabForLayer(pointLayer);
-      refreshAllUIFromLayer(pointLayer);
-      renderPointList();
+    if(!e.shiftKey){
+      selectedDrawIndices.clear();
+      updateSelectedCountUI();
       renderLayerList();
-      renderPoints();
-      renderTimeline();
-      return;
     }
-
-    ensureEditablePathLayer('line');
-    points.push(c);
-    rebuildPath();
-    saveActivePathEditor();
-    renderPoints();
-    renderLayerList();
-    renderTimeline();
+    return;
   });
   overlay.addEventListener('contextmenu', (e)=>{
     if(!editMode || !isParticlesPanelVisible()) return;
