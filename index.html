@@ -1,9 +1,10 @@
+
 <!DOCTYPE html>
-<!-- LukeAnimate GPT v138: independent multiple FX layers and restored FX delete controls -->
+<!-- LukeAnimate GPT v142: every FX layer owns independent path or point geometry; editing one layer never changes another -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v138</title>
+<title>Luke Animate v140</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -1574,7 +1575,7 @@
 <div id="sidebar-main-content" style="display:none;">
   <div class="side-header">
     <h1>Particles &amp; Effects</h1>
-    <p>draw a curve → stack effect layers on it → animate → export</p>
+    <p>select a path or point layer → add only to that layer → stack FX → animate → export</p>
   </div>
 
   <div class="tool-tabs">
@@ -1586,6 +1587,7 @@
     <div class="group">
       <h2>Path</h2>
       <div class="btn-row" style="margin-bottom:8px;">
+        <button class="btn small" id="btn-new-path-layer" title="Create and select a new independent path layer">+ New Path Layer</button>
         <button class="btn active" id="btn-edit">Edit Points</button>
         <button class="btn" id="btn-clear">Clear</button>
       </div>
@@ -1598,7 +1600,7 @@
         <button class="btn small" data-preset="circle">Circle</button>
         <button class="btn small" data-preset="zigzag">Zigzag</button>
       </div>
-      <div class="hint">Click empty canvas to add a point at the end. Click <b style="color:var(--accent);">on the curve itself</b> to insert a point between the two points there. Drag a point to move it. Right-click a point to delete it.</div>
+      <div class="hint">Use <b>+ New Path Layer</b> to create an empty independent path. While the Paths tab is active, every stage click adds a control point only to the selected path layer. The second point displays the effect between the endpoints. Click on that layer's curve to insert another control point. Drag a control point to move it. Right-click one to delete it.</div>
     </div>
 
     <div class="group">
@@ -1621,25 +1623,28 @@
 
   <div id="tab-points" style="display:none;">
     <div class="group">
-      <h2>Create a Point</h2>
+      <h2>Create a Point Layer</h2>
+      <div class="btn-row" style="margin-bottom:8px;">
+        <button class="btn small" id="btn-new-point-layer" title="Create and select a new independent point layer">+ New Point Layer</button>
+      </div>
       <div class="btn-row" style="margin-bottom:8px;">
         <button class="btn small" id="btn-add-pulsepoint">+ Pulse Point</button>
         <button class="btn small" id="btn-add-particlepoint">+ Particle Point</button>
       </div>
       <div class="btn-row" style="margin-bottom:8px;">
         <button class="btn small" id="btn-add-cloudpoint">+ Cloud Point</button>
-        <button class="btn small" id="btn-add-point">+ Point (current layer)</button>
+        <button class="btn small" id="btn-add-point">+ Point (Pulse Rings)</button>
       </div>
       <div class="btn-row">
         <button class="btn small" id="btn-add-highlight" style="border-color:var(--warn);color:var(--warn);">+ Highlighter</button>
       </div>
-      <div class="hint"><b>Pulse Point</b>, <b>Particle Point</b>, and <b>Cloud Point</b> each drop a point with that one effect ready to go. <b style="color:var(--warn);">Highlighter</b> drops a point rigged with the pulse+ring "important thing" combo. <b>+ Point (current layer)</b> just points whatever layer you already have selected at a new point, for full manual control.</div>
+      <div class="hint">Use <b>+ New Point Layer</b> to create an empty Ripple Rings layer. While the Points tab is active, every stage click adds a new point to the selected point layer. All points in that layer share its effect settings, but their positions remain independently movable. The preset buttons create a new point layer with its first point already added.</div>
     </div>
 
     <div class="group">
       <h2>Points</h2>
       <div id="point-list"></div>
-      <div class="hint">A point is a standalone anchor, separate from the path. Any layer can target the path <i>or</i> one of these points, in the Effect section below.</div>
+      <div class="hint">Each listed point belongs to one selected point layer. Move a point on the stage to move that effect instance. Deleting a point removes only that point; deleting the layer removes every point owned by that layer.</div>
     </div>
   </div>
 
@@ -1647,10 +1652,10 @@
     <h2>All Layers</h2>
     <div id="layer-list"></div>
     <div class="btn-row">
-      <button class="btn small" id="btn-add-layer" title="Add another independent layer using the currently selected effect type">+ Add Current Type</button>
+      <button class="btn small" id="btn-add-layer" title="Duplicate the selected independent layer">Duplicate Selected Layer</button>
       <button class="btn small danger" id="btn-del-layer">Delete Selected</button>
     </div>
-    <div class="hint">Every particle effect, point effect, flowing line and other object has its own independent layer. Choosing a different Effect Type creates a new FX layer instead of replacing the current one. Use <b>+ Add Current Type</b> to add another layer of the same type.</div>
+    <div class="hint">Path layers own separate control-point arrays. Point layers own separate lists of stage points. Duplicate Selected Layer copies only the selected layer and its geometry.</div>
   </div>
 
   <div class="group">
@@ -2862,6 +2867,10 @@ ctx.fill();</textarea>
 
   function effectLayerDisplayName(layer, index){
     const base = effectLabel(layer && layer.type);
+    if(isIndependentPointLayer(layer)){
+      const count = pointObjectsForLayer(layer).length;
+      return 'Point Layer' + (count ? ' (' + count + ')' : ' (empty)') + ' · ' + base;
+    }
     const sameTypeCount = layers.reduce((count, candidate)=> count + (candidate && candidate.type === layer.type ? 1 : 0), 0);
     if(sameTypeCount < 2) return base;
     const ordinal = layers.slice(0, Math.max(0, index) + 1).reduce((count, candidate)=> count + (candidate && candidate.type === layer.type ? 1 : 0), 0);
@@ -3055,7 +3064,7 @@ ctx.fill();</textarea>
     return x - Math.floor(x);
   }
 
-  // ---------------- standalone target points (separate from the path, shared by any layer) ----------------
+  // ---------------- standalone target points (separate from the path; new points own one FX layer) ----------------
   let pointIdCounter = 0;
   let targetPoints = [];
 
@@ -3072,8 +3081,267 @@ ctx.fill();</textarea>
     };
   }
 
+  function pointIdsForLayer(layer){
+    if(!layer || !layer.p) return [];
+    let ids = Array.isArray(layer.p.pointIds)
+      ? layer.p.pointIds.map(value=>String(value || '')).filter(Boolean)
+      : [];
+    if(!ids.length && layer.p.ownedPointId) ids.push(String(layer.p.ownedPointId));
+    if(!ids.length && layer.p.target && layer.p.target !== 'path') ids.push(String(layer.p.target));
+    ids = Array.from(new Set(ids));
+    layer.p.pointIds = ids;
+    if(ids.length){
+      layer.p.geometryMode = 'points';
+      if(!ids.includes(String(layer.p.target || ''))) layer.p.target = ids[0];
+      layer.p.ownedPointId = ids[0]; // legacy compatibility for older project data
+    }else if(layer.p.geometryMode === 'points'){
+      layer.p.target = '';
+      delete layer.p.ownedPointId;
+    }
+    return ids;
+  }
+
+  function pointObjectsForLayer(layer){
+    const wanted = new Set(pointIdsForLayer(layer));
+    return targetPoints.filter(point=>wanted.has(String(point.id)));
+  }
+
+  function layerOwnsPoint(layer, pointId){
+    const wanted = String(pointId || '');
+    return !!wanted && pointIdsForLayer(layer).includes(wanted);
+  }
+
+  function isIndependentPointLayer(layer){
+    return !!(layer && layer.p && (layer.p.geometryMode === 'points' || pointIdsForLayer(layer).length > 0));
+  }
+
   function getTargetPoint(layer){
-    return targetPoints.find(pt => pt.id === layer.p.target);
+    if(!layer || !layer.p) return null;
+    const explicit = String(layer.p.target || '');
+    if(explicit && explicit !== 'path'){
+      const direct = targetPoints.find(pt=>String(pt.id) === explicit);
+      if(direct) return direct;
+    }
+    const firstId = pointIdsForLayer(layer)[0];
+    return firstId ? targetPoints.find(pt=>String(pt.id) === firstId) || null : null;
+  }
+
+  function ownedPointIdForLayer(layer){
+    return pointIdsForLayer(layer)[0] || '';
+  }
+
+  function pointLayerIndex(pointId){
+    const wanted = String(pointId || '');
+    if(!wanted) return -1;
+    return layers.findIndex(layer => layerOwnsPoint(layer, wanted));
+  }
+
+  function attachOwnedPointToLayer(layer, point){
+    if(!layer || !point) return layer;
+    layer.p.geometryMode = 'points';
+    const ids = pointIdsForLayer(layer);
+    if(!ids.includes(String(point.id))) ids.push(String(point.id));
+    layer.p.pointIds = ids;
+    layer.p.target = ids[0] || '';
+    if(ids.length) layer.p.ownedPointId = ids[0];
+    delete layer.p.pathPoints;
+    delete layer.p.pathClosed;
+    return layer;
+  }
+
+  function addOwnedPointLayer(point, type, configure){
+    const layer = makeLayer(type || 'ripple');
+    layer.p.geometryMode = 'points';
+    layer.p.pointIds = [];
+    layer.p.target = '';
+    delete layer.p.ownedPointId;
+    if(point) attachOwnedPointToLayer(layer, point);
+    if(typeof configure === 'function') configure(layer, point);
+    layers.push(layer);
+    return layer;
+  }
+
+  // Every path-targeted FX layer owns its own editable curve. The global
+  // points/closed/samples variables are only the editor view for the currently
+  // selected path layer; each layer stores its real geometry in p.pathPoints
+  // and p.pathClosed.
+  function isIndependentPathLayer(layer){
+    if(!layer || !layer.p || isIndependentPointLayer(layer)) return false;
+    return layer.p.geometryMode === 'path' || layer.p.target === 'path';
+  }
+
+  function clonePathPointList(value){
+    return (Array.isArray(value) ? value : []).map(point=>({
+      x:Number(point && point.x) || 0,
+      y:Number(point && point.y) || 0
+    }));
+  }
+
+  function ensureLayerPathData(layer, fallbackPoints, fallbackClosed){
+    if(!isIndependentPathLayer(layer)) return null;
+    if(!Array.isArray(layer.p.pathPoints)){
+      layer.p.pathPoints = clonePathPointList(fallbackPoints);
+    }else{
+      layer.p.pathPoints.forEach(point=>{
+        point.x = Number(point && point.x) || 0;
+        point.y = Number(point && point.y) || 0;
+      });
+    }
+    if(layer.p.pathClosed === undefined) layer.p.pathClosed = !!fallbackClosed;
+    else layer.p.pathClosed = !!layer.p.pathClosed;
+    return layer.p;
+  }
+
+  function migrateIndependentPathLayers(layerList, fallbackPoints, fallbackClosed){
+    (Array.isArray(layerList) ? layerList : []).forEach(layer=>{
+      if(!isIndependentPathLayer(layer)) return;
+      ensureLayerPathData(layer, fallbackPoints, fallbackClosed);
+    });
+  }
+
+  function saveActivePathEditor(){
+    const layer = activeLayer();
+    if(!isIndependentPathLayer(layer)) return false;
+    const data = ensureLayerPathData(layer, points, closed);
+    data.pathPoints = clonePathPointList(points);
+    data.pathClosed = !!closed;
+    return true;
+  }
+
+  function loadPathEditorForLayer(layer, fallbackPoints, fallbackClosed){
+    if(isIndependentPathLayer(layer)){
+      const data = ensureLayerPathData(layer, fallbackPoints, fallbackClosed);
+      points = clonePathPointList(data.pathPoints);
+      closed = !!data.pathClosed;
+    }else{
+      points = [];
+      closed = false;
+    }
+    rebuildPath();
+    const closeBox = document.getElementById('chk-close');
+    if(closeBox) closeBox.checked = closed;
+  }
+
+  function pathGeometryForLayer(layer){
+    if(!isIndependentPathLayer(layer)) return {points:[], closed:false, samples:[], pathLen:0};
+    const data = ensureLayerPathData(layer, [], false);
+    return buildPathGeometry(data.pathPoints, data.pathClosed);
+  }
+
+  function setParticleEditorTabForLayer(layer){
+    const pathButton = document.getElementById('tab-btn-paths');
+    const pointButton = document.getElementById('tab-btn-points');
+    const pathPanel = document.getElementById('tab-paths');
+    const pointPanel = document.getElementById('tab-points');
+    if(!pathButton || !pointButton || !pathPanel || !pointPanel) return;
+    const showPoints = isIndependentPointLayer(layer);
+    pathButton.classList.toggle('active', !showPoints);
+    pointButton.classList.toggle('active', showPoints);
+    pathPanel.style.display = showPoints ? 'none' : 'block';
+    pointPanel.style.display = showPoints ? 'block' : 'none';
+  }
+
+  function ensureEditablePathLayer(defaultType){
+    const current = activeLayer();
+    if(isIndependentPathLayer(current)){
+      ensureLayerPathData(current, points, closed);
+      loadPathEditorForLayer(current, points, closed);
+      setParticleEditorTabForLayer(current);
+      return current;
+    }
+
+    // A point layer never borrows another layer's path. Starting path editing
+    // while a point is selected creates a new independent path FX layer.
+    const layer = makeLayer(defaultType || 'line');
+    layer.p.geometryMode = 'path';
+    layer.p.target = 'path';
+    layer.p.pointIds = [];
+    delete layer.p.ownedPointId;
+    layer.p.pathPoints = [];
+    layer.p.pathClosed = false;
+    layers.push(layer);
+    activeIndex = layers.length - 1;
+    selectedDrawIndices.clear();
+    loadPathEditorForLayer(layer);
+    setParticleEditorTabForLayer(layer);
+    refreshAllUIFromLayer(layer);
+    renderLayerList();
+    renderTimeline();
+    return layer;
+  }
+
+  function createEmptyPathLayer(defaultType){
+    saveActivePathEditor();
+    const requested = String(defaultType || 'line');
+    const layer = makeLayer(requested === 'sine' ? 'sine' : 'line');
+    layer.p.geometryMode = 'path';
+    layer.p.target = 'path';
+    layer.p.pointIds = [];
+    delete layer.p.ownedPointId;
+    layer.p.pathPoints = [];
+    layer.p.pathClosed = false;
+    layers.push(layer);
+    activeIndex = layers.length - 1;
+    selectedDrawIndices.clear();
+    loadPathEditorForLayer(layer);
+    setParticleEditorTabForLayer(layer);
+    refreshAllUIFromLayer(layer);
+    renderLayerList();
+    renderTimeline();
+    renderPoints();
+    return layer;
+  }
+
+  function createEmptyPointLayer(defaultType){
+    saveActivePathEditor();
+    const requested = String(defaultType || 'ripple');
+    const layer = makeLayer(typeSupportsPoint(requested) ? requested : 'ripple');
+    layer.p.geometryMode = 'points';
+    layer.p.pointIds = [];
+    layer.p.target = '';
+    delete layer.p.ownedPointId;
+    delete layer.p.pathPoints;
+    delete layer.p.pathClosed;
+    layers.push(layer);
+    activeIndex = layers.length - 1;
+    selectedDrawIndices.clear();
+    loadPathEditorForLayer(layer);
+    setParticleEditorTabForLayer(layer);
+    refreshAllUIFromLayer(layer);
+    renderPointList();
+    renderLayerList();
+    renderTimeline();
+    renderPoints();
+    return layer;
+  }
+
+  function ensureEditablePointLayer(defaultType){
+    const current = activeLayer();
+    if(isIndependentPointLayer(current) && typeSupportsPoint(current.type)) return current;
+    return createEmptyPointLayer(defaultType || 'ripple');
+  }
+
+  function addPointToLayer(layer, position){
+    if(!layer || !isIndependentPointLayer(layer)) return null;
+    const point = makePoint();
+    if(position){
+      point.x = Number(position.x) || 0;
+      point.y = Number(position.y) || 0;
+    }
+    targetPoints.push(point);
+    attachOwnedPointToLayer(layer, point);
+    layer.p.target = pointIdsForLayer(layer)[0] || point.id;
+    return point;
+  }
+
+  function createOffsetPointFrom(sourcePoint){
+    const point = makePoint();
+    if(sourcePoint){
+      point.x = Math.max(20, Math.min(W - 20, Number(sourcePoint.x || 0) + 28));
+      point.y = Math.max(20, Math.min(H - 20, Number(sourcePoint.y || 0) + 28));
+    }
+    targetPoints.push(point);
+    return point;
   }
 
   // ---------------- undo / redo ----------------
@@ -3085,6 +3353,7 @@ ctx.fill();</textarea>
   const MAX_HISTORY = 60;
 
   function snapshotState(){
+    saveActivePathEditor();
     return {
       points: points.map(p=>({x:p.x,y:p.y})),
       closed,
@@ -3193,7 +3462,12 @@ ctx.fill();</textarea>
       ? Math.max(0, Math.min(Number(snap.activeIndex) || 0, layers.length - 1))
       : -1;
 
-    rebuildPath();
+    // Older projects stored one shared path at the project level. Give every
+    // path layer its own cloned copy during migration, then load only the
+    // selected layer into the path editor.
+    migrateIndependentPathLayers(layers, points, closed);
+    loadPathEditorForLayer(activeLayer(), points, closed);
+    setParticleEditorTabForLayer(activeLayer());
     refreshAllUIFromLayer(activeLayer());
     renderLayerList();
     renderPointList();
@@ -3281,137 +3555,109 @@ ctx.fill();</textarea>
     else if((shortcutKey === 'z' && e.shiftKey) || shortcutKey === 'y'){ e.preventDefault(); doRedo(); }
   });
 
-  // Adding a point isn't just placement — it's meant to instantly read as
-  // "this is the important thing": a breathing pulse with echo halos, plus
-  // an expanding ring underneath, both anchored to the new point.
-  function addHighlightLayersFor(pt){
-    const highlightColor = '#ffd24f';
+  // Every point owns exactly one effect layer. A normal point begins as
+  // Ripple Rings so it is visible immediately, but its point-compatible type
+  // can be changed later without touching any other point or path layer.
+  function addDefaultRipplePointLayer(pt, highlighted){
+    return addOwnedPointLayer(pt, 'ripple', layer=>{
+      layer.p.rippleShape = 'circle';
+      layer.p.rippleFill = false;
+      layer.p.rippleEmitters = highlighted ? 2 : 1;
+      layer.p.rippleRate = highlighted ? 1.8 : 1.2;
+      layer.p.rippleMaxR = highlighted ? 105 : 75;
+      layer.p.rippleWidth = highlighted ? 4 : 3;
+      layer.p.speed = 1.0;
+      if(highlighted) layer.p.color = '#ffd24f';
+    });
+  }
 
-    const pulseLayer = makeLayer('pulse');
-    pulseLayer.p.target = pt.id;
-    pulseLayer.p.color = highlightColor;
-    pulseLayer.p.pulseAmt = 85;
-    pulseLayer.p.pulseFreq = 1.0;
-    pulseLayer.p.blobs = 4;
-    pulseLayer.p.blobSize = 22;
-
-    const rippleLayer = makeLayer('ripple');
-    rippleLayer.p.target = pt.id;
-    rippleLayer.p.color = highlightColor;
-    rippleLayer.p.rippleShape = 'circle';
-    rippleLayer.p.rippleFill = false;
-    rippleLayer.p.rippleRate = 1.2;
-    rippleLayer.p.rippleMaxR = 90;
-    rippleLayer.p.rippleWidth = 3;
-    rippleLayer.p.speed = 1.0;
-
-    layers.push(pulseLayer, rippleLayer);
-    return pulseLayer;
+  function finishPointLayerCreation(layer){
+    saveActivePathEditor();
+    activeIndex = layers.indexOf(layer);
+    loadPathEditorForLayer(layer);
+    setParticleEditorTabForLayer(layer);
+    refreshAllUIFromLayer(activeLayer());
+    renderPointList();
+    renderLayerList();
+    renderPoints();
+    renderTimeline();
   }
 
   function addPoint(){
     pushUndo();
     const pt = makePoint();
     targetPoints.push(pt);
-    renderPointList();
-
-    // Give the person choice back: if the currently selected layer can anchor
-    // to a point (Particles, Pulse, Ripple, Rain, whatever they had picked),
-    // just point IT at the new spot. Only fall back to creating a fresh
-    // Pulse+Ripple pair if nothing sensible is already selected to use it.
-    const current = activeLayer();
-    if(current && typeSupportsPoint(current.type)){
-      current.p.target = pt.id;
-      populateTargetSelect(current);
-    } else {
-      const newActiveLayer = addHighlightLayersFor(pt);
-      activeIndex = layers.indexOf(newActiveLayer);
-    }
-
-    refreshAllUIFromLayer(activeLayer());
-    renderLayerList();
-    renderPoints();
+    finishPointLayerCreation(addDefaultRipplePointLayer(pt, false));
   }
 
   function addHighlightPoint(){
     pushUndo();
     const pt = makePoint();
     targetPoints.push(pt);
-    renderPointList();
-
-    const newActiveLayer = addHighlightLayersFor(pt);
-    activeIndex = layers.indexOf(newActiveLayer);
-
-    refreshAllUIFromLayer(activeLayer());
-    renderLayerList();
-    renderPoints();
+    finishPointLayerCreation(addDefaultRipplePointLayer(pt, true));
   }
 
   function addPulsePoint(){
     pushUndo();
     const pt = makePoint();
     targetPoints.push(pt);
-    renderPointList();
-
-    const pulseLayer = makeLayer('pulse');
-    pulseLayer.p.target = pt.id;
-    pulseLayer.p.pulseAmt = 60;
-    pulseLayer.p.pulseFreq = 1.3;
-    pulseLayer.p.blobs = 2;
-    pulseLayer.p.blobSize = 20;
-    layers.push(pulseLayer);
-    activeIndex = layers.indexOf(pulseLayer);
-
-    refreshAllUIFromLayer(activeLayer());
-    renderLayerList();
-    renderPoints();
+    const layer = addOwnedPointLayer(pt, 'pulse', pulseLayer=>{
+      pulseLayer.p.pulseAmt = 60;
+      pulseLayer.p.pulseFreq = 1.3;
+      pulseLayer.p.blobs = 2;
+      pulseLayer.p.blobSize = 20;
+    });
+    finishPointLayerCreation(layer);
   }
 
   function addParticlePoint(){
     pushUndo();
     const pt = makePoint();
     targetPoints.push(pt);
-    renderPointList();
-
-    const particleLayer = makeLayer('particles');
-    particleLayer.p.target = pt.id;
-    particleLayer.p.pointRadius = 160;
-    particleLayer.p.pCount = 30;
-    layers.push(particleLayer);
-    activeIndex = layers.indexOf(particleLayer);
-
-    refreshAllUIFromLayer(activeLayer());
-    renderLayerList();
-    renderPoints();
+    const layer = addOwnedPointLayer(pt, 'particles', particleLayer=>{
+      particleLayer.p.pointRadius = 160;
+      particleLayer.p.pCount = 30;
+    });
+    finishPointLayerCreation(layer);
   }
 
   function addCloudPoint(){
     pushUndo();
     const pt = makePoint();
     targetPoints.push(pt);
-    renderPointList();
-
-    const cloudLayer = makeLayer('clouds');
-    cloudLayer.p.target = pt.id;
-    cloudLayer.p.color = '#e8edf1';
-    layers.push(cloudLayer);
-    activeIndex = layers.indexOf(cloudLayer);
-
-    refreshAllUIFromLayer(activeLayer());
-    renderLayerList();
-    renderPoints();
+    const layer = addOwnedPointLayer(pt, 'clouds', cloudLayer=>{
+      cloudLayer.p.color = '#e8edf1';
+    });
+    finishPointLayerCreation(layer);
   }
 
   function deletePoint(id){
-    const idx = targetPoints.findIndex(pt => pt.id === id);
-    if(idx < 0) return;
+    const pointIndex = targetPoints.findIndex(pt => String(pt.id) === String(id));
+    if(pointIndex < 0) return;
     pushUndo();
-    targetPoints.splice(idx,1);
-    // any layer that was targeting this point falls back to the path
-    layers.forEach(l => { if(l.p.target === id) l.p.target = 'path'; });
+
+    layers.forEach(layer=>{
+      if(!layer || !layer.p) return;
+      const ids = pointIdsForLayer(layer).filter(pointId=>String(pointId) !== String(id));
+      if(isIndependentPointLayer(layer)){
+        layer.p.pointIds = ids;
+        layer.p.target = ids[0] || '';
+        if(ids.length) layer.p.ownedPointId = ids[0];
+        else delete layer.p.ownedPointId;
+        if(layer.state && layer.state.pointStates) delete layer.state.pointStates[id];
+      }else if(String(layer.p.target || '') === String(id)){
+        layer.p.target = 'path';
+      }
+    });
+    targetPoints.splice(pointIndex, 1);
+
+    activeIndex = layers.length ? Math.min(Math.max(0, activeIndex), layers.length - 1) : -1;
+    refreshAllUIFromLayer(activeLayer());
     populateTargetSelect(activeLayer());
     renderPointList();
+    renderLayerList();
     renderPoints();
+    renderTimeline();
   }
 
   function renderPointList(){
@@ -3436,13 +3682,29 @@ ctx.fill();</textarea>
       delBtn.className = 'layer-btn del';
       delBtn.title = 'Delete point';
       delBtn.textContent = '\u2715';
-      delBtn.addEventListener('click', ()=> deletePoint(pt.id));
+      delBtn.addEventListener('click', (event)=>{
+        event.stopPropagation();
+        deletePoint(pt.id);
+      });
+      row.addEventListener('click', ()=>{
+        const ownerIndex = pointLayerIndex(pt.id);
+        if(ownerIndex >= 0) selectEffectLayer(ownerIndex, true);
+      });
       row.appendChild(dot);
       row.appendChild(name);
       row.appendChild(delBtn);
       list.appendChild(row);
     });
   }
+
+  document.getElementById('btn-new-path-layer').addEventListener('click', ()=>{
+    pushUndo();
+    createEmptyPathLayer('line');
+  });
+  document.getElementById('btn-new-point-layer').addEventListener('click', ()=>{
+    pushUndo();
+    createEmptyPointLayer('ripple');
+  });
 
   document.getElementById('btn-add-point').addEventListener('click', addPoint);
   document.getElementById('btn-add-highlight').addEventListener('click', addHighlightPoint);
@@ -4651,6 +4913,7 @@ ctx.fill();</textarea>
     const saved = { points, closed, samples, pathLen, targetPoints, layers, drawObjects, sceneFrames, activeSceneFrameId, t };
     points = clip.points; closed = clip.closed; targetPoints = clip.targetPoints;
     layers = clip.layers;
+    migrateIndependentPathLayers(layers, clip.points, clip.closed);
     ensureClipSceneFrames(clip);
     sceneFrames = clip.sceneFrames;
     drawObjects = sceneFrameObjectsAtTime(sceneFrames, localT, clip.timelineDuration, clip.drawObjects || []);
@@ -4680,6 +4943,7 @@ ctx.fill();</textarea>
   }
 
   function captureMainSceneAsContext(){
+    saveActivePathEditor();
     return { points, closed, targetPoints, layers, drawObjects, sceneFrames, activeSceneFrameId, timelineDuration, loopTimeline, activeIndex, t };
   }
 
@@ -4687,7 +4951,9 @@ ctx.fill();</textarea>
   // rendering it) — every existing panel (Path, Layers, Effect, Timeline)
   // keeps working unmodified because they all read these same variables.
   function applyContext(data){
-    points = data.points; closed = data.closed; targetPoints = data.targetPoints;
+    const legacyPoints = clonePathPointList(data.points);
+    const legacyClosed = !!data.closed;
+    points = legacyPoints; closed = legacyClosed; targetPoints = data.targetPoints;
     layers = data.layers;
     drawObjects = Array.isArray(data.drawObjects) ? data.drawObjects : [];
     sceneFrames = Array.isArray(data.sceneFrames) ? data.sceneFrames : [];
@@ -4699,7 +4965,9 @@ ctx.fill();</textarea>
     t = data.t || 0;
     normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
     syncActiveSceneFrameForTime(t, false);
-    rebuildPath();
+    migrateIndependentPathLayers(layers, legacyPoints, legacyClosed);
+    loadPathEditorForLayer(activeLayer(), legacyPoints, legacyClosed);
+    setParticleEditorTabForLayer(activeLayer());
     document.getElementById('inp-timelineduration').value = timelineDuration;
     document.getElementById('inp-duration').value = timelineDuration;
     document.getElementById('chk-looptimeline').checked = loopTimeline;
@@ -4732,6 +5000,7 @@ ctx.fill();</textarea>
 
   function saveCurrentClipEditingContext(){
     if(!editingClipId) return;
+    saveActivePathEditor();
     const clip = clips[editingClipId];
     if(!clip) return;
     clip.points = points;
@@ -8929,8 +9198,11 @@ ctx.fill();</textarea>
 
   function selectEffectLayer(index, openOwnerPanel){
     if(index < 0 || index >= layers.length) return;
+    if(index !== activeIndex) saveActivePathEditor();
     activeIndex = index;
     selectedDrawIndices.clear();
+    loadPathEditorForLayer(activeLayer());
+    setParticleEditorTabForLayer(activeLayer());
     if(openOwnerPanel !== false) routeSelectionToPanel('particles', false);
     refreshAllUIFromLayer(activeLayer());
     renderLayerList();
@@ -8989,14 +9261,20 @@ ctx.fill();</textarea>
     return Math.max(12, radii[layer.type] || 45);
   }
 
-  function distanceToCurrentPath(c){
+  function distanceToPathGeometry(c, geometry){
     let best = Infinity;
-    if(samples.length){
-      samples.forEach(sample=>{ best = Math.min(best, Math.hypot(c.x-sample.x, c.y-sample.y)); });
-    } else {
-      points.forEach(point=>{ best = Math.min(best, Math.hypot(c.x-point.x, c.y-point.y)); });
+    const geometrySamples = geometry && Array.isArray(geometry.samples) ? geometry.samples : [];
+    const geometryPoints = geometry && Array.isArray(geometry.points) ? geometry.points : [];
+    if(geometrySamples.length){
+      geometrySamples.forEach(sample=>{ best = Math.min(best, Math.hypot(c.x-sample.x, c.y-sample.y)); });
+    }else{
+      geometryPoints.forEach(point=>{ best = Math.min(best, Math.hypot(c.x-point.x, c.y-point.y)); });
     }
     return best;
+  }
+
+  function distanceToCurrentPath(c){
+    return distanceToPathGeometry(c, {points, samples});
   }
 
   function hitTestEffectLayer(c){
@@ -9004,13 +9282,14 @@ ctx.fill();</textarea>
       const layer = layers[i];
       if(!layer.enabled) continue;
       if(t < layer.p.startTime || t > layer.p.endTime) continue;
-      const pt = getTargetPoint(layer);
-      const usesPoint = layer.p.target !== 'path' && pt;
-      const radius = effectHitRadius(layer, !!usesPoint);
+      const pointTargets = pointObjectsForLayer(layer);
+      const usesPoint = isIndependentPointLayer(layer) && pointTargets.length > 0;
+      const radius = effectHitRadius(layer, usesPoint);
       if(usesPoint){
-        if(Math.hypot(c.x-pt.x, c.y-pt.y) <= radius) return i;
-      } else if((samples.length || points.length) && distanceToCurrentPath(c) <= radius){
-        return i;
+        if(pointTargets.some(pt=>Math.hypot(c.x-pt.x, c.y-pt.y) <= radius)) return i;
+      }else{
+        const geometry = pathGeometryForLayer(layer);
+        if((geometry.samples.length || geometry.points.length) && distanceToPathGeometry(c, geometry) <= radius) return i;
       }
     }
     return -1;
@@ -9071,11 +9350,24 @@ ctx.fill();</textarea>
     if(!layer) return;
     pushUndo();
     const clone = { id: 'layer-' + (++layerCounter), type: layer.type, enabled: layer.enabled, p: JSON.parse(JSON.stringify(layer.p)), state:{} };
+    if(isIndependentPointLayer(layer)){
+      const duplicateIds = pointObjectsForLayer(layer).map(sourcePoint=>createOffsetPointFrom(sourcePoint).id);
+      clone.p.geometryMode = 'points';
+      clone.p.pointIds = duplicateIds;
+      clone.p.target = duplicateIds[0] || '';
+      if(duplicateIds.length) clone.p.ownedPointId = duplicateIds[0];
+      else delete clone.p.ownedPointId;
+      delete clone.p.pathPoints;
+      delete clone.p.pathClosed;
+      clone.state = {};
+    }
     layers.push(clone);
     activeIndex = layers.length - 1;
     refreshAllUIFromLayer(activeLayer());
+    renderPointList();
     renderLayerList();
     renderPoints();
+    renderTimeline();
   });
 
   overlay.addEventListener('mousedown', (e)=>{
@@ -9126,7 +9418,7 @@ ctx.fill();</textarea>
     // Explicit path/target handles belong to the particle editor.
     if(e.target.classList.contains('pt-target')){
       const pt = targetPoints.find(p => p.id === e.target.dataset.pointId);
-      const effectIndex = layers.map((l,i)=>({l,i})).reverse().find(item=>item.l.p.target === e.target.dataset.pointId);
+      const effectIndex = layers.map((l,i)=>({l,i})).reverse().find(item=>layerOwnsPoint(item.l, e.target.dataset.pointId));
       if(effectIndex) selectEffectLayer(effectIndex.i, true);
       if(pt && editMode){ pushUndo(); dragTarget = { type:'targetpoint', point: pt }; e.preventDefault(); }
       return;
@@ -9175,13 +9467,14 @@ ctx.fill();</textarea>
     }
 
     // In the particle editor, clicking directly on the editable curve still inserts a point.
-    if(isParticlesPanelVisible() && editMode && points.length >= 2 && samples.length >= 2){
+    if(isParticlesPanelVisible() && editMode && isIndependentPathLayer(activeLayer()) && points.length >= 2 && samples.length >= 2){
       const { sample, dist } = closestSampleTo(c);
       if(sample && dist <= INSERT_THRESHOLD){
         const idx = insertIndexForLen(sample.len);
         pushUndo();
         points.splice(idx, 0, c);
         rebuildPath();
+        saveActivePathEditor();
         renderPoints();
         return;
       }
@@ -9203,12 +9496,34 @@ ctx.fill();</textarea>
       return;
     }
 
-    // Empty-canvas clicks in Particles continue to create path points.
+    // Empty-canvas clicks are routed by the active Particles sub-tab.
+    // Paths adds a control point to the selected path layer. Points adds a
+    // point instance to the selected point layer. Neither tab modifies the
+    // geometry owned by a layer in the other tab.
     if(!editMode) return;
+    const pointsTabActive = document.getElementById('tab-btn-points').classList.contains('active');
     pushUndo();
+    if(pointsTabActive){
+      const pointLayer = ensureEditablePointLayer('ripple');
+      addPointToLayer(pointLayer, c);
+      activeIndex = layers.indexOf(pointLayer);
+      loadPathEditorForLayer(pointLayer);
+      setParticleEditorTabForLayer(pointLayer);
+      refreshAllUIFromLayer(pointLayer);
+      renderPointList();
+      renderLayerList();
+      renderPoints();
+      renderTimeline();
+      return;
+    }
+
+    ensureEditablePathLayer('line');
     points.push(c);
     rebuildPath();
+    saveActivePathEditor();
     renderPoints();
+    renderLayerList();
+    renderTimeline();
   });
   overlay.addEventListener('contextmenu', (e)=>{
     if(!editMode || !isParticlesPanelVisible()) return;
@@ -9218,6 +9533,7 @@ ctx.fill();</textarea>
       const idx = parseInt(e.target.dataset.idx, 10);
       points.splice(idx,1);
       rebuildPath();
+      saveActivePathEditor();
       renderPoints();
     }
     if(e.target.classList.contains('pt-target')){
@@ -9290,6 +9606,7 @@ ctx.fill();</textarea>
     if(dragTarget.type === 'path'){
       points[dragTarget.idx] = c;
       rebuildPath();
+      saveActivePathEditor();
     } else {
       dragTarget.point.x = c.x;
       dragTarget.point.y = c.y;
@@ -9320,39 +9637,46 @@ ctx.fill();</textarea>
     return d;
   }
 
-  function rebuildPath(){
-    if(points.length === 0){
-      samples = []; pathLen = 0;
-      return;
+  function buildPathGeometry(sourcePoints, sourceClosed){
+    const geometryPoints = clonePathPointList(sourcePoints);
+    const geometryClosed = !!sourceClosed;
+    if(geometryPoints.length === 0){
+      return {points:geometryPoints, closed:geometryClosed, samples:[], pathLen:0};
     }
-    if(points.length === 1){
-      // A single point isn't a curve, but it's still a perfectly good fixed
-      // anchor — treat it as a zero-length "path" of one sample so any
-      // Target: Path layer (particles, clouds, dust, etc.) has somewhere to
-      // render immediately, instead of requiring a full 2-point path first.
-      samples = [{ x: points[0].x, y: points[0].y, len: 0, tx: 1, ty: 0, nx: 0, ny: 1 }];
-      pathLen = 0;
-      return;
+    if(geometryPoints.length === 1){
+      return {
+        points:geometryPoints,
+        closed:geometryClosed,
+        samples:[{ x:geometryPoints[0].x, y:geometryPoints[0].y, len:0, tx:1, ty:0, nx:0, ny:1 }],
+        pathLen:0
+      };
     }
-    const d = buildD(points, closed);
+    const d = buildD(geometryPoints, geometryClosed);
     ghostPath.setAttribute('d', d);
-    pathLen = ghostPath.getTotalLength();
-    const N = Math.max(64, Math.min(600, Math.round(pathLen / 4)));
-    samples = [];
+    const geometryLength = ghostPath.getTotalLength();
+    const N = Math.max(64, Math.min(600, Math.round(geometryLength / 4)));
+    const geometrySamples = [];
     for(let i=0;i<=N;i++){
-      const len = (i/N) * pathLen;
+      const len = (i/N) * geometryLength;
       const pt = ghostPath.getPointAtLength(len);
-      samples.push({ x: pt.x, y: pt.y, len });
+      geometrySamples.push({ x:pt.x, y:pt.y, len });
     }
-    for(let i=0;i<samples.length;i++){
-      const a = samples[Math.max(0,i-1)];
-      const b = samples[Math.min(samples.length-1,i+1)];
+    for(let i=0;i<geometrySamples.length;i++){
+      const a = geometrySamples[Math.max(0,i-1)];
+      const b = geometrySamples[Math.min(geometrySamples.length-1,i+1)];
       let dx = b.x - a.x, dy = b.y - a.y;
       const mag = Math.hypot(dx,dy) || 1;
       dx/=mag; dy/=mag;
-      samples[i].tx = dx; samples[i].ty = dy;
-      samples[i].nx = -dy; samples[i].ny = dx;
+      geometrySamples[i].tx = dx; geometrySamples[i].ty = dy;
+      geometrySamples[i].nx = -dy; geometrySamples[i].ny = dx;
     }
+    return {points:geometryPoints, closed:geometryClosed, samples:geometrySamples, pathLen:geometryLength};
+  }
+
+  function rebuildPath(){
+    const geometry = buildPathGeometry(points, closed);
+    samples = geometry.samples;
+    pathLen = geometry.pathLen;
   }
 
   function sampleAt(lenPos){
@@ -9408,22 +9732,36 @@ ctx.fill();</textarea>
     }
     document.getElementById('chk-close').checked = closed;
     rebuildPath();
+    saveActivePathEditor();
     renderPoints();
   }
   document.querySelectorAll('[data-preset]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{ pushUndo(); applyPreset(btn.dataset.preset); });
+    btn.addEventListener('click', ()=>{
+      pushUndo();
+      ensureEditablePathLayer('line');
+      applyPreset(btn.dataset.preset);
+      renderLayerList();
+      renderTimeline();
+    });
   });
 
   document.getElementById('btn-clear').addEventListener('click', ()=>{
+    if(!isIndependentPathLayer(activeLayer())) return;
     pushUndo();
     points = []; closed = false;
     document.getElementById('chk-close').checked = false;
-    rebuildPath(); renderPoints();
+    rebuildPath();
+    saveActivePathEditor();
+    renderPoints();
+    renderLayerList();
+    renderTimeline();
   });
   document.getElementById('chk-close').addEventListener('change', (e)=>{
+    if(!isIndependentPathLayer(activeLayer())) return;
     pushUndo();
     closed = e.target.checked;
     rebuildPath();
+    saveActivePathEditor();
   });
   document.getElementById('btn-edit').addEventListener('click', (e)=>{
     editMode = !editMode;
@@ -9936,28 +10274,34 @@ ctx.fill();</textarea>
   function populateTargetSelect(layer){
     if(!layer) return;
     const supports = typeSupportsPoint(layer.type);
-    if(!supports) layer.p.target = 'path';
+    const pointLayer = isIndependentPointLayer(layer);
+    const pointIds = pointLayer ? pointIdsForLayer(layer) : [];
+    if(!supports && !pointLayer) layer.p.target = 'path';
+    if(pointLayer) layer.p.target = pointIds[0] || '';
+    if(isIndependentPathLayer(layer)) ensureLayerPathData(layer, [], false);
 
     const sel = document.getElementById('sel-target');
     sel.innerHTML = '';
-    const pathOpt = document.createElement('option');
-    pathOpt.value = 'path';
-    pathOpt.textContent = 'Path';
-    sel.appendChild(pathOpt);
-    targetPoints.forEach(pt=>{
-      const opt = document.createElement('option');
-      opt.value = pt.id;
-      opt.textContent = pt.name;
-      sel.appendChild(opt);
-    });
-    sel.value = layer.p.target;
-    sel.disabled = !supports;
+    if(pointLayer){
+      const pointLayerOpt = document.createElement('option');
+      pointLayerOpt.value = layer.p.target || '';
+      pointLayerOpt.textContent = 'Selected Point Layer (' + pointIds.length + ' point' + (pointIds.length === 1 ? '' : 's') + ')';
+      sel.appendChild(pointLayerOpt);
+      sel.value = pointLayerOpt.value;
+    }else{
+      const pathOpt = document.createElement('option');
+      pathOpt.value = 'path';
+      pathOpt.textContent = 'Path';
+      sel.appendChild(pathOpt);
+      sel.value = 'path';
+    }
+    sel.disabled = true;
 
-    document.getElementById('hint-target-locked').style.display = supports ? 'none' : 'block';
+    document.getElementById('hint-target-locked').style.display = (!supports && !pointLayer) ? 'block' : 'none';
     document.getElementById('row-pointradius').style.display =
-      (supports && layer.p.target !== 'path' && layer.type === 'particles') ? 'flex' : 'none';
+      (pointLayer && layer.type === 'particles') ? 'flex' : 'none';
 
-    const usingPoint = supports && layer.p.target !== 'path';
+    const usingPoint = pointLayer;
     document.getElementById('row-clip').style.display = usingPoint ? 'flex' : 'none';
     document.getElementById('row-clipradius').style.display = (usingPoint && layer.p.clipEnabled) ? 'flex' : 'none';
   }
@@ -11118,31 +11462,71 @@ ctx.fill();</textarea>
 
   function deleteLayer(idx){
     if(idx < 0 || idx >= layers.length) return;
+    saveActivePathEditor();
     pushUndo();
+    const removedLayer = layers[idx];
+    const removedPointIds = isIndependentPointLayer(removedLayer) ? pointIdsForLayer(removedLayer).slice() : [];
     layers.splice(idx,1);
+
+    removedPointIds.forEach(pointId=>{
+      if(layers.some(layer=>layerOwnsPoint(layer, pointId))) return;
+      const pointIndex = targetPoints.findIndex(point=>String(point.id) === String(pointId));
+      if(pointIndex >= 0) targetPoints.splice(pointIndex, 1);
+    });
+
     activeIndex = layers.length ? Math.min(idx, layers.length - 1) : -1;
+    loadPathEditorForLayer(activeLayer());
+    setParticleEditorTabForLayer(activeLayer());
     refreshAllUIFromLayer(activeLayer());
+    renderPointList();
     renderLayerList();
     renderPoints();
     renderTimeline();
   }
 
   document.getElementById('btn-add-layer').addEventListener('click', ()=>{
+    saveActivePathEditor();
     pushUndo();
     const current = activeLayer();
-    const selector = document.getElementById('sel-effect');
-    const newType = String((current && current.type) || (selector && selector.value) || 'particles');
-    const newLayer = makeLayer(newType);
-    if(current){
-      newLayer.p.startTime = current.p.startTime;
-      newLayer.p.endTime = current.p.endTime;
-      newLayer.p.fadeIn = current.p.fadeIn;
-      newLayer.p.fadeOut = current.p.fadeOut;
-      if(typeSupportsPoint(newType) && current.p.target !== 'path') newLayer.p.target = current.p.target;
+    if(!current){
+      if(document.getElementById('tab-btn-points').classList.contains('active')) createEmptyPointLayer('ripple');
+      else createEmptyPathLayer('line');
+      return;
     }
+
+    const newLayer = {
+      id:'layer-' + (++layerCounter),
+      type:current.type,
+      enabled:current.enabled,
+      p:JSON.parse(JSON.stringify(current.p)),
+      state:{}
+    };
+
+    if(isIndependentPointLayer(current)){
+      const duplicateIds = pointObjectsForLayer(current).map(sourcePoint=>createOffsetPointFrom(sourcePoint).id);
+      newLayer.p.geometryMode = 'points';
+      newLayer.p.pointIds = duplicateIds;
+      newLayer.p.target = duplicateIds[0] || '';
+      if(duplicateIds.length) newLayer.p.ownedPointId = duplicateIds[0];
+      else delete newLayer.p.ownedPointId;
+      delete newLayer.p.pathPoints;
+      delete newLayer.p.pathClosed;
+    }else{
+      const sourceData = ensureLayerPathData(current, points, closed);
+      newLayer.p.geometryMode = 'path';
+      newLayer.p.target = 'path';
+      newLayer.p.pointIds = [];
+      delete newLayer.p.ownedPointId;
+      newLayer.p.pathPoints = clonePathPointList(sourceData.pathPoints);
+      newLayer.p.pathClosed = !!sourceData.pathClosed;
+    }
+
     layers.push(newLayer);
     activeIndex = layers.length - 1;
-    refreshAllUIFromLayer(activeLayer());
+    loadPathEditorForLayer(newLayer);
+    setParticleEditorTabForLayer(newLayer);
+    refreshAllUIFromLayer(newLayer);
+    renderPointList();
     renderLayerList();
     renderPoints();
     renderTimeline();
@@ -11283,31 +11667,77 @@ ctx.fill();</textarea>
     const current = activeLayer();
     if(current && current.type === requestedType) return;
 
-    pushUndo();
-    const newLayer = makeLayer(requestedType);
-    if(current){
-      newLayer.p.startTime = current.p.startTime;
-      newLayer.p.endTime = current.p.endTime;
-      newLayer.p.fadeIn = current.p.fadeIn;
-      newLayer.p.fadeOut = current.p.fadeOut;
-      if(typeSupportsPoint(requestedType) && current.p.target !== 'path') newLayer.p.target = current.p.target;
-      layers.splice(activeIndex + 1, 0, newLayer);
-      activeIndex += 1;
-    }else{
-      layers.push(newLayer);
-      activeIndex = layers.length - 1;
+    saveActivePathEditor();
+
+    if(current && isIndependentPointLayer(current)){
+      if(typeSupportsPoint(requestedType)){
+        pushUndo();
+        current.type = requestedType;
+        current.p.geometryMode = 'points';
+        const ids = pointIdsForLayer(current);
+        current.p.target = ids[0] || '';
+        current.state = {};
+        refreshAllUIFromLayer(current);
+        renderPointList();
+        renderLayerList();
+        renderPoints();
+        renderTimeline();
+        return;
+      }
+      // Flowing Line and Sine Wave require path geometry. Create a separate
+      // path layer instead of replacing or stealing the selected point layer.
+      pushUndo();
+      const newLayer = createEmptyPathLayer(requestedType);
+      newLayer.type = requestedType;
+      refreshAllUIFromLayer(newLayer);
+      renderLayerList();
+      renderTimeline();
+      return;
     }
 
-    refreshAllUIFromLayer(newLayer);
-    renderLayerList();
-    renderPoints();
-    renderTimeline();
+    if(current && isIndependentPathLayer(current)){
+      pushUndo();
+      current.type = requestedType;
+      current.p.geometryMode = 'path';
+      current.p.target = 'path';
+      current.p.pointIds = [];
+      delete current.p.ownedPointId;
+      current.state = {};
+      refreshAllUIFromLayer(current);
+      renderLayerList();
+      renderPoints();
+      renderTimeline();
+      return;
+    }
+
+    pushUndo();
+    if(document.getElementById('tab-btn-points').classList.contains('active') && typeSupportsPoint(requestedType)){
+      const layer = createEmptyPointLayer(requestedType);
+      layer.type = requestedType;
+      refreshAllUIFromLayer(layer);
+    }else{
+      const layer = createEmptyPathLayer(requestedType);
+      layer.type = requestedType;
+      refreshAllUIFromLayer(layer);
+    }
   });
 
   document.getElementById('sel-target').addEventListener('change', e=>{
     const layer = activeLayer(); if(!layer) return;
+    if(isIndependentPointLayer(layer)){
+      layer.p.target = pointIdsForLayer(layer)[0] || '';
+      populateTargetSelect(layer);
+      return;
+    }
     pushUndo();
     layer.p.target = e.target.value;
+    if(layer.p.target === 'path'){
+      delete layer.p.ownedPointId;
+      ensureLayerPathData(layer, [], false);
+      loadPathEditorForLayer(layer);
+      setParticleEditorTabForLayer(layer);
+      renderPoints();
+    }
     populateTargetSelect(layer);
   });
 
@@ -12797,66 +13227,99 @@ ctx.fill();</textarea>
   // the "click to place a point" placeholder, which shouldn't show inside
   // a tiny nested clip.
   function renderSceneLayers(isNested){
-    const hasPath = points.length >= 1 || samples.length >= 1;
-    const anyEnabledLayer = layers.some(l => l.enabled);
-    const hasPointLayer = layers.some(l => l.enabled && l.p.target !== 'path' && getTargetPoint(l));
+    const hasPathLayer = layers.some(layer=>{
+      if(!layer || !layer.enabled || !isIndependentPathLayer(layer)) return false;
+      const data = ensureLayerPathData(layer, [], false);
+      return data.pathPoints.length > 0;
+    });
+    const hasPointLayer = layers.some(layer=>layer && layer.enabled && isIndependentPointLayer(layer) && pointObjectsForLayer(layer).length > 0);
 
-    if(hasPath || hasPointLayer){
-      layers.forEach(layer=>{
-        if(!layer.enabled) return;
-        if(t < layer.p.startTime || t > layer.p.endTime) return; // outside its timeline window
+    if(!(hasPathLayer || hasPointLayer)) return;
 
-        const fadeIn = layer.p.fadeIn || 0;
-        const fadeOut = layer.p.fadeOut || 0;
-        let fadeAlpha = 1;
-        if(fadeIn > 0 && t < layer.p.startTime + fadeIn){
-          fadeAlpha = Math.min(fadeAlpha, (t - layer.p.startTime) / fadeIn);
-        }
-        if(fadeOut > 0 && t > layer.p.endTime - fadeOut){
-          fadeAlpha = Math.min(fadeAlpha, (layer.p.endTime - t) / fadeOut);
-        }
-        fadeAlpha = Math.max(0, Math.min(1, fadeAlpha));
-        if(fadeAlpha <= 0.001) return;
-
-        const usesPoint = layer.p.target !== 'path' && getTargetPoint(layer);
-        if(!usesPoint && !hasPath) return; // path-based layer, no path yet
-        const pulseMod = Math.sin(t * layer.p.pulseFreq * Math.PI*2);
-
-        ctx.save();
-        ctx.globalAlpha = fadeAlpha;
-
-        const doClip = usesPoint && layer.p.clipEnabled;
-        if(doClip){
-          const pt = getTargetPoint(layer);
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, Math.max(1, layer.p.clipRadius), 0, Math.PI*2);
-          ctx.clip();
-        }
-
-        switch(layer.type){
-          case 'particles': drawParticles(layer, pulseMod); break;
-          case 'line': drawLine(layer, pulseMod); break;
-          case 'sine': drawSine(layer, pulseMod); break;
-          case 'pulse': drawPulse(layer, pulseMod); break;
-          case 'ripple': drawRipple(layer, pulseMod); break;
-          case 'rain': drawRain(layer); break;
-          case 'fireworks': drawFireworks(layer); break;
-          case 'sparkles': drawSparkles(layer); break;
-          case 'explosion': drawExplosion(layer); break;
-          case 'audiopulse': drawAudioPulse(layer, pulseMod); break;
-          case 'lightning': drawLightning(layer); break;
-          case 'dust': drawDust(layer); break;
-          case 'smoke': drawSmoke(layer); break;
-          case 'smokedust': drawSmokeDust(layer); break;
-          case 'clouds': drawClouds(layer); break;
-          case 'custom': drawCustomBehaviour(layer); break;
-        }
-
-        if(doClip) ctx.restore();
-        ctx.restore(); // pairs with the fade-alpha save
-      });
+    function drawCurrentLayerEffect(layer, pulseMod){
+      switch(layer.type){
+        case 'particles': drawParticles(layer, pulseMod); break;
+        case 'line': drawLine(layer, pulseMod); break;
+        case 'sine': drawSine(layer, pulseMod); break;
+        case 'pulse': drawPulse(layer, pulseMod); break;
+        case 'ripple': drawRipple(layer, pulseMod); break;
+        case 'rain': drawRain(layer); break;
+        case 'fireworks': drawFireworks(layer); break;
+        case 'sparkles': drawSparkles(layer); break;
+        case 'explosion': drawExplosion(layer); break;
+        case 'audiopulse': drawAudioPulse(layer, pulseMod); break;
+        case 'lightning': drawLightning(layer); break;
+        case 'dust': drawDust(layer); break;
+        case 'smoke': drawSmoke(layer); break;
+        case 'smokedust': drawSmokeDust(layer); break;
+        case 'clouds': drawClouds(layer); break;
+        case 'custom': drawCustomBehaviour(layer); break;
+      }
     }
+
+    layers.forEach(layer=>{
+      if(!layer.enabled) return;
+      if(t < layer.p.startTime || t > layer.p.endTime) return;
+
+      const fadeIn = layer.p.fadeIn || 0;
+      const fadeOut = layer.p.fadeOut || 0;
+      let fadeAlpha = 1;
+      if(fadeIn > 0 && t < layer.p.startTime + fadeIn) fadeAlpha = Math.min(fadeAlpha, (t - layer.p.startTime) / fadeIn);
+      if(fadeOut > 0 && t > layer.p.endTime - fadeOut) fadeAlpha = Math.min(fadeAlpha, (layer.p.endTime - t) / fadeOut);
+      fadeAlpha = Math.max(0, Math.min(1, fadeAlpha));
+      if(fadeAlpha <= 0.001) return;
+
+      const pulseMod = Math.sin(t * layer.p.pulseFreq * Math.PI*2);
+      const pointTargets = isIndependentPointLayer(layer) ? pointObjectsForLayer(layer) : [];
+
+      if(pointTargets.length){
+        const originalTarget = layer.p.target;
+        const rootState = layer.state && typeof layer.state === 'object' ? layer.state : {};
+        if(!rootState.pointStates || typeof rootState.pointStates !== 'object') rootState.pointStates = {};
+
+        pointTargets.forEach(pt=>{
+          layer.p.target = pt.id;
+          const pointState = rootState.pointStates[pt.id] || (rootState.pointStates[pt.id] = {});
+          layer.state = pointState;
+
+          ctx.save();
+          ctx.globalAlpha = fadeAlpha;
+          if(layer.p.clipEnabled){
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, Math.max(1, layer.p.clipRadius), 0, Math.PI*2);
+            ctx.clip();
+          }
+          drawCurrentLayerEffect(layer, pulseMod);
+          if(layer.p.clipEnabled) ctx.restore();
+          ctx.restore();
+        });
+
+        layer.state = rootState;
+        layer.p.target = originalTarget || pointTargets[0].id;
+        return;
+      }
+
+      if(isIndependentPointLayer(layer)) return; // empty point layer
+
+      const geometry = pathGeometryForLayer(layer);
+      if(!geometry.points.length && !geometry.samples.length) return;
+      const savedEditorGeometry = {points, closed, samples, pathLen};
+      points = geometry.points;
+      closed = geometry.closed;
+      samples = geometry.samples;
+      pathLen = geometry.pathLen;
+
+      ctx.save();
+      ctx.globalAlpha = fadeAlpha;
+      drawCurrentLayerEffect(layer, pulseMod);
+      ctx.restore();
+
+      points = savedEditorGeometry.points;
+      closed = savedEditorGeometry.closed;
+      samples = savedEditorGeometry.samples;
+      pathLen = savedEditorGeometry.pathLen;
+    });
   }
 
   // ---------------- recording ----------------
