@@ -1,10 +1,10 @@
 
 <!DOCTYPE html>
-<!-- LukeAnimate GPT v142: every FX layer owns independent path or point geometry; editing one layer never changes another -->
+<!-- LukeAnimate GPT v144: media layers can be deleted directly from the media panel, All Layers list and timeline. -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v140</title>
+<title>Luke Animate v143</title>
 <style>
   :root{
     --bg:#eef0f3;
@@ -835,6 +835,7 @@
     color:#fff; background:var(--accent-dim);
   }
   .layer-kind-badge.fx{ background:var(--warn); }
+  .layer-kind-badge.no-render{ background:#d9534f; color:#fff; }
   .layer-dot{
     width:14px; height:14px; border-radius:50%; flex:0 0 auto;
     border:1px solid rgba(0,0,0,.18);
@@ -1944,9 +1945,55 @@
       <div class="btn-row" style="margin-bottom:8px;">
         <span id="selected-count" class="audio-filename" style="flex:0 0 auto;">0 selected</span>
       </div>
-      <div class="btn-row" style="margin-bottom:12px;">
+      <div class="btn-row" style="margin-bottom:8px;">
         <button class="btn small" id="btn-convert-to-clip">Convert Selected to Clip</button>
+        <button class="btn small primary" id="btn-toggle-media-panel" aria-expanded="false">+ Image / Video</button>
       </div>
+
+      <div id="animate-media-panel" class="viz-callout" style="display:none;flex-direction:column;gap:8px;margin:0 0 12px;padding:10px;">
+        <div class="btn-row" style="align-items:center;">
+          <strong style="flex:1;">Reference Media</strong>
+          <button class="btn small" id="btn-close-media-panel" title="Close media panel">×</button>
+        </div>
+        <div class="hint" style="padding:0;">Add PNG, JPG, GIF, SVG, WebP, MP4, WebM or another browser-supported image/video as a normal Animate layer. Use <b>Rotoscope</b> with <b>No Render</b> to keep reference material visible while editing but omit it from the final WebM.</div>
+        <div class="row">
+          <label>Use as</label>
+          <select id="sel-media-role" style="flex:1;">
+            <option value="background">Background</option>
+            <option value="rotoscope" selected>Rotoscope</option>
+            <option value="overlay">Normal Graphic</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>Fit</label>
+          <select id="sel-media-fit" style="flex:1;">
+            <option value="contain">Fit inside stage</option>
+            <option value="cover">Fill stage</option>
+            <option value="original">Original size</option>
+          </select>
+        </div>
+        <label class="toggle-line"><input type="checkbox" id="chk-media-no-render" checked> <b>No Render</b> — omit this layer from exported WebM</label>
+        <label class="toggle-line"><input type="checkbox" id="chk-media-loop" checked> Loop animated GIF/video</label>
+        <label class="toggle-line"><input type="checkbox" id="chk-media-start-current"> Start at the current timeline frame</label>
+        <div class="btn-row">
+          <label class="btn small primary" for="inp-animate-media-file" style="flex:1;cursor:pointer;text-align:center;">Choose Image / Video…</label>
+          <input type="file" id="inp-animate-media-file" accept="image/*,video/*,.png,.jpg,.jpeg,.gif,.svg,.webp,.mp4,.webm,.ogv,.ogg" multiple style="display:none;">
+        </div>
+        <div id="media-import-status" class="audio-filename">No media selected.</div>
+
+        <div id="selected-media-controls" style="display:none;border-top:1px solid var(--line);padding-top:8px;">
+          <div class="row"><label>Selected</label><span id="selected-media-name" class="audio-filename" style="flex:1;">—</span></div>
+          <label class="toggle-line"><input type="checkbox" id="chk-selected-media-no-render"> <b>No Render</b> — editor only</label>
+          <label class="toggle-line" id="selected-media-loop-row"><input type="checkbox" id="chk-selected-media-loop"> Loop video/GIF</label>
+          <div class="btn-row" style="margin-top:6px;">
+            <button class="btn small" id="btn-media-fit-stage">Fit Stage</button>
+            <button class="btn small" id="btn-media-send-back">Send Back</button>
+            <button class="btn small" id="btn-media-bring-front">Bring Front</button>
+          </div>
+          <button class="btn small danger" id="btn-media-delete-layer" style="width:100%;margin-top:6px;">Delete Media Layer</button>
+        </div>
+      </div>
+
       <div class="hint" style="padding:0 0 8px;">Double-click a Clip on the stage to jump straight inside it — or use <b>Edit</b> below. Either way its Path/Layers/Timeline take over the main UI, with a breadcrumb (← Back) to get out. <b>+ Instance</b> places another copy of that clip on the stage you're currently in.</div>
       <div id="clip-library" style="display:flex;flex-direction:column;gap:6px;"></div>
 
@@ -1970,6 +2017,7 @@
         <div class="row" style="display:none;"><label>Scale Y</label><input type="range" id="insp-scale-y" min="0.1" max="5" step="0.05" value="1"><span class="val" id="val-insp-scale-y">1.0</span></div>
         <div class="row"><label>Rotation</label><input type="range" id="insp-rotation" min="-180" max="180" step="1" value="0"><span class="val" id="val-insp-rotation">0</span></div>
         <div class="row"><label>Opacity</label><input type="range" id="insp-opacity" min="0" max="100" step="1" value="100"><span class="val" id="val-insp-opacity">100</span></div>
+        <div class="row" id="insp-no-render-row"><label>No Render</label><label class="toggle-line" style="flex:1;"><input type="checkbox" id="insp-no-render"> Omit this layer from exported WebM</label></div>
         <div class="row" id="insp-fill-row"><label>Fill</label><input type="color" id="insp-fill" value="#4fe0c4"><label class="toggle-line" style="flex:0 0 auto;"><input type="checkbox" id="insp-fill-enabled" checked> Visible</label></div>
         <div class="row" id="insp-stroke-row"><label>Border</label><input type="color" id="insp-stroke" value="#1b1f24"><label class="toggle-line" style="flex:0 0 auto;"><input type="checkbox" id="insp-stroke-enabled" checked> Visible</label></div>
         <div class="row" id="insp-strokewidth-row"><label>Border Width</label><input type="range" id="insp-strokewidth" min="1" max="30" step="1" value="4"><span class="val" id="val-insp-strokewidth">4</span></div>
@@ -2935,7 +2983,7 @@ ctx.fill();</textarea>
     updateInspector();
     return selectionInspectorSuppressors.size > 0;
   }
-  ['freehand','line','rect','ellipse','text','image','clipinstance','group'].forEach(type=> registerObjectPanelOwner(type, 'animate'));
+  ['freehand','line','rect','ellipse','text','image','video','clipinstance','group'].forEach(type=> registerObjectPanelOwner(type, 'animate'));
 
   function panelForDrawObject(obj){
     return (obj && obj.panelId) || objectPanelOwners[obj && obj.type] || 'animate';
@@ -2944,7 +2992,7 @@ ctx.fill();</textarea>
   function drawObjectTypeLabel(type){
     return {
       freehand:'Drawing', line:'Line', rect:'Rectangle', ellipse:'Ellipse',
-      text:'Text', image:'Image', clipinstance:'Clip', group:'Group'
+      text:'Text', image:'Image', video:'Video', clipinstance:'Clip', group:'Group'
     }[type] || (type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Object');
   }
 
@@ -2972,13 +3020,21 @@ ctx.fill();</textarea>
       if(obj.strokeEnabled === undefined) obj.strokeEnabled = Math.max(0, Number(obj.strokeWidth) || 0) > 0;
       if(!['left','center','right'].includes(obj.textAlign)) obj.textAlign = 'left';
     }
-    if(obj.type === 'image'){
+    if(obj.type === 'image' || obj.type === 'video'){
       obj.src = String(obj.src || obj.dataUrl || '');
       obj.width = Math.max(1, Number(obj.width || obj.naturalWidth) || 1);
       obj.height = Math.max(1, Number(obj.height || obj.naturalHeight) || 1);
+      obj.naturalWidth = Math.max(1, Number(obj.naturalWidth || obj.width) || 1);
+      obj.naturalHeight = Math.max(1, Number(obj.naturalHeight || obj.height) || 1);
       obj.x = Number.isFinite(Number(obj.x)) ? Number(obj.x) : 0;
       obj.y = Number.isFinite(Number(obj.y)) ? Number(obj.y) : 0;
-      if(obj.opacity === undefined) obj.opacity = 1;
+      obj.mediaRole = ['background','rotoscope','overlay'].includes(obj.mediaRole) ? obj.mediaRole : 'overlay';
+      obj.mediaStartTime = Math.max(0, Number(obj.mediaStartTime) || 0);
+      obj.noRender = !!obj.noRender;
+      obj.loop = obj.loop !== false;
+      if(obj.playbackRate === undefined) obj.playbackRate = 1;
+      obj.playbackRate = Math.max(0.05, Math.min(8, Number(obj.playbackRate) || 1));
+      if(obj.opacity === undefined) obj.opacity = obj.mediaRole === 'rotoscope' ? 0.55 : 1;
       if(!Array.isArray(obj.keyframes)) obj.keyframes = [];
       obj.fillEnabled = false;
       obj.strokeEnabled = false;
@@ -3055,6 +3111,277 @@ ctx.fill();</textarea>
     if(obj.penStroke) return 'Pen Stroke';
     if(obj.fillRegion) return 'Fill';
     return drawObjectTypeLabel(obj.type);
+  }
+
+  // ---------------- Animate reference media / rotoscope layers ----------------
+  function isMediaObject(obj){
+    return !!obj && (obj.type === 'image' || obj.type === 'video');
+  }
+
+  function selectedMediaObject(){
+    const selected = getSelectedSingleObject();
+    return selected && isMediaObject(selected.obj) ? selected.obj : null;
+  }
+
+  function mediaFitRect(naturalWidth, naturalHeight, mode){
+    const sourceWidth = Math.max(1, Number(naturalWidth) || 1);
+    const sourceHeight = Math.max(1, Number(naturalHeight) || 1);
+    if(mode === 'original'){
+      return {
+        x:(W-sourceWidth)/2,
+        y:(H-sourceHeight)/2,
+        width:sourceWidth,
+        height:sourceHeight
+      };
+    }
+    const scale = mode === 'cover'
+      ? Math.max(W/sourceWidth, H/sourceHeight)
+      : Math.min(W/sourceWidth, H/sourceHeight);
+    const width = Math.max(1, sourceWidth * scale);
+    const height = Math.max(1, sourceHeight * scale);
+    return {x:(W-width)/2,y:(H-height)/2,width,height};
+  }
+
+  function fitMediaObjectToStage(obj, mode){
+    if(!isMediaObject(obj)) return false;
+    const fit = mediaFitRect(obj.naturalWidth || obj.width, obj.naturalHeight || obj.height, mode || 'contain');
+    obj.x = fit.x;
+    obj.y = fit.y;
+    obj.width = fit.width;
+    obj.height = fit.height;
+    obj.tx = 0;
+    obj.ty = 0;
+    obj.tscale = 1;
+    obj.tscaleX = 1;
+    obj.tscaleY = 1;
+    obj.trotation = 0;
+    return true;
+  }
+
+  function updateMediaPanelSelection(){
+    const controls = document.getElementById('selected-media-controls');
+    if(!controls) return;
+    const obj = selectedMediaObject();
+    controls.style.display = obj ? 'block' : 'none';
+    if(!obj) return;
+    document.getElementById('selected-media-name').textContent = objectLayerName(obj);
+    document.getElementById('chk-selected-media-no-render').checked = !!obj.noRender;
+    const loopRow = document.getElementById('selected-media-loop-row');
+    loopRow.style.display = obj.type === 'video' || /image\/gif/i.test(String(obj.mimeType || '')) ? 'flex' : 'none';
+    document.getElementById('chk-selected-media-loop').checked = obj.loop !== false;
+  }
+
+  function readFileAsDataURL(file){
+    return new Promise((resolve,reject)=>{
+      const reader = new FileReader();
+      reader.onload = ()=>resolve(String(reader.result || ''));
+      reader.onerror = ()=>reject(reader.error || new Error('Could not read media file.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function inspectImageSource(source){
+    return new Promise((resolve,reject)=>{
+      const image = new Image();
+      image.onload = ()=>resolve({
+        width:Math.max(1,image.naturalWidth||image.width||1),
+        height:Math.max(1,image.naturalHeight||image.height||1)
+      });
+      image.onerror = ()=>reject(new Error('The browser could not decode this image.'));
+      image.src = source;
+    });
+  }
+
+  function inspectVideoSource(source){
+    return new Promise((resolve,reject)=>{
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.muted = true;
+      video.playsInline = true;
+      const cleanup = ()=>{
+        video.onloadedmetadata = null;
+        video.onerror = null;
+      };
+      video.onloadedmetadata = ()=>{
+        cleanup();
+        resolve({
+          width:Math.max(1,video.videoWidth||1),
+          height:Math.max(1,video.videoHeight||1),
+          duration:Number.isFinite(video.duration) ? Math.max(0,video.duration) : 0
+        });
+      };
+      video.onerror = ()=>{
+        cleanup();
+        reject(new Error('The browser could not decode this video format.'));
+      };
+      video.src = source;
+      try{ video.load(); }catch(error){}
+    });
+  }
+
+  async function addAnimateMediaFile(file){
+    if(!file) return null;
+    const status = document.getElementById('media-import-status');
+    status.textContent = 'Loading ' + file.name + '…';
+    const extension = String(file.name || '').split('.').pop().toLowerCase();
+    const isVideo = /^video\//i.test(file.type || '') || ['mp4','webm','ogv','ogg','mov','m4v'].includes(extension);
+    const isImage = /^image\//i.test(file.type || '') || ['png','jpg','jpeg','gif','svg','webp','bmp','avif'].includes(extension);
+    if(!isVideo && !isImage) throw new Error('Unsupported media type: ' + (file.type || extension || 'unknown'));
+
+    const source = await readFileAsDataURL(file);
+    const metadata = isVideo ? await inspectVideoSource(source) : await inspectImageSource(source);
+    const role = document.getElementById('sel-media-role').value || 'overlay';
+    const fitMode = document.getElementById('sel-media-fit').value || 'contain';
+    const noRender = !!document.getElementById('chk-media-no-render').checked;
+    const loop = !!document.getElementById('chk-media-loop').checked;
+    const startAtCurrent = !!document.getElementById('chk-media-start-current').checked;
+    const fitted = mediaFitRect(metadata.width, metadata.height, fitMode);
+
+    pushUndo();
+    ensureFrameOwnedDrawingForMutation();
+    const object = ensureDrawObjectMetadata({
+      type:isVideo ? 'video' : 'image',
+      name:String(file.name || (isVideo ? 'Video' : 'Image')),
+      sourceName:String(file.name || ''),
+      mimeType:String(file.type || (isVideo ? 'video/*' : 'image/*')),
+      src:source,
+      x:fitted.x,
+      y:fitted.y,
+      width:fitted.width,
+      height:fitted.height,
+      naturalWidth:metadata.width,
+      naturalHeight:metadata.height,
+      mediaDuration:Number(metadata.duration)||0,
+      mediaStartTime:startAtCurrent ? Math.max(0,t) : 0,
+      mediaRole:role,
+      noRender:noRender,
+      loop:loop,
+      playbackRate:1,
+      tx:0,
+      ty:0,
+      tscale:1,
+      tscaleX:1,
+      tscaleY:1,
+      trotation:0,
+      opacity:role === 'rotoscope' ? 0.55 : 1,
+      fillEnabled:false,
+      strokeEnabled:false,
+      keyframes:[]
+    });
+
+    let index;
+    if(role === 'background'){
+      drawObjects.unshift(object);
+      index = 0;
+    }else{
+      drawObjects.push(object);
+      index = drawObjects.length - 1;
+    }
+    selectedDrawIndices.clear();
+    selectedDrawIndices.add(index);
+    routeSelectionToPanel('animate', true);
+    updateSelectedCountUI();
+    updateInspector();
+    renderLayerList();
+    renderTransformHandles();
+    status.textContent = file.name + ' added as ' + (role === 'rotoscope' ? 'Rotoscope' : role === 'background' ? 'Background' : 'Normal Graphic') + (noRender ? ' · No Render' : '');
+    return object;
+  }
+
+  function moveSelectedMediaToEdge(front){
+    const obj = selectedMediaObject();
+    if(!obj) return;
+    const index = drawObjects.indexOf(obj);
+    if(index < 0) return;
+    pushUndo();
+    drawObjects.splice(index,1);
+    if(front) drawObjects.push(obj);
+    else drawObjects.unshift(obj);
+    const newIndex = front ? drawObjects.length-1 : 0;
+    selectedDrawIndices.clear();
+    selectedDrawIndices.add(newIndex);
+    updateSelectedCountUI();
+    updateInspector();
+    renderLayerList();
+    renderTransformHandles();
+  }
+
+  function deleteSelectedMediaLayer(){
+    const obj = selectedMediaObject();
+    if(!obj) return false;
+    const index = drawObjects.indexOf(obj);
+    if(index < 0) return false;
+    deleteDrawObject(index);
+    updateMediaPanelSelection();
+    updateInspector();
+    renderTransformHandles();
+    renderPoints();
+    return true;
+  }
+
+  function installAnimateMediaPanel(){
+    const toggle = document.getElementById('btn-toggle-media-panel');
+    const close = document.getElementById('btn-close-media-panel');
+    const panel = document.getElementById('animate-media-panel');
+    const fileInput = document.getElementById('inp-animate-media-file');
+    if(!toggle || !close || !panel || !fileInput) return;
+
+    const setOpen = open=>{
+      panel.style.display = open ? 'flex' : 'none';
+      toggle.classList.toggle('active',open);
+      toggle.setAttribute('aria-expanded',open ? 'true' : 'false');
+      if(open) updateMediaPanelSelection();
+    };
+    toggle.addEventListener('click',()=>setOpen(panel.style.display === 'none'));
+    close.addEventListener('click',()=>setOpen(false));
+
+    document.getElementById('sel-media-role').addEventListener('change',event=>{
+      const rotoscope = event.target.value === 'rotoscope';
+      document.getElementById('chk-media-no-render').checked = rotoscope;
+      document.getElementById('sel-media-fit').value = event.target.value === 'background' ? 'cover' : 'contain';
+    });
+
+    fileInput.addEventListener('change',async()=>{
+      const files = Array.from(fileInput.files || []);
+      if(!files.length) return;
+      const status = document.getElementById('media-import-status');
+      for(const file of files){
+        try{
+          await addAnimateMediaFile(file);
+        }catch(error){
+          status.textContent = 'Could not add ' + file.name + ': ' + (error && error.message ? error.message : error);
+          console.error(error);
+        }
+      }
+      fileInput.value = '';
+    });
+
+    document.getElementById('chk-selected-media-no-render').addEventListener('change',event=>{
+      const obj = selectedMediaObject();
+      if(!obj) return;
+      pushUndo();
+      obj.noRender = !!event.target.checked;
+      document.getElementById('insp-no-render').checked = !!obj.noRender;
+      renderLayerList();
+      renderTimeline();
+    });
+    document.getElementById('chk-selected-media-loop').addEventListener('change',event=>{
+      const obj = selectedMediaObject();
+      if(!obj) return;
+      pushUndo();
+      obj.loop = !!event.target.checked;
+    });
+    document.getElementById('btn-media-fit-stage').addEventListener('click',()=>{
+      const obj = selectedMediaObject();
+      if(!obj) return;
+      pushUndo();
+      fitMediaObjectToStage(obj, obj.mediaRole === 'background' ? 'cover' : 'contain');
+      updateInspector();
+      renderTransformHandles();
+    });
+    document.getElementById('btn-media-send-back').addEventListener('click',()=>moveSelectedMediaToEdge(false));
+    document.getElementById('btn-media-bring-front').addEventListener('click',()=>moveSelectedMediaToEdge(true));
+    document.getElementById('btn-media-delete-layer').addEventListener('click',()=>deleteSelectedMediaLayer());
   }
 
   // deterministic pseudo-random in [0,1) from a numeric seed — lets particle-style
@@ -4371,6 +4698,7 @@ ctx.fill();</textarea>
   }
 
   const drawImageCache = new Map();
+  const drawVideoCache = new Map();
 
   function getDrawImageResource(source){
     const src = String(source || '');
@@ -4386,7 +4714,54 @@ ctx.fill();</textarea>
     return image;
   }
 
+  function getDrawVideoResource(obj, source){
+    if(!obj) return null;
+    const key = String(obj.id || source || '');
+    const src = String(source || '');
+    if(!key || !src) return null;
+    let record = drawVideoCache.get(key);
+    if(record && record.source === src) return record;
+    if(record && record.video){
+      try{ record.video.pause(); }catch(error){}
+      try{ record.video.removeAttribute('src'); record.video.load(); }catch(error){}
+    }
+    const video = document.createElement('video');
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    video.crossOrigin = 'anonymous';
+    record = {video,source:src,loaded:false,failed:false,lastTarget:-1};
+    drawVideoCache.set(key,record);
+    video.onloadeddata = ()=>{ record.loaded = true; };
+    video.onloadedmetadata = ()=>{
+      record.loaded = true;
+      if(!obj.mediaDuration && Number.isFinite(video.duration)) obj.mediaDuration = Math.max(0,video.duration);
+      if((!obj.naturalWidth || obj.naturalWidth <= 1) && video.videoWidth) obj.naturalWidth = video.videoWidth;
+      if((!obj.naturalHeight || obj.naturalHeight <= 1) && video.videoHeight) obj.naturalHeight = video.videoHeight;
+    };
+    video.onerror = ()=>{ record.failed = true; };
+    video.src = src;
+    try{ video.load(); }catch(error){}
+    return record;
+  }
+
+  function mediaLocalTime(obj, eff, duration){
+    const start = Math.max(0, Number(eff.mediaStartTime !== undefined ? eff.mediaStartTime : obj.mediaStartTime) || 0);
+    if(t + 1e-6 < start) return null;
+    const rate = Math.max(0.05, Math.min(8, Number(eff.playbackRate !== undefined ? eff.playbackRate : obj.playbackRate) || 1));
+    let local = Math.max(0,(t-start)*rate);
+    const usableDuration = Math.max(0,Number(duration)||0);
+    const shouldLoop = eff.loop !== undefined ? !!eff.loop : obj.loop !== false;
+    if(usableDuration > 0.02){
+      if(shouldLoop) local = local % usableDuration;
+      else local = Math.min(local,Math.max(0,usableDuration-0.001));
+    }
+    return {time:local,rate,shouldLoop};
+  }
+
   function renderOneDrawObject(obj, isPreview, idx){
+    if(exportPlayback.active && obj && obj.noRender) return;
     const eff = getEffectiveObj(obj, t);
 
     if(obj.type === 'clipinstance'){
@@ -4474,14 +4849,44 @@ ctx.fill();</textarea>
       if(fillEnabled){ctx.save();ctx.fillStyle=fillColor;ctx.fill(ellipsePath);ctx.restore();}
       if(strokeEnabled&&strokeWidth>0) strokeVectorPathEvenly(ctx,ellipsePath,strokeColor,strokeWidth,'round','round');
     } else if(obj.type === 'image'){
+      const startTime = Math.max(0,Number(eff.mediaStartTime !== undefined ? eff.mediaStartTime : obj.mediaStartTime)||0);
+      if(t + 1e-6 >= startTime){
+        const source = eff.src !== undefined ? eff.src : obj.src;
+        const image = getDrawImageResource(source);
+        const imageX = eff.x !== undefined ? Number(eff.x) || 0 : Number(obj.x) || 0;
+        const imageY = eff.y !== undefined ? Number(eff.y) || 0 : Number(obj.y) || 0;
+        const imageWidth = Math.max(1, eff.width !== undefined ? Number(eff.width) || 1 : Number(obj.width) || 1);
+        const imageHeight = Math.max(1, eff.height !== undefined ? Number(eff.height) || 1 : Number(obj.height) || 1);
+        if(image && image.complete && image.naturalWidth > 0){
+          ctx.drawImage(image, imageX, imageY, imageWidth, imageHeight);
+        }
+      }
+    } else if(obj.type === 'video'){
       const source = eff.src !== undefined ? eff.src : obj.src;
-      const image = getDrawImageResource(source);
-      const imageX = eff.x !== undefined ? Number(eff.x) || 0 : Number(obj.x) || 0;
-      const imageY = eff.y !== undefined ? Number(eff.y) || 0 : Number(obj.y) || 0;
-      const imageWidth = Math.max(1, eff.width !== undefined ? Number(eff.width) || 1 : Number(obj.width) || 1);
-      const imageHeight = Math.max(1, eff.height !== undefined ? Number(eff.height) || 1 : Number(obj.height) || 1);
-      if(image && image.complete && image.naturalWidth > 0){
-        ctx.drawImage(image, imageX, imageY, imageWidth, imageHeight);
+      const record = getDrawVideoResource(obj,source);
+      const video = record && record.video;
+      const timing = video ? mediaLocalTime(obj,eff,video.duration || obj.mediaDuration) : null;
+      if(video && timing){
+        const targetTime = timing.time;
+        const running = (playing || exportPlayback.active) && !onionSkinRendering;
+        video.playbackRate = timing.rate;
+        if(Math.abs((Number(video.currentTime)||0)-targetTime) > (running ? 0.22 : 0.035) && !video.seeking){
+          try{ video.currentTime = targetTime; record.lastTarget = targetTime; }catch(error){}
+        }
+        if(running){
+          if(video.paused){
+            try{ const result=video.play(); if(result && typeof result.catch==='function') result.catch(()=>{}); }catch(error){}
+          }
+        }else if(!video.paused){
+          try{ video.pause(); }catch(error){}
+        }
+        if(video.readyState >= 2 && video.videoWidth > 0){
+          const videoX = eff.x !== undefined ? Number(eff.x) || 0 : Number(obj.x) || 0;
+          const videoY = eff.y !== undefined ? Number(eff.y) || 0 : Number(obj.y) || 0;
+          const videoWidth = Math.max(1, eff.width !== undefined ? Number(eff.width) || 1 : Number(obj.width) || 1);
+          const videoHeight = Math.max(1, eff.height !== undefined ? Number(eff.height) || 1 : Number(obj.height) || 1);
+          ctx.drawImage(video,videoX,videoY,videoWidth,videoHeight);
+        }
       }
     } else if(obj.type === 'text'){
       const weight = obj.bold ? '700' : '400';
@@ -4548,7 +4953,7 @@ ctx.fill();</textarea>
     if(obj.type === 'line' || obj.type === 'rect' || obj.type === 'ellipse'){
       return { x1:Math.min(obj.x1,obj.x2), y1:Math.min(obj.y1,obj.y2), x2:Math.max(obj.x1,obj.x2), y2:Math.max(obj.y1,obj.y2) };
     }
-    if(obj.type === 'image'){
+    if(obj.type === 'image' || obj.type === 'video'){
       const x = Number(obj.x) || 0;
       const y = Number(obj.y) || 0;
       const width = Math.max(1, Number(obj.width) || 1);
@@ -7472,9 +7877,9 @@ ctx.fill();</textarea>
 
   function updateInspector(){
     const section = document.getElementById('inspector-section');
-    if(selectionInspectorSuppressors.size){ section.style.display = 'none'; return; }
+    if(selectionInspectorSuppressors.size){ section.style.display = 'none'; updateMediaPanelSelection(); return; }
     const sel = getSelectedSingleObject();
-    if(!sel){ section.style.display = 'none'; if(shapePointEditMode) setShapePointEditMode(false); return; }
+    if(!sel){ section.style.display = 'none'; if(shapePointEditMode) setShapePointEditMode(false); updateMediaPanelSelection(); return; }
     section.style.display = 'block';
     const obj = sel.obj;
     const isClip = obj.type === 'clipinstance';
@@ -7482,7 +7887,7 @@ ctx.fill();</textarea>
       ? (objectLayerName(sel.group) + ' › ' + objectLayerName(obj))
       : (isClip ? (clips[obj.clipId] ? clips[obj.clipId].name : 'Clip instance') : drawObjectTypeLabel(obj.type));
     const canFill = !isClip && obj.type !== 'group' && (obj.type === 'rect' || obj.type === 'ellipse' || obj.type === 'text' || (obj.type === 'freehand' && obj.closedPath));
-    const canStroke = !isClip && obj.type !== 'group' && obj.type !== 'image';
+    const canStroke = !isClip && obj.type !== 'group' && obj.type !== 'image' && obj.type !== 'video';
     const canRoundCorners = !isClip && obj.type === 'rect';
     document.getElementById('insp-fill-row').style.display = canFill ? 'flex' : 'none';
     document.getElementById('insp-stroke-row').style.display = canStroke ? 'flex' : 'none';
@@ -7533,8 +7938,10 @@ ctx.fill();</textarea>
     setRangeUI('insp-scale-y','val-insp-scale-y',axisYVal,v=>v.toFixed(2));
     setRangeUI('insp-rotation','val-insp-rotation', Math.round(rotVal));
     setRangeUI('insp-opacity','val-insp-opacity', Math.round((eff.opacity===undefined?1:eff.opacity)*100));
+    document.getElementById('insp-no-render').checked = !!obj.noRender;
 
     renderKeyframeList(obj);
+    updateMediaPanelSelection();
   }
 
   // canvas can hand back either "#rrggbb" or "rgb(r,g,b)" once tweened — color
@@ -7597,6 +8004,14 @@ ctx.fill();</textarea>
     document.getElementById('val-insp-opacity').textContent = e.target.value;
   });
   document.getElementById('insp-opacity').addEventListener('change', (e)=>{ e.target.dataset.historyArmed=''; const sel=getSelectedSingleObject(); finishObjectEdit(sel?sel.obj:null); });
+  document.getElementById('insp-no-render').addEventListener('change', (e)=>{
+    const sel=getSelectedSingleObject(); if(!sel) return;
+    pushUndo();
+    sel.obj.noRender=!!e.target.checked;
+    renderLayerList();
+    renderTimeline();
+    updateMediaPanelSelection();
+  });
   document.getElementById('insp-fill').addEventListener('input', (e)=>{
     const sel = getSelectedSingleObject(); if(!sel || sel.obj.type==='clipinstance') return;
     if(!e.target.dataset.historyArmed){ pushUndo(); e.target.dataset.historyArmed='1'; }
@@ -8524,7 +8939,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 111,
+    version: 112,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -8770,6 +9185,49 @@ ctx.fill();</textarea>
       };
       ensureDrawObjectMetadata(object);
       return object;
+    },
+    createVideoObject(source, options){
+      const settings = options && typeof options === 'object' ? options : {};
+      const sourceObject = source && typeof source === 'object' ? source : {src:source};
+      const width = Math.max(1,Number(settings.width !== undefined ? settings.width : sourceObject.width)||1);
+      const height = Math.max(1,Number(settings.height !== undefined ? settings.height : sourceObject.height)||1);
+      const object = {
+        type:'video',
+        name:String(settings.name || sourceObject.name || 'Video'),
+        src:String(settings.src || sourceObject.src || sourceObject.dataUrl || ''),
+        x:Number.isFinite(Number(settings.x)) ? Number(settings.x) : ((W-width)/2),
+        y:Number.isFinite(Number(settings.y)) ? Number(settings.y) : ((H-height)/2),
+        width,
+        height,
+        naturalWidth:Math.max(1,Number(settings.naturalWidth || width)||width),
+        naturalHeight:Math.max(1,Number(settings.naturalHeight || height)||height),
+        mediaDuration:Math.max(0,Number(settings.mediaDuration)||0),
+        mediaStartTime:Math.max(0,Number(settings.mediaStartTime)||0),
+        mediaRole:['background','rotoscope','overlay'].includes(settings.mediaRole) ? settings.mediaRole : 'overlay',
+        noRender:!!settings.noRender,
+        loop:settings.loop !== false,
+        playbackRate:Math.max(.05,Math.min(8,Number(settings.playbackRate)||1)),
+        tx:Number(settings.tx)||0,
+        ty:Number(settings.ty)||0,
+        tscale:settings.tscale===undefined?1:Number(settings.tscale)||1,
+        tscaleX:settings.tscaleX===undefined?1:Number(settings.tscaleX)||1,
+        tscaleY:settings.tscaleY===undefined?1:Number(settings.tscaleY)||1,
+        trotation:Number(settings.trotation)||0,
+        opacity:settings.opacity===undefined?1:Math.max(0,Math.min(1,Number(settings.opacity)||0)),
+        fillEnabled:false,
+        strokeEnabled:false,
+        keyframes:Array.isArray(settings.keyframes)?JSON.parse(JSON.stringify(settings.keyframes)):[]
+      };
+      ensureDrawObjectMetadata(object);
+      return object;
+    },
+    setObjectNoRender(object, noRender, options){
+      if(!object || typeof object !== 'object') return false;
+      const settings=options&&typeof options==='object'?options:{};
+      if(settings.pushUndo!==false) pushUndo();
+      object.noRender=!!noRender;
+      if(settings.refresh!==false) this.refreshUI();
+      return true;
     },
     createImageClip(source, options){
       const settings = options && typeof options === 'object' ? options : {};
@@ -9164,6 +9622,9 @@ ctx.fill();</textarea>
     remapSelectionAfterObjectDelete(index);
     updateSelectedCountUI();
     renderLayerList();
+    updateMediaPanelSelection();
+    updateInspector();
+    renderTransformHandles();
   }
 
   function deleteSelectedDrawObjects(){
@@ -10466,7 +10927,8 @@ ctx.fill();</textarea>
       const badge = document.createElement('span');
       badge.className = 'layer-kind-badge';
       badge.textContent = drawObjectTypeLabel(obj.type).slice(0,2).toUpperCase();
-      badge.title = 'Object layer · owned by ' + panelForDrawObject(obj);
+      badge.title = 'Object layer · owned by ' + panelForDrawObject(obj) + (obj.noRender ? ' · No Render' : '');
+      if(obj.noRender) badge.classList.add('no-render');
 
       const dot = document.createElement('span');
       dot.className = 'layer-dot';
@@ -10475,8 +10937,8 @@ ctx.fill();</textarea>
 
       const name = document.createElement('span');
       name.className = 'layer-name' + (obj.enabled === false ? ' off' : '');
-      name.textContent = entry.isolated ? ('↳ '+objectLayerName(obj)) : objectLayerName(obj);
-      name.title = 'Select to open ' + panelForDrawObject(obj);
+      name.textContent = (entry.isolated ? ('↳ '+objectLayerName(obj)) : objectLayerName(obj)) + (obj.noRender ? ' · No Render' : '');
+      name.title = 'Select to open ' + panelForDrawObject(obj) + (obj.noRender ? ' · omitted from WebM export' : '');
 
       const visBtn = document.createElement('button');
       visBtn.className = 'layer-btn';
@@ -11192,8 +11654,31 @@ ctx.fill();</textarea>
       row.dataset.timelineKind = 'legacy-object-row';
       const name = document.createElement('div');
       name.className = 'timeline-track-name';
-      name.textContent = objectLayerName(obj);
-      name.title = 'Selects this object and opens ' + panelForDrawObject(obj);
+      name.title = 'Selects this object and opens ' + panelForDrawObject(obj) + (obj.noRender ? ' · No Render' : '');
+      if(isMediaObject(obj)){
+        const deleteMediaLayerButton = document.createElement('button');
+        deleteMediaLayerButton.type = 'button';
+        deleteMediaLayerButton.className = 'wick-layer-delete-button';
+        deleteMediaLayerButton.textContent = '×';
+        deleteMediaLayerButton.title = 'Delete media layer';
+        deleteMediaLayerButton.setAttribute('aria-label','Delete ' + objectLayerName(obj));
+        deleteMediaLayerButton.addEventListener('click',event=>{
+          event.preventDefault();
+          event.stopPropagation();
+          if(entry.isolated) deleteSelectedDrawObjects();
+          else deleteDrawObject(idx);
+          updateMediaPanelSelection();
+          updateInspector();
+          renderTransformHandles();
+        });
+        const mediaLayerNameText = document.createElement('span');
+        mediaLayerNameText.className = 'wick-layer-name-text';
+        mediaLayerNameText.textContent = objectLayerName(obj) + (obj.noRender ? ' · NR' : '');
+        name.appendChild(deleteMediaLayerButton);
+        name.appendChild(mediaLayerNameText);
+      }else{
+        name.textContent = objectLayerName(obj) + (obj.noRender ? ' · NR' : '');
+      }
 
       const track = document.createElement('div');
       track.className = 'timeline-track';
@@ -13219,6 +13704,7 @@ ctx.fill();</textarea>
 
     requestAnimationFrame(render);
   }
+  installAnimateMediaPanel();
   requestAnimationFrame(render);
 
   // The core per-layer render dispatch, factored out so it can run against
