@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 17,
+  "version": 18,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -206,9 +206,10 @@
         {
           "id": "Import_SVG",
           "label": "SVG Import",
+          "description": "Import SVG on demand as editable Luke Animate vector curves or as one complete SVG Clip.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/SVG.svg",
           "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/SVG_Importer.txt",
-          "action": "script",
+          "action": "tool",
           "F_Screen": 0
         },
         {
