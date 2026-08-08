@@ -1,5 +1,5 @@
 
-<!-- LukeAnimate GPT v167: restored the original stage marquee multi-selection. Dragging empty stage space in Select/Edit mode draws a marquee and selects all visible objects whose effective bounds intersect it. Shift/Ctrl/Cmd marquee adds to the existing selection. Ctrl/Cmd is again available for multi-selection; stage panning is restored to Space-drag or middle-mouse drag. Retains v166 30% rulers and all v165-v159 Clip/timeline fixes. -->
+<!-- LukeAnimate GPT v169: nested Clip rulers are true editing-viewport rulers. While editing a Clip, the horizontal ruler is fixed immediately below the top toolbar from the left ruler strip to the sidebar edge, the vertical ruler is fixed against the far-left workspace edge down to the timeline, and the corner sits at their intersection. Tick values continue to follow Clip coordinates while panning/scrolling. Main-stage ruler layout remains unchanged. -->
 <!-- LukeAnimate GPT v153: native nested Clip-part animator. Selecting a parent Clip shows its child Clips as indented timeline sublayers and opens stage-styled Move, Scale and Rotate concertinas. Includes the v152 nested Clip preservation fix and all v151 Config, Scripts, SVG and Bezier fixes. -->
 <!DOCTYPE html>
 <!-- LukeAnimate GPT v148: Flowing Line layers can use animated dashes, built-in shapes, custom text or an uploaded image as the moving path item. -->
@@ -2029,6 +2029,66 @@
     border:1px solid #087e70;
     background:rgba(79,224,196,.16);
     box-shadow:0 0 0 1px rgba(255,255,255,.65) inset;
+  }
+
+
+  /* ---------- v168 nested Clip focused edit workspace ---------- */
+  body.clip-editing-focus #stage-wrap{
+    padding:0;
+  }
+
+  body.clip-editing-focus #stage-workspace{
+    margin:0;
+    max-width:none;
+    max-height:none;
+    align-items:start;
+    justify-items:start;
+  }
+
+  /*
+    v169 Clip edit rulers:
+    these are positioned by browser viewport geometry, not by the Clip canvas.
+  */
+  body.clip-editing-focus #ruler-corner,
+  body.clip-editing-focus #horizontal-ruler,
+  body.clip-editing-focus #vertical-ruler{
+    position:fixed !important;
+    margin:0 !important;
+    transform:none !important;
+  }
+
+  body.clip-editing-focus #ruler-corner{
+    z-index:120 !important;
+  }
+
+  body.clip-editing-focus #horizontal-ruler,
+  body.clip-editing-focus #vertical-ruler{
+    z-index:119 !important;
+  }
+
+  /*
+    Remove the main-stage presentation box/shadow while editing nested Clips.
+    The Clip edit view should feel open rather than clipped inside a card.
+  */
+  body.clip-editing-focus #canvas-shell{
+    box-shadow:none !important;
+    max-width:none;
+    max-height:none;
+    background:transparent;
+  }
+
+  body.clip-editing-focus #fx-canvas{
+    max-width:none;
+    max-height:none;
+  }
+
+  body.clip-editing-focus #guide-layer{
+    overflow:visible;
+  }
+
+  body.clip-editing-focus #clip-breadcrumb{
+    top:8px;
+    left:8px;
   }
 
 </style>
@@ -4986,38 +5046,401 @@ ctx.fill();</textarea>
     return {context,width,height};
   }
 
-  function renderStageRulers(){
-    const horizontal=document.getElementById('horizontal-ruler'),vertical=document.getElementById('vertical-ruler');
-    if(!horizontal||!vertical)return;
-    applyRulerGuideVisibility();
-    if(!rulersVisible)return;
-    const rect=canvas.getBoundingClientRect();
-    if(rect.width<1||rect.height<1)return;
-    const h=prepareRulerCanvas(horizontal,rect.width,24),v=prepareRulerCanvas(vertical,24,rect.height);
-    const start=stageToScenePoint({x:0,y:0});
-    const xScale=rect.width/W,yScale=rect.height/H;
-    const xMajor=chooseRulerMajorStep(1/xScale),xMinor=xMajor/5;
-    const yMajor=chooseRulerMajorStep(1/yScale),yMinor=yMajor/5;
-    function base(context,width,height){context.fillStyle='#f7f8fa';context.fillRect(0,0,width,height);context.strokeStyle='#7f8791';context.fillStyle='#59616b';context.lineWidth=1;context.font='10px Inter,Segoe UI,sans-serif';}
-    base(h.context,h.width,h.height);
-    const firstX=Math.floor(start.x/xMinor)*xMinor,lastX=start.x+W;
-    for(let value=firstX,index=0;value<=lastX+xMinor*.5;value+=xMinor,index++){
-      const stageX=sceneToStagePoint({x:value,y:0}).x,px=stageX*xScale;
-      if(px<-.5||px>h.width+.5)continue;
-      const major=Math.abs(value/xMajor-Math.round(value/xMajor))<1e-5;
-      h.context.beginPath();h.context.moveTo(Math.round(px)+.5,h.height);h.context.lineTo(Math.round(px)+.5,h.height-(major?12:6));h.context.stroke();
-      if(major)h.context.fillText(String(Math.round(value*100)/100),px+3,10);
+  function resetClipPerimeterRulerStyles(){
+    const horizontal=document.getElementById('horizontal-ruler');
+    const vertical=document.getElementById('vertical-ruler');
+    const corner=document.getElementById('ruler-corner');
+
+    [horizontal,vertical,corner].forEach(element=>{
+      if(!element) return;
+      element.style.removeProperty('left');
+      element.style.removeProperty('top');
+      element.style.removeProperty('right');
+      element.style.removeProperty('bottom');
+    });
+  }
+
+  function clipPerimeterRulerLayout(){
+    if(!editingClipId){
+      return null;
     }
-    base(v.context,v.width,v.height);
-    const firstY=Math.floor(start.y/yMinor)*yMinor,lastY=start.y+H;
-    for(let value=firstY,index=0;value<=lastY+yMinor*.5;value+=yMinor,index++){
-      const stageY=sceneToStagePoint({x:0,y:value}).y,py=stageY*yScale;
-      if(py<-.5||py>v.height+.5)continue;
-      const major=Math.abs(value/yMajor-Math.round(value/yMajor))<1e-5;
-      v.context.beginPath();v.context.moveTo(v.width,Math.round(py)+.5);v.context.lineTo(v.width-(major?12:6),Math.round(py)+.5);v.context.stroke();
-      if(major){v.context.save();v.context.translate(9,py-3);v.context.rotate(-Math.PI/2);v.context.fillText(String(Math.round(value*100)/100),0,0);v.context.restore();}
+
+    const wrap=document.getElementById('stage-wrap');
+    const topbar=document.getElementById('topbar');
+
+    if(!wrap || !topbar){
+      return null;
+    }
+
+    const wrapRect=wrap.getBoundingClientRect();
+    const topbarRect=topbar.getBoundingClientRect();
+    const rulerSize=24;
+
+    /*
+      This is the location marked in the supplied screenshot:
+      the top ruler starts immediately below the toolbar and spans all available
+      stage viewport width up to the sidebar; the left ruler hugs the browser/
+      stage-workspace edge all the way down to the timeline.
+    */
+    const horizontalTop=Math.max(
+      wrapRect.top,
+      topbarRect.bottom
+    );
+
+    const horizontalLeft=wrapRect.left+rulerSize;
+
+    const horizontalWidth=Math.max(
+      1,
+      wrapRect.right-horizontalLeft
+    );
+
+    const verticalLeft=wrapRect.left;
+    const verticalTop=horizontalTop+rulerSize;
+
+    const verticalHeight=Math.max(
+      1,
+      wrapRect.bottom-verticalTop
+    );
+
+    return {
+      rulerSize,
+      wrapRect,
+      horizontalTop,
+      horizontalLeft,
+      horizontalWidth,
+      verticalTop,
+      verticalLeft,
+      verticalHeight
+    };
+  }
+
+  function applyClipPerimeterRulerLayout(layout){
+    if(!layout){
+      resetClipPerimeterRulerStyles();
+      return;
+    }
+
+    const horizontal=document.getElementById('horizontal-ruler');
+    const vertical=document.getElementById('vertical-ruler');
+    const corner=document.getElementById('ruler-corner');
+
+    if(corner){
+      corner.style.left=layout.wrapRect.left+'px';
+      corner.style.top=layout.horizontalTop+'px';
+      corner.style.width=layout.rulerSize+'px';
+      corner.style.height=layout.rulerSize+'px';
+    }
+
+    if(horizontal){
+      horizontal.style.left=layout.horizontalLeft+'px';
+      horizontal.style.top=layout.horizontalTop+'px';
+    }
+
+    if(vertical){
+      vertical.style.left=layout.verticalLeft+'px';
+      vertical.style.top=layout.verticalTop+'px';
     }
   }
+
+  function renderStageRulers(){
+    const horizontal=document.getElementById('horizontal-ruler');
+    const vertical=document.getElementById('vertical-ruler');
+
+    if(!horizontal||!vertical)return;
+
+    applyRulerGuideVisibility();
+
+    if(!rulersVisible)return;
+
+    const rect=canvas.getBoundingClientRect();
+
+    if(rect.width<1||rect.height<1)return;
+
+    const clipLayout=clipPerimeterRulerLayout();
+
+    if(clipLayout){
+      applyClipPerimeterRulerLayout(
+        clipLayout
+      );
+    }else{
+      resetClipPerimeterRulerStyles();
+    }
+
+    const horizontalWidth=clipLayout
+      ?clipLayout.horizontalWidth
+      :rect.width;
+
+    const verticalHeight=clipLayout
+      ?clipLayout.verticalHeight
+      :rect.height;
+
+    const h=prepareRulerCanvas(
+      horizontal,
+      horizontalWidth,
+      24
+    );
+
+    const v=prepareRulerCanvas(
+      vertical,
+      24,
+      verticalHeight
+    );
+
+    const xScale=rect.width/W;
+    const yScale=rect.height/H;
+
+    /*
+      Main stage rulers begin at the canvas edge.
+      Nested Clip rulers begin at the browser viewport perimeter.
+    */
+    const rulerClientLeft=clipLayout
+      ?clipLayout.horizontalLeft
+      :rect.left;
+
+    const rulerClientTop=clipLayout
+      ?clipLayout.verticalTop
+      :rect.top;
+
+    const visibleStageLeft=
+      (rulerClientLeft-rect.left)/
+      Math.max(.0001,xScale);
+
+    const visibleStageRight=
+      (
+        rulerClientLeft+
+        h.width-
+        rect.left
+      )/
+      Math.max(.0001,xScale);
+
+    const visibleStageTop=
+      (rulerClientTop-rect.top)/
+      Math.max(.0001,yScale);
+
+    const visibleStageBottom=
+      (
+        rulerClientTop+
+        v.height-
+        rect.top
+      )/
+      Math.max(.0001,yScale);
+
+    const visibleSceneLeft=stageToScenePoint({
+      x:visibleStageLeft,
+      y:0
+    }).x;
+
+    const visibleSceneRight=stageToScenePoint({
+      x:visibleStageRight,
+      y:0
+    }).x;
+
+    const visibleSceneTop=stageToScenePoint({
+      x:0,
+      y:visibleStageTop
+    }).y;
+
+    const visibleSceneBottom=stageToScenePoint({
+      x:0,
+      y:visibleStageBottom
+    }).y;
+
+    const xMajor=chooseRulerMajorStep(
+      1/xScale
+    );
+
+    const xMinor=xMajor/5;
+
+    const yMajor=chooseRulerMajorStep(
+      1/yScale
+    );
+
+    const yMinor=yMajor/5;
+
+    function base(context,width,height){
+      context.fillStyle='#f7f8fa';
+      context.fillRect(0,0,width,height);
+      context.strokeStyle='#7f8791';
+      context.fillStyle='#59616b';
+      context.lineWidth=1;
+      context.font='10px Inter,Segoe UI,sans-serif';
+    }
+
+    base(
+      h.context,
+      h.width,
+      h.height
+    );
+
+    const firstX=
+      Math.floor(
+        Math.min(
+          visibleSceneLeft,
+          visibleSceneRight
+        )/
+        xMinor
+      )*
+      xMinor;
+
+    const lastX=Math.max(
+      visibleSceneLeft,
+      visibleSceneRight
+    );
+
+    for(
+      let value=firstX;
+      value<=lastX+xMinor*.5;
+      value+=xMinor
+    ){
+      const stageX=sceneToStagePoint({
+        x:value,
+        y:0
+      }).x;
+
+      const clientX=
+        rect.left+
+        stageX*xScale;
+
+      const px=
+        clientX-
+        rulerClientLeft;
+
+      if(px<-.5||px>h.width+.5){
+        continue;
+      }
+
+      const major=
+        Math.abs(
+          value/xMajor-
+          Math.round(value/xMajor)
+        )<
+        1e-5;
+
+      h.context.beginPath();
+
+      h.context.moveTo(
+        Math.round(px)+.5,
+        h.height
+      );
+
+      h.context.lineTo(
+        Math.round(px)+.5,
+        h.height-(major?12:6)
+      );
+
+      h.context.stroke();
+
+      if(major){
+        h.context.fillText(
+          String(
+            Math.round(value*100)/100
+          ),
+          px+3,
+          10
+        );
+      }
+    }
+
+    base(
+      v.context,
+      v.width,
+      v.height
+    );
+
+    const firstY=
+      Math.floor(
+        Math.min(
+          visibleSceneTop,
+          visibleSceneBottom
+        )/
+        yMinor
+      )*
+      yMinor;
+
+    const lastY=Math.max(
+      visibleSceneTop,
+      visibleSceneBottom
+    );
+
+    for(
+      let value=firstY;
+      value<=lastY+yMinor*.5;
+      value+=yMinor
+    ){
+      const stageY=sceneToStagePoint({
+        x:0,
+        y:value
+      }).y;
+
+      const clientY=
+        rect.top+
+        stageY*yScale;
+
+      const py=
+        clientY-
+        rulerClientTop;
+
+      if(py<-.5||py>v.height+.5){
+        continue;
+      }
+
+      const major=
+        Math.abs(
+          value/yMajor-
+          Math.round(value/yMajor)
+        )<
+        1e-5;
+
+      v.context.beginPath();
+
+      v.context.moveTo(
+        v.width,
+        Math.round(py)+.5
+      );
+
+      v.context.lineTo(
+        v.width-(major?12:6),
+        Math.round(py)+.5
+      );
+
+      v.context.stroke();
+
+      if(major){
+        v.context.save();
+
+        v.context.translate(
+          9,
+          py-3
+        );
+
+        v.context.rotate(
+          -Math.PI/2
+        );
+
+        v.context.fillText(
+          String(
+            Math.round(value*100)/100
+          ),
+          0,
+          0
+        );
+
+        v.context.restore();
+      }
+    }
+  }
+
+  window.addEventListener(
+    'resize',
+    ()=>{
+      if(editingClipId){
+        requestAnimationFrame(
+          renderStageRulers
+        );
+      }
+    },
+    {passive:true}
+  );
 
   function guidePositionFromClient(type,clientX,clientY){
     const rect=canvas.getBoundingClientRect();
@@ -6390,7 +6813,31 @@ ctx.fill();</textarea>
     return names;
   }
 
+  function syncClipEditingWorkspaceMode(){
+    const active=!!editingClipId;
+    document.body.classList.toggle('clip-editing-focus',active);
+
+    const wrap=document.getElementById('stage-wrap');
+    const workspace=document.getElementById('stage-workspace');
+    const shell=document.getElementById('canvas-shell');
+
+    if(wrap) wrap.classList.toggle('clip-editing-focus',active);
+    if(workspace) workspace.classList.toggle('clip-editing-focus',active);
+    if(shell) shell.classList.toggle('clip-editing-focus',active);
+
+    /*
+      Keep the ruler/guide paint and layout in sync whenever the edit context
+      changes. requestAnimationFrame avoids reflow jitter while switching.
+    */
+    requestAnimationFrame(()=>{
+      updateRulersAndGuides();
+  syncClipEditingWorkspaceMode();
+    });
+  }
+
   function updateClipBreadcrumb(){
+    syncClipEditingWorkspaceMode();
+
     const bar = document.getElementById('clip-breadcrumb');
     const nav = document.getElementById('clip-nav-controls');
     const navPath = document.getElementById('clip-nav-path');
@@ -12290,7 +12737,15 @@ ctx.fill();</textarea>
 
     wrap.addEventListener(
       'scroll',
-      pinToolbar,
+      ()=>{
+        pinToolbar();
+
+        if(editingClipId){
+          requestAnimationFrame(
+            renderStageRulers
+          );
+        }
+      },
       {passive:true}
     );
 
