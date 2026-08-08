@@ -1,5 +1,6 @@
 
-<!-- LukeAnimate GPT v151: full Config.json and Scripts deployment restored; SVG icons load from /LukeAnimate/SVGs and tools load from /LukeAnimate/Scripts. Includes the v150 Bezier double-click anchor fix. -->
+<!-- LukeAnimate GPT v166: stage rulers and ruler corner now use 30% opacity. All ruler markings, guide dragging, dimensions, camera-stack behaviour and Clip animation fixes remain unchanged. -->
+<!-- LukeAnimate GPT v153: native nested Clip-part animator. Selecting a parent Clip shows its child Clips as indented timeline sublayers and opens stage-styled Move, Scale and Rotate concertinas. Includes the v152 nested Clip preservation fix and all v151 Config, Scripts, SVG and Bezier fixes. -->
 <!DOCTYPE html>
 <!-- LukeAnimate GPT v148: Flowing Line layers can use animated dashes, built-in shapes, custom text or an uploaded image as the moving path item. -->
 <html lang="en">
@@ -87,6 +88,11 @@
     z-index:6;
     user-select:none;
     touch-action:none;
+    opacity:.30;
+  }
+
+  #ruler-corner{
+    opacity:.30;
   }
   #horizontal-ruler{grid-column:2;grid-row:1;height:24px;cursor:ns-resize;border-bottom:1px solid #c8cdd4;}
   #vertical-ruler{grid-column:1;grid-row:2;width:24px;cursor:ew-resize;border-right:1px solid #c8cdd4;}
@@ -1272,6 +1278,748 @@
   #timeline-frame-zoom-readout{min-width:36px;text-align:right;color:var(--text-dim);font:10px var(--mono);}
   .wick-layer-frame{cursor:ew-resize;}
 
+
+  /* ---------- v153 native nested Clip-part animator ---------- */
+  #native-clip-part-editor{
+    display:none;
+    margin:12px 0 0;
+    padding:10px;
+    border:1px solid var(--line);
+    border-radius:9px;
+    background:var(--panel);
+    box-shadow:0 4px 14px rgba(18,28,38,.07);
+  }
+  .native-clip-part-editor-head{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    margin-bottom:5px;
+  }
+  .native-clip-part-editor-head strong{
+    flex:1;
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    color:var(--text);
+    font-size:12px;
+  }
+  .native-clip-part-editor-count{
+    flex:0 0 auto;
+    padding:2px 6px;
+    border:1px solid var(--line);
+    border-radius:999px;
+    background:var(--panel-2);
+    color:var(--text-dim);
+    font:9px var(--mono);
+  }
+  .native-clip-part-editor-path{
+    margin:0 0 8px;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    color:var(--text-dim);
+    font:10px var(--mono);
+  }
+  .native-clip-part-list{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .native-clip-part-card{
+    overflow:hidden;
+    border:1px solid var(--line);
+    border-radius:8px;
+    background:var(--panel-2);
+  }
+  .native-clip-part-card.active{
+    border-color:var(--accent);
+    box-shadow:0 0 0 1px rgba(14,156,134,.17);
+  }
+  .native-clip-part-card-head{
+    width:100%;
+    min-height:34px;
+    display:grid;
+    grid-template-columns:auto minmax(0,1fr) auto auto;
+    align-items:center;
+    gap:7px;
+    padding:5px 7px;
+    border:0;
+    background:transparent;
+    color:var(--text);
+    text-align:left;
+    cursor:pointer;
+  }
+  .native-clip-part-card-head:hover{background:rgba(14,156,134,.08);}
+  .native-clip-part-tree{
+    width:calc(8px + var(--clip-part-depth,1) * 8px);
+    height:20px;
+    position:relative;
+    flex:0 0 auto;
+  }
+  .native-clip-part-tree::before{
+    content:"";
+    position:absolute;
+    right:3px;
+    top:0;
+    bottom:9px;
+    width:1px;
+    background:#aab3be;
+  }
+  .native-clip-part-tree::after{
+    content:"";
+    position:absolute;
+    right:3px;
+    bottom:8px;
+    width:7px;
+    height:1px;
+    background:#aab3be;
+  }
+  .native-clip-part-name{
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    font-size:11px;
+    font-weight:700;
+  }
+  .native-clip-part-key-count,
+  .native-clip-channel-badge{
+    flex:0 0 auto;
+    padding:2px 6px;
+    border:1px solid var(--line);
+    border-radius:999px;
+    background:#fff;
+    color:var(--text-dim);
+    font:9px var(--mono);
+    white-space:nowrap;
+  }
+  .native-clip-part-key-count.keyed,
+  .native-clip-channel-badge.keyed{
+    border-color:rgba(14,156,134,.55);
+    background:rgba(14,156,134,.12);
+    color:#087565;
+  }
+  .native-clip-part-chevron{
+    width:20px;
+    height:20px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    border:1px solid var(--line);
+    border-radius:5px;
+    background:#fff;
+    color:var(--text-dim);
+    font-weight:800;
+  }
+  .native-clip-part-card-body{
+    display:none;
+    padding:0 7px 7px;
+    background:var(--panel);
+    border-top:1px solid var(--line);
+  }
+  .native-clip-part-card.active .native-clip-part-card-body{display:block;}
+  .native-clip-channel{
+    margin-top:7px;
+    overflow:hidden;
+    border:1px solid var(--line);
+    border-radius:7px;
+    background:var(--panel-2);
+  }
+  .native-clip-channel-head{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) auto auto;
+    align-items:center;
+    gap:6px;
+    min-height:32px;
+    padding:4px 5px 4px 8px;
+    cursor:pointer;
+  }
+  .native-clip-channel-head:hover{background:rgba(14,156,134,.07);}
+  .native-clip-channel-title{
+    min-width:0;
+    display:flex;
+    align-items:center;
+    gap:7px;
+    color:var(--text);
+    font-size:10px;
+    font-weight:800;
+    letter-spacing:.07em;
+    text-transform:uppercase;
+  }
+  .native-clip-channel-icon{
+    width:20px;
+    height:20px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    border:1px solid var(--line);
+    border-radius:5px;
+    background:#fff;
+    color:var(--accent);
+    font:700 12px var(--mono);
+  }
+  .native-clip-channel-toggle{
+    width:24px;
+    height:23px;
+    padding:0;
+    border:1px solid var(--line);
+    border-radius:5px;
+    background:#fff;
+    color:var(--text-dim);
+    cursor:pointer;
+  }
+  .native-clip-channel-body{
+    display:none;
+    padding:8px;
+    border-top:1px solid var(--line);
+    background:var(--panel);
+  }
+  .native-clip-channel.open .native-clip-channel-body{display:block;}
+  .native-clip-control-row{
+    display:grid;
+    grid-template-columns:50px minmax(0,1fr) 72px;
+    align-items:center;
+    gap:7px;
+    margin-bottom:7px;
+  }
+  .native-clip-control-row label{
+    color:var(--text-dim);
+    font-size:10px;
+  }
+  .native-clip-control-row input[type=range]{
+    width:100%;
+    accent-color:var(--accent);
+  }
+  .native-clip-control-row input[type=number]{
+    width:100%;
+    min-width:0;
+    padding:5px 6px;
+    border:1px solid var(--line);
+    border-radius:6px;
+    background:#fff;
+    color:var(--text);
+    font:10px var(--mono);
+  }
+  .native-clip-channel-actions{
+    display:flex;
+    gap:6px;
+    margin-top:8px;
+  }
+  .native-clip-channel-actions .btn{flex:1;}
+  .native-clip-channel-note{
+    margin-top:5px;
+    color:var(--text-dim);
+    font-size:9px;
+    line-height:1.35;
+  }
+  .native-clip-rotation-dial-wrap{
+    display:flex;
+    justify-content:center;
+    padding:3px 0 9px;
+  }
+  .native-clip-rotation-dial{
+    width:176px;
+    height:176px;
+    position:relative;
+    border:2px solid #8897a9;
+    border-radius:50%;
+    background:
+      radial-gradient(circle at center,#f7f9fb 0 48%,transparent 49%),
+      repeating-conic-gradient(from -1deg,rgba(98,112,130,.26) 0 1deg,transparent 1deg 45deg),
+      var(--panel-2);
+    box-shadow:inset 0 0 0 11px rgba(255,255,255,.63);
+    touch-action:none;
+    user-select:none;
+    cursor:crosshair;
+  }
+  .native-clip-rotation-centre{
+    position:absolute;
+    left:50%;
+    top:50%;
+    width:12px;
+    height:12px;
+    transform:translate(-50%,-50%);
+    border:2px solid #17212b;
+    border-radius:50%;
+    background:var(--accent);
+    z-index:4;
+    pointer-events:none;
+  }
+  .native-clip-rotation-hand{
+    position:absolute;
+    left:50%;
+    top:50%;
+    width:7px;
+    height:70px;
+    margin-left:-3.5px;
+    margin-top:-65px;
+    border-radius:5px;
+    background:#8693a3;
+    transform-origin:50% 65px;
+    box-shadow:0 1px 2px rgba(0,0,0,.18);
+    pointer-events:none;
+    z-index:3;
+  }
+  .native-clip-rotation-dot{
+    position:absolute;
+    width:13px;
+    height:13px;
+    transform:translate(-50%,-50%);
+    padding:0;
+    border:1.5px solid #20303c;
+    border-radius:50%;
+    background:#4d9d4d;
+    box-shadow:0 1px 2px rgba(0,0,0,.22);
+    cursor:pointer;
+    z-index:5;
+  }
+  .native-clip-rotation-dot:hover,
+  .native-clip-rotation-dot.active{
+    background:var(--accent);
+    box-shadow:0 0 0 3px rgba(14,156,134,.19);
+  }
+  .native-clip-rotation-label{
+    position:absolute;
+    transform:translate(-50%,-50%);
+    color:#667386;
+    font:9px var(--mono);
+    pointer-events:none;
+    z-index:2;
+  }
+  .native-clip-rotation-fields{
+    display:grid;
+    grid-template-columns:1fr 1fr 1fr;
+    gap:7px;
+    margin-bottom:8px;
+  }
+  .native-clip-rotation-field label{
+    display:block;
+    margin-bottom:3px;
+    color:var(--text-dim);
+    font-size:9px;
+    text-align:center;
+  }
+  .native-clip-rotation-field input{
+    width:100%;
+    padding:6px 5px;
+    border:1px solid var(--line);
+    border-radius:6px;
+    background:#fff;
+    color:var(--text);
+    text-align:center;
+    font:10px var(--mono);
+  }
+  .native-clip-longest{
+    display:flex;
+    align-items:flex-start;
+    gap:7px;
+    padding:7px;
+    border:1px solid var(--line);
+    border-radius:7px;
+    background:var(--panel-2);
+    color:var(--text);
+    font-size:10px;
+    cursor:pointer;
+  }
+  .native-clip-longest input{
+    margin:1px 0 0;
+    accent-color:var(--accent);
+  }
+  .native-clip-longest span{
+    color:var(--text-dim);
+    font-size:9px;
+    line-height:1.3;
+  }
+  .timeline-track-row.native-clip-part-row{
+    margin-top:-1px;
+  }
+  .timeline-track-row.native-clip-part-row .timeline-track-name{
+    color:#586575;
+    background:var(--panel);
+    font-weight:650;
+    cursor:pointer;
+  }
+  .timeline-track-row.native-clip-part-row.active .timeline-track-name{
+    color:var(--accent);
+    background:#e3f7f3;
+    border-radius:4px;
+  }
+  .native-clip-part-timeline-name{
+    display:flex;
+    align-items:center;
+    gap:3px;
+    min-width:0;
+  }
+  .native-clip-part-timeline-branch{
+    flex:0 0 auto;
+    color:#95a0ad;
+    font:11px var(--mono);
+  }
+  .native-clip-part-timeline-text{
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .native-clip-part-timeline-track{
+    background:#f8fafb;
+    border-style:dashed;
+  }
+  .native-clip-part-timeline-exposure{
+    position:absolute;
+    inset:3px;
+    border-radius:3px;
+    background:rgba(14,156,134,.08);
+    border:1px solid rgba(14,156,134,.17);
+    pointer-events:none;
+  }
+  .native-clip-part-key-dot{
+    position:absolute;
+    top:5px;
+    width:10px;
+    height:10px;
+    margin-left:-5px;
+    transform:rotate(45deg);
+    border:1.5px solid #17212b;
+    border-radius:2px;
+    background:var(--accent);
+    z-index:7;
+    cursor:ew-resize;
+    touch-action:none;
+  }
+  .native-clip-part-key-dot.move{background:#0e9c86;}
+  .native-clip-part-key-dot.scale{background:#3075b8;}
+  .native-clip-part-key-dot.rotate{background:#9b2f63;}
+  .native-clip-part-key-dot.multiple{
+    background:conic-gradient(#0e9c86 0 33%,#3075b8 33% 66%,#9b2f63 66% 100%);
+  }
+  .native-clip-part-key-dot:hover,
+  .native-clip-part-key-dot.dragging{
+    outline:2px solid rgba(14,156,134,.38);
+    outline-offset:2px;
+  }
+  .native-clip-timeline-toggle{
+    flex:0 0 15px;
+    width:15px;
+    height:15px;
+    min-width:15px;
+    padding:0;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    border:1px solid var(--line);
+    border-radius:3px;
+    background:#fff;
+    color:var(--text-dim);
+    font:800 10px/1 var(--mono);
+    cursor:pointer;
+  }
+  .native-clip-timeline-toggle:hover{
+    border-color:var(--accent);
+    color:var(--accent);
+  }
+
+
+  /* ---------- v154 sidebar-selected Clip animation target ---------- */
+  #clip-library .behaviour-row.native-clip-library-row{
+    position:relative;
+    cursor:pointer;
+    transition:border-color .12s ease,background .12s ease,box-shadow .12s ease;
+  }
+  #clip-library .behaviour-row.native-clip-library-row:hover{
+    background:rgba(14,156,134,.06);
+  }
+  #clip-library .behaviour-row.native-clip-library-row.selected-target{
+    border-color:var(--accent);
+    background:rgba(14,156,134,.09);
+    box-shadow:inset 3px 0 0 var(--accent);
+  }
+  #clip-library .behaviour-row.native-clip-library-row .layer-name{
+    cursor:pointer;
+    min-width:0;
+  }
+  #clip-library .behaviour-row.native-clip-library-row .layer-name.native-clip-library-child{
+    padding-left:18px;
+    position:relative;
+  }
+  #clip-library .behaviour-row.native-clip-library-row .layer-name.native-clip-library-child::before{
+    content:'↳';
+    position:absolute;
+    left:2px;
+    top:50%;
+    transform:translateY(-50%);
+    color:var(--accent);
+    font-family:var(--mono);
+    font-weight:700;
+  }
+  #native-clip-part-editor.native-single-target{
+    margin-top:12px;
+  }
+  #native-clip-part-editor.native-single-target .native-clip-part-editor-head{
+    margin-bottom:2px;
+  }
+  .native-clip-target-title{
+    display:flex;
+    align-items:center;
+    gap:7px;
+    min-width:0;
+  }
+  .native-clip-target-chip{
+    flex:0 0 auto;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-width:28px;
+    height:20px;
+    padding:0 7px;
+    border:1px solid rgba(14,156,134,.45);
+    border-radius:999px;
+    background:rgba(14,156,134,.08);
+    color:var(--accent);
+    font:700 10px/1 var(--mono);
+  }
+  .native-clip-target-card{
+    border:1px solid var(--line);
+    border-radius:10px;
+    background:var(--panel);
+    overflow:hidden;
+    margin-top:8px;
+  }
+  .native-clip-target-card .native-clip-channel{
+    border-left:0;
+    border-right:0;
+    border-radius:0;
+    margin:0;
+  }
+  .native-clip-target-card .native-clip-channel:first-child{
+    border-top:0;
+  }
+  .native-clip-target-card .native-clip-channel:last-child{
+    border-bottom:0;
+  }
+  .timeline-track-row.wick-drawing-layer.native-clip-root-target-active .timeline-track-name{
+    box-shadow:inset 3px 0 0 var(--accent);
+    background:rgba(14,156,134,.08);
+  }
+  .native-clip-root-key-dot{
+    z-index:9;
+  }
+
+
+  /* v156: L1 uses the ordinary Luke Animate timeline-key dots. */
+  .timeline-track-row.native-clip-root-target-active .timeline-key-dot{
+    outline:1px solid rgba(14,156,134,.42);
+    outline-offset:1px;
+  }
+
+
+  /* ---------- v157 centred Convert Selected to Clip button ---------- */
+  .convert-to-clip-button-row{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    width:100%;
+    margin:10px 0 12px;
+  }
+
+  #btn-convert-to-clip{
+    width:118px;
+    height:118px;
+    min-width:118px;
+    min-height:118px;
+    max-width:118px;
+    max-height:118px;
+    flex:0 0 118px;
+    padding:12px;
+    margin:0 auto;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:2px;
+    border:1px solid #d7548f;
+    border-radius:10px;
+    background:#f48fbb;
+    color:#3b1730;
+    box-shadow:
+      0 1px 2px rgba(0,0,0,.08),
+      inset 0 1px 0 rgba(255,255,255,.42);
+    font-size:13px;
+    font-weight:750;
+    line-height:1.15;
+    text-align:center;
+    letter-spacing:.01em;
+    white-space:normal;
+    cursor:pointer;
+  }
+
+  #btn-convert-to-clip:hover:not(:disabled){
+    background:#f6a1c6;
+    border-color:#c94480;
+    transform:translateY(-1px);
+    box-shadow:
+      0 3px 8px rgba(0,0,0,.12),
+      inset 0 1px 0 rgba(255,255,255,.48);
+  }
+
+  #btn-convert-to-clip:active:not(:disabled){
+    transform:translateY(0);
+    background:#ec7fb0;
+    box-shadow:
+      inset 0 1px 3px rgba(0,0,0,.12);
+  }
+
+  #btn-convert-to-clip:focus-visible{
+    outline:2px solid #a72c67;
+    outline-offset:2px;
+  }
+
+  #btn-convert-to-clip:disabled{
+    opacity:.45;
+    cursor:not-allowed;
+    transform:none;
+  }
+
+  #btn-convert-to-clip span{
+    display:block;
+    pointer-events:none;
+  }
+
+
+  /* ---------- v162 layer stack ordering ---------- */
+  .layer-stack-controls{
+    display:flex;
+    align-items:center;
+    gap:2px;
+    flex:0 0 auto;
+  }
+
+  .layer-stack-btn{
+    width:24px;
+    height:24px;
+    min-width:24px;
+    padding:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border:1px solid var(--line);
+    border-radius:5px;
+    background:var(--panel);
+    color:var(--text-dim);
+    font-size:13px;
+    line-height:1;
+    cursor:pointer;
+  }
+
+  .layer-stack-btn:hover:not(:disabled){
+    border-color:var(--accent);
+    color:var(--accent);
+    background:#ffffff;
+  }
+
+  .layer-stack-btn:active:not(:disabled){
+    transform:translateY(1px);
+  }
+
+  .layer-stack-btn:disabled{
+    opacity:.24;
+    cursor:default;
+  }
+
+  .layer-row.active .layer-stack-btn{
+    background:rgba(255,255,255,.72);
+  }
+
+
+  /* ---------- v163 child Clip stack position inside existing parent ---------- */
+  .native-clip-parent-stack{
+    margin:0 0 8px;
+    padding:7px 8px;
+    border:1px solid var(--line);
+    border-radius:8px;
+    background:var(--panel-2);
+  }
+
+  .native-clip-parent-stack-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    margin-bottom:6px;
+  }
+
+  .native-clip-parent-stack-title{
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    color:var(--text);
+    font-size:10px;
+    font-weight:750;
+  }
+
+  .native-clip-parent-stack-position{
+    flex:0 0 auto;
+    color:var(--text-dim);
+    font:9px var(--mono);
+  }
+
+  .native-clip-parent-stack-buttons{
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:4px;
+  }
+
+  .native-clip-parent-stack-buttons .btn{
+    min-width:0;
+    padding:5px 4px;
+    font-size:9px;
+    white-space:nowrap;
+  }
+
+  .native-clip-parent-stack-note{
+    margin-top:5px;
+    color:var(--text-dim);
+    font:9px/1.35 var(--mono);
+  }
+
+  .native-clip-timeline-stack-controls{
+    display:flex;
+    align-items:center;
+    gap:2px;
+    flex:0 0 auto;
+    margin-left:auto;
+  }
+
+  .native-clip-timeline-stack-btn{
+    width:20px;
+    height:20px;
+    min-width:20px;
+    padding:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border:1px solid var(--line);
+    border-radius:4px;
+    background:var(--panel);
+    color:var(--text-dim);
+    font-size:10px;
+    line-height:1;
+    cursor:pointer;
+  }
+
+  .native-clip-timeline-stack-btn:hover:not(:disabled){
+    border-color:var(--accent);
+    color:var(--accent);
+    background:#fff;
+  }
+
+  .native-clip-timeline-stack-btn:disabled{
+    opacity:.24;
+    cursor:default;
+  }
+
 </style>
 </head>
 <body>
@@ -1292,7 +2040,7 @@
       <button class="btn small" id="btn-redo" style="flex:0 0 auto;" disabled title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
     </div>
     <div id="draw-toolbar">
-      <button class="draw-tool icon-only active" id="tool-none" data-tool="none" title="Select / edit path and points" aria-label="Select">
+      <button class="draw-tool icon-only active" id="tool-none" data-tool="none" title="Select / edit path and points" aria-label="Select" data-completed-shape-mode="true">
         <img class="draw-tool-icon" src="https://lukeo25.github.io/LukeAnimate/SVGs/Select.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
         <span class="draw-tool-fallback" aria-hidden="true">↖</span><span class="sr-only">Select</span>
       </button>
@@ -1659,7 +2407,7 @@
       <button class="btn small" id="btn-add-layer" title="Duplicate the selected independent layer">Duplicate Selected Layer</button>
       <button class="btn small danger" id="btn-del-layer">Delete Selected</button>
     </div>
-    <div class="hint">Path layers own separate control-point arrays. Point layers own separate lists of stage points. Duplicate Selected Layer copies only the selected layer and its geometry.</div>
+    <div class="hint"><b>Camera stack:</b> the TOP layer is closest to the camera and renders in front. ▲ moves toward the camera/front; ▼ moves away/back. A nested Clip stays a child when its stack position changes, so legs can sit below/behind dress artwork while still following the parent. Drawing, shape and Clip layer moves include the whole timeline layer and all frames.</div>
   </div>
 
   <div class="group">
@@ -1983,8 +2731,15 @@
       <div class="btn-row" style="margin-bottom:8px;">
         <span id="selected-count" class="audio-filename" style="flex:0 0 auto;">0 selected</span>
       </div>
-      <div class="btn-row" style="margin-bottom:8px;">
-        <button class="btn small" id="btn-convert-to-clip">Convert Selected to Clip</button>
+      <div class="convert-to-clip-button-row">
+        <button class="btn" id="btn-convert-to-clip" title="Convert the current selection into a Clip">
+          <span>Convert</span>
+          <span>Selected</span>
+          <span>to Clip</span>
+        </button>
+      </div>
+
+      <div class="btn-row" style="margin-bottom:8px;justify-content:center;">
         <button class="btn small primary" id="btn-toggle-media-panel" aria-expanded="false">+ Image / Video</button>
       </div>
 
@@ -2314,6 +3069,17 @@ ctx.fill();</textarea>
   let clipCounter = 0;
   let clipRenderDepth = 0;
   const MAX_CLIP_DEPTH = 6;
+
+  /*
+    v158:
+    renderClipInstance() temporarily changes the shared variable `t` to each
+    Clip's internal/local time. That is correct for Clip artwork frames, but it
+    is NOT the clock wanted by nested Move/Scale/Rotate animation.
+
+    This value keeps the original main-stage playhead time alive for the entire
+    recursive render tree.
+  */
+  let nativeClipPartMainRenderTime = null;
   const contextStack = []; // for entering/exiting "editing a clip" sessions
   let editingClipId = null; // null = editing the main scene
   let clipEditViewOffset = { x:0, y:0 }; // screen-space view offset used only while editing inside a Clip
@@ -5353,44 +6119,156 @@ ctx.fill();</textarea>
   // variables at the clip's own data, draws it transformed by the instance's
   // x/y/rotation/scale, then restores the outer scene exactly as it was.
   function renderClipInstance(obj, eff){
-    eff = eff || obj;
-    const clip = clips[obj.clipId];
-    if(!clip || clipRenderDepth >= MAX_CLIP_DEPTH) return;
+    eff=eff||obj;
+
+    const clip=clips[obj.clipId];
+
+    if(
+      !clip ||
+      clipRenderDepth>=MAX_CLIP_DEPTH
+    ){
+      return;
+    }
+
+    const enteringMainClipTree=clipRenderDepth===0;
+    const previousMainRenderTime=nativeClipPartMainRenderTime;
+
+    if(enteringMainClipTree){
+      nativeClipPartMainRenderTime=t;
+    }
+
     clipRenderDepth++;
 
-    // Bounds, gizmos and rendering must all resolve the same internal Clip frame.
-    const localT = clipInstanceLocalTime(obj, eff, t);
+    const saved={
+      points,
+      closed,
+      samples,
+      pathLen,
+      targetPoints,
+      layers,
+      drawObjects,
+      sceneFrames,
+      activeSceneFrameId,
+      t
+    };
 
-    const saved = { points, closed, samples, pathLen, targetPoints, layers, drawObjects, sceneFrames, activeSceneFrameId, t };
-    points = clip.points; closed = clip.closed; targetPoints = clip.targetPoints;
-    layers = clip.layers;
-    migrateIndependentPathLayers(layers, clip.points, clip.closed);
-    ensureClipSceneFrames(clip);
-    sceneFrames = clip.sceneFrames;
-    drawObjects = sceneFrameObjectsAtTime(sceneFrames, localT, clip.timelineDuration, clip.drawObjects || []);
-    activeSceneFrameId = (sceneFrameAtIndex(sceneFrames, frameIndexForTime(localT, clip.timelineDuration)) || {}).id || null;
-    t = localT;
-    rebuildPath();
+    try{
+      const localT=clipInstanceLocalTime(
+        obj,
+        eff,
+        saved.t
+      );
 
-    ctx.save();
-    ctx.globalAlpha *= (eff.opacity !== undefined ? eff.opacity : 1);
-    ctx.translate(eff.x, eff.y);
-    if(eff.rotation) ctx.rotate(eff.rotation * Math.PI / 180);
-    const axes=getObjectScaleAxes(obj,eff);
-    if(axes.x !== 1 || axes.y !== 1) ctx.scale(axes.x,axes.y);
-    const clipPivot = ensureClipPivot(clip);
-    if(clipPivot.x || clipPivot.y) ctx.translate(-clipPivot.x, -clipPivot.y);
+      points=clip.points;
+      closed=clip.closed;
+      targetPoints=clip.targetPoints;
+      layers=clip.layers;
 
-    renderDrawObjects(); // recurse — a clip's own drawObjects may include further clip instances
-    renderSceneLayers(true);
+      migrateIndependentPathLayers(
+        layers,
+        clip.points,
+        clip.closed
+      );
 
-    ctx.restore();
+      ensureClipSceneFrames(
+        clip
+      );
 
-    points = saved.points; closed = saved.closed; samples = saved.samples; pathLen = saved.pathLen;
-    targetPoints = saved.targetPoints; layers = saved.layers; drawObjects = saved.drawObjects;
-    sceneFrames = saved.sceneFrames; activeSceneFrameId = saved.activeSceneFrameId; t = saved.t;
+      sceneFrames=clip.sceneFrames;
 
-    clipRenderDepth--;
+      drawObjects=sceneFrameObjectsAtTime(
+        sceneFrames,
+        localT,
+        clip.timelineDuration,
+        clip.drawObjects||[]
+      );
+
+      activeSceneFrameId=(
+        sceneFrameAtIndex(
+          sceneFrames,
+          frameIndexForTime(
+            localT,
+            clip.timelineDuration
+          )
+        )||{}
+      ).id||null;
+
+      t=localT;
+
+      rebuildPath();
+
+      ctx.save();
+
+      try{
+        ctx.globalAlpha*=(
+          eff.opacity!==undefined
+            ?eff.opacity
+            :1
+        );
+
+        ctx.translate(
+          eff.x,
+          eff.y
+        );
+
+        if(eff.rotation){
+          ctx.rotate(
+            eff.rotation*Math.PI/180
+          );
+        }
+
+        const axes=getObjectScaleAxes(
+          obj,
+          eff
+        );
+
+        if(
+          axes.x!==1 ||
+          axes.y!==1
+        ){
+          ctx.scale(
+            axes.x,
+            axes.y
+          );
+        }
+
+        const clipPivot=ensureClipPivot(
+          clip
+        );
+
+        if(
+          clipPivot.x ||
+          clipPivot.y
+        ){
+          ctx.translate(
+            -clipPivot.x,
+            -clipPivot.y
+          );
+        }
+
+        renderDrawObjects();
+        renderSceneLayers(true);
+      }finally{
+        ctx.restore();
+      }
+    }finally{
+      points=saved.points;
+      closed=saved.closed;
+      samples=saved.samples;
+      pathLen=saved.pathLen;
+      targetPoints=saved.targetPoints;
+      layers=saved.layers;
+      drawObjects=saved.drawObjects;
+      sceneFrames=saved.sceneFrames;
+      activeSceneFrameId=saved.activeSceneFrameId;
+      t=saved.t;
+
+      clipRenderDepth--;
+
+      if(enteringMainClipTree){
+        nativeClipPartMainRenderTime=previousMainRenderTime;
+      }
+    }
   }
 
   function captureMainSceneAsContext(){
@@ -5568,12 +6446,55 @@ ctx.fill();</textarea>
     const newObjectIndex = drawObjects.length - 1;
     pendingDraw = null;
     freehandPoints = null;
+
+    /*
+      v160:
+      Completing a shape must produce exactly the same visual/edit state as
+      manually clicking "Select / edit path and points".
+
+      The previous code selected the new object but left the drawing tool
+      active. Because selectShapesMode was therefore false, the ordinary
+      selection/transform handles were intentionally hidden.
+
+      First select the exact object that was just created, then switch to the
+      Select tool WITHOUT clearing that selection.
+    */
+    selectDrawObject(
+      newObjectIndex,
+      false,
+      true
+    );
+
+    activateDrawTool(
+      'none'
+    );
+
+    /*
+      activateDrawTool('none') enables selection mode when the Animate panel is
+      open. Explicitly enforce the same state here as well so this behaviour is
+      identical regardless of which panel happened to own the drawing session.
+      clearSelection=false is essential: the newly created shape remains active.
+    */
+    setAnimateSelectionActive(
+      true,
+      false
+    );
+
+    /*
+      Re-assert the newly created object after the mode switch. This guarantees
+      the normal layer highlight, inspector ownership and selection handles all
+      refer to the object the user has just drawn.
+    */
+    selectDrawObject(
+      newObjectIndex,
+      false,
+      true
+    );
+
+    updateSelectedCountUI();
     renderLayerList();
-    if(shapeCanEditPoints(obj)){
-      // Select the newly created shape and show its permanent sidebar controls.
-      // No separate floating properties panel is used.
-      selectDrawObject(newObjectIndex, false, true);
-    }
+    renderTransformHandles();
+    renderTimeline();
   }
 
   function currentSelectedPenStroke(){
@@ -5909,11 +6830,25 @@ ctx.fill();</textarea>
       const onMove = (ev)=>{
         freehandPoints.push(canvasCoords(ev.clientX, ev.clientY));
       };
-      const onUp = ()=>{
+      const onUp = (upEvent)=>{
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
-        if(freehandPoints.length >= 2) commitDrawObject({ type:'freehand', points: freehandPoints, strokeColor: style.strokeColor, strokeWidth: style.strokeWidth });
-        else { pendingDraw = null; freehandPoints = null; }
+
+        if(freehandPoints.length >= 2){
+          commitDrawObject({
+            type:'freehand',
+            points:freehandPoints,
+            strokeColor:style.strokeColor,
+            strokeWidth:style.strokeWidth
+          });
+        }else{
+          pendingDraw=null;
+          freehandPoints=null;
+        }
+
+        if(upEvent){
+          upEvent.preventDefault();
+        }
       };
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
@@ -5926,12 +6861,31 @@ ctx.fill();</textarea>
       const cc = snapScenePointToGuides(canvasCoords(ev.clientX, ev.clientY));
       pendingDraw.x2 = cc.x; pendingDraw.y2 = cc.y;
     };
-    const onUp = ()=>{
+    const onUp = (upEvent)=>{
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      const moved = Math.hypot(pendingDraw.x2-pendingDraw.x1, pendingDraw.y2-pendingDraw.y1) > 2;
-      if(moved) commitDrawObject(pendingDraw);
-      else pendingDraw = null;
+
+      const completedObject=pendingDraw;
+
+      const moved=!!(
+        completedObject &&
+        Math.hypot(
+          completedObject.x2-completedObject.x1,
+          completedObject.y2-completedObject.y1
+        )>2
+      );
+
+      if(moved){
+        commitDrawObject(
+          completedObject
+        );
+      }else{
+        pendingDraw=null;
+      }
+
+      if(upEvent){
+        upEvent.preventDefault();
+      }
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -6547,8 +7501,8 @@ ctx.fill();</textarea>
       btn.setAttribute('aria-pressed', autoKeyframe ? 'true' : 'false');
       btn.setAttribute('aria-label', autoKeyframe ? 'Auto Keyframe: On' : 'Auto Keyframe: Off');
       btn.title = autoKeyframe
-        ? 'Auto Keyframe: On — changes write a keyframe at the current playhead position'
-        : 'Auto Keyframe: Off — click to write changes automatically at the current playhead position';
+        ? 'Auto Keyframe: On — stage Move / Scale / Rotate writes or updates a key at the current playhead position'
+        : 'Auto Keyframe: Off — stage Move / Scale / Rotate does not add a key; an animated Clip is transformed as a complete animation';
     }
   }
 
@@ -6703,16 +7657,211 @@ ctx.fill();</textarea>
     }
   }
 
+  function clipWholeTrackTransformField(field){
+    return [
+      'x',
+      'y',
+      'scale',
+      'scaleX',
+      'scaleY',
+      'rotation'
+    ].includes(String(field||''));
+  }
+
+  function clipTransformDefaultValue(field){
+    return (
+      field==='scale' ||
+      field==='scaleX' ||
+      field==='scaleY'
+    )
+      ?1
+      :0;
+  }
+
+  function clipTransformNumericValue(source,field,fallback){
+    if(
+      source &&
+      source[field]!==undefined &&
+      Number.isFinite(Number(source[field]))
+    ){
+      return Number(source[field]);
+    }
+
+    return Number.isFinite(Number(fallback))
+      ?Number(fallback)
+      :clipTransformDefaultValue(field);
+  }
+
+  function transformAnimatedClipTrackWithoutAddingKey(obj,field,targetValue){
+    if(
+      !obj ||
+      obj.type!=='clipinstance' ||
+      !clipWholeTrackTransformField(field)
+    ){
+      return false;
+    }
+
+    const target=Number(targetValue);
+
+    if(!Number.isFinite(target)){
+      return false;
+    }
+
+    if(!Array.isArray(obj.keyframes)){
+      obj.keyframes=[];
+    }
+
+    /*
+      If the Clip has no transform animation of its own, ordinary base-object
+      editing is exactly what the user expects.
+    */
+    if(obj.keyframes.length===0){
+      obj[field]=target;
+      return true;
+    }
+
+    const effective=getEffectiveObj(
+      obj,
+      t
+    );
+
+    const defaultValue=clipTransformDefaultValue(
+      field
+    );
+
+    const current=clipTransformNumericValue(
+      effective,
+      field,
+      clipTransformNumericValue(
+        obj,
+        field,
+        defaultValue
+      )
+    );
+
+    const baseBefore=clipTransformNumericValue(
+      obj,
+      field,
+      defaultValue
+    );
+
+    /*
+      Position and rotation are additive tracks. Moving or rotating the Clip
+      with Auto Keyframe off shifts the entire animation by the same amount.
+    */
+    if(
+      field==='x' ||
+      field==='y' ||
+      field==='rotation'
+    ){
+      const delta=target-current;
+
+      if(Math.abs(delta)<1e-12){
+        return true;
+      }
+
+      obj[field]=baseBefore+delta;
+
+      obj.keyframes.forEach(keyframe=>{
+        if(!keyframe) return;
+
+        const valueBefore=clipTransformNumericValue(
+          keyframe,
+          field,
+          baseBefore
+        );
+
+        keyframe[field]=valueBefore+delta;
+      });
+
+      return true;
+    }
+
+    /*
+      Uniform and per-axis scales are multiplicative tracks. Scaling the Clip
+      with Auto Keyframe off preserves the animated scale relationships while
+      resizing the complete animation.
+    */
+    const safeCurrent=Math.abs(current)>1e-9
+      ?current
+      :(
+          Math.abs(baseBefore)>1e-9
+            ?baseBefore
+            :1
+        );
+
+    const ratio=target/safeCurrent;
+
+    if(!Number.isFinite(ratio)){
+      return false;
+    }
+
+    obj[field]=baseBefore*ratio;
+
+    obj.keyframes.forEach(keyframe=>{
+      if(!keyframe) return;
+
+      const valueBefore=clipTransformNumericValue(
+        keyframe,
+        field,
+        baseBefore
+      );
+
+      keyframe[field]=valueBefore*ratio;
+    });
+
+    return true;
+  }
+
   function setObjectFieldForCurrentTime(obj, field, value){
     if(autoKeyframe){
+      /*
+        Auto Keyframe ON:
+        stage Move / Scale / Rotate behaves as an animation edit at the current
+        playhead position.
+      */
       prepareAutoKeyframe(obj);
-      const keyframe = makeObjectKeyframeSnapshot(obj, t);
-      keyframe[field] = value;
-      keyframe.time = t;
-      upsertObjectKeyframe(obj, keyframe);
-    } else {
-      obj[field] = value;
+
+      const keyframe=makeObjectKeyframeSnapshot(
+        obj,
+        t
+      );
+
+      keyframe[field]=value;
+      keyframe.time=t;
+
+      upsertObjectKeyframe(
+        obj,
+        keyframe
+      );
+
+      return;
     }
+
+    /*
+      Auto Keyframe OFF:
+      an already animated Clip must still behave like a normal stage object.
+      Do not create a key. Instead transform its whole existing motion track so
+      the complete animated Clip, including all animated children, can be moved,
+      scaled or rotated as one unit.
+    */
+    if(
+      obj &&
+      obj.type==='clipinstance' &&
+      clipWholeTrackTransformField(field) &&
+      Array.isArray(obj.keyframes) &&
+      obj.keyframes.length
+    ){
+      transformAnimatedClipTrackWithoutAddingKey(
+        obj,
+        field,
+        value
+      );
+
+      return;
+    }
+
+    obj[field]=value;
   }
 
   function finishObjectEdit(obj){
@@ -7943,9 +9092,19 @@ ctx.fill();</textarea>
     section.style.display = 'block';
     const obj = sel.obj;
     const isClip = obj.type === 'clipinstance';
-    document.getElementById('inspector-label').textContent = sel.isolated
+    const inspectorLabel=document.getElementById('inspector-label');
+
+    inspectorLabel.textContent = sel.isolated
       ? (objectLayerName(sel.group) + ' › ' + objectLayerName(obj))
       : (isClip ? (clips[obj.clipId] ? clips[obj.clipId].name : 'Clip instance') : drawObjectTypeLabel(obj.type));
+
+    if(isClip){
+      inspectorLabel.title=autoKeyframe
+        ? 'Stage transforms key this Clip at the current main-timeline frame.'
+        : 'Stage transforms move, scale or rotate the complete Clip animation without adding a new key.';
+    }else{
+      inspectorLabel.title='';
+    }
     const canFill = !isClip && obj.type !== 'group' && (obj.type === 'rect' || obj.type === 'ellipse' || obj.type === 'text' || (obj.type === 'freehand' && obj.closedPath));
     const canStroke = !isClip && obj.type !== 'group' && obj.type !== 'image' && obj.type !== 'video';
     const canRoundCorners = !isClip && obj.type === 'rect';
@@ -10156,6 +11315,19 @@ ctx.fill();</textarea>
     }
     return;
   });
+
+  overlay.addEventListener('contextmenu',(event)=>{
+    if(
+      stageTool!=='none' &&
+      isWithinCanvas(
+        event.clientX,
+        event.clientY
+      )
+    ){
+      event.preventDefault();
+    }
+  });
+
   overlay.addEventListener('contextmenu', (e)=>{
     if(!editMode || !isParticlesPanelVisible()) return;
     if(e.target.classList.contains('pt-path')){
@@ -11106,12 +12278,127 @@ ctx.fill();</textarea>
       : layer.p.color;
   }
 
+  function moveArrayItem(array,index,delta){
+    if(!Array.isArray(array)) return -1;
+
+    const from=Math.round(Number(index));
+    const to=from+Math.round(Number(delta));
+
+    if(
+      from<0 ||
+      from>=array.length ||
+      to<0 ||
+      to>=array.length
+    ){
+      return from;
+    }
+
+    const item=array.splice(from,1)[0];
+    array.splice(to,0,item);
+
+    return to;
+  }
+
+  function moveEffectLayerInStack(index,delta){
+    if(
+      index<0 ||
+      index>=layers.length
+    ){
+      return false;
+    }
+
+    const targetIndex=index+delta;
+
+    if(
+      targetIndex<0 ||
+      targetIndex>=layers.length
+    ){
+      return false;
+    }
+
+    saveActivePathEditor();
+    pushUndo();
+
+    const activeLayerReference=activeLayer();
+
+    moveArrayItem(
+      layers,
+      index,
+      delta
+    );
+
+    activeIndex=activeLayerReference
+      ?layers.indexOf(activeLayerReference)
+      :-1;
+
+    if(activeIndex<0 && layers.length){
+      activeIndex=Math.max(
+        0,
+        Math.min(
+          targetIndex,
+          layers.length-1
+        )
+      );
+    }
+
+    loadPathEditorForLayer(
+      activeLayer()
+    );
+
+    setParticleEditorTabForLayer(
+      activeLayer()
+    );
+
+    refreshAllUIFromLayer(
+      activeLayer()
+    );
+
+    renderPointList();
+    renderLayerList();
+    renderPoints();
+    renderTimeline();
+
+    return true;
+  }
+
+  function makeLayerStackButton(label,title,disabled,handler){
+    const button=document.createElement('button');
+
+    button.type='button';
+    button.className='layer-stack-btn';
+    button.textContent=label;
+    button.title=title;
+    button.setAttribute(
+      'aria-label',
+      title
+    );
+    button.disabled=!!disabled;
+
+    button.addEventListener('click',event=>{
+      event.preventDefault();
+      event.stopPropagation();
+
+      if(button.disabled){
+        return;
+      }
+
+      handler();
+    });
+
+    return button;
+  }
+
   function renderLayerList(){
     const list = document.getElementById('layer-list');
     list.innerHTML = '';
     normalizeAllDrawObjects();
 
-    layers.forEach((layer, idx)=>{
+    layers
+      .map((layer,idx)=>({layer,idx}))
+      .reverse()
+      .forEach(entry=>{
+      const layer=entry.layer;
+      const idx=entry.idx;
       const row = document.createElement('div');
       row.className = 'layer-row effect-layer' + (selectedDrawIndices.size === 0 && idx === activeIndex ? ' active' : '');
 
@@ -11151,10 +12438,31 @@ ctx.fill();</textarea>
         deleteLayer(idx);
       });
 
+      const stackControls=document.createElement('div');
+      stackControls.className='layer-stack-controls';
+
+      const upButton=makeLayerStackButton(
+        '▲',
+        'Move effect layer toward the camera / front',
+        idx>=layers.length-1,
+        ()=>moveEffectLayerInStack(idx,1)
+      );
+
+      const downButton=makeLayerStackButton(
+        '▼',
+        'Move effect layer away from the camera / back',
+        idx<=0,
+        ()=>moveEffectLayerInStack(idx,-1)
+      );
+
+      stackControls.appendChild(upButton);
+      stackControls.appendChild(downButton);
+
       row.appendChild(delBtn);
       row.appendChild(badge);
       row.appendChild(dot);
       row.appendChild(name);
+      row.appendChild(stackControls);
       row.appendChild(visBtn);
       row.addEventListener('click', ()=> selectEffectLayer(idx, true));
       list.appendChild(row);
@@ -11163,7 +12471,9 @@ ctx.fill();</textarea>
     const isolatedLayerInfo=getIsolatedGroupInfo();
     const objectLayerEntries=isolatedLayerInfo
       ? [{obj:isolatedLayerInfo.child,idx:isolatedLayerInfo.rootIndex,isolated:true}]
-      : drawObjects.map((obj,idx)=>({obj,idx,isolated:false}));
+      : drawObjects
+          .map((obj,idx)=>({obj,idx,isolated:false}))
+          .reverse();
     objectLayerEntries.forEach(entry=>{
       const obj=entry.obj,idx=entry.idx;
       ensureDrawObjectMetadata(obj);
@@ -11206,9 +12516,77 @@ ctx.fill();</textarea>
         if(entry.isolated) deleteSelectedDrawObjects(); else deleteDrawObject(idx);
       });
 
+      const stackControls=document.createElement('div');
+      stackControls.className='layer-stack-controls';
+
+      const drawingModel=(
+        !entry.isolated &&
+        typeof wickEnsureCurrentDrawingLayers==='function'
+      )
+        ?wickEnsureCurrentDrawingLayers()
+        :[];
+
+      const drawingLayerIndex=(
+        !entry.isolated &&
+        obj.timelineLayerId
+      )
+        ?drawingModel.findIndex(
+            drawingLayer=>String(drawingLayer.id)===String(obj.timelineLayerId)
+          )
+        :-1;
+
+      const upButton=makeLayerStackButton(
+        '▲',
+        entry.isolated
+          ?'Group child stack order is edited outside isolated child mode'
+          :'Move object layer toward the camera / front',
+        entry.isolated ||
+          drawingLayerIndex<0 ||
+          drawingLayerIndex>=drawingModel.length-1,
+        ()=>{
+          if(
+            obj.timelineLayerId &&
+            typeof wickMoveDrawingLayerInStack==='function'
+          ){
+            /*
+              Canonical drawing layers render back-to-front in ascending
+              array order, so moving toward the camera means +1 internally.
+            */
+            wickMoveDrawingLayerInStack(
+              obj.timelineLayerId,
+              1
+            );
+          }
+        }
+      );
+
+      const downButton=makeLayerStackButton(
+        '▼',
+        entry.isolated
+          ?'Group child stack order is edited outside isolated child mode'
+          :'Move object layer away from the camera / back',
+        entry.isolated ||
+          drawingLayerIndex<=0,
+        ()=>{
+          if(
+            obj.timelineLayerId &&
+            typeof wickMoveDrawingLayerInStack==='function'
+          ){
+            wickMoveDrawingLayerInStack(
+              obj.timelineLayerId,
+              -1
+            );
+          }
+        }
+      );
+
+      stackControls.appendChild(upButton);
+      stackControls.appendChild(downButton);
+
       row.appendChild(badge);
       row.appendChild(dot);
       row.appendChild(name);
+      row.appendChild(stackControls);
       row.appendChild(visBtn);
       row.appendChild(delBtn);
       row.addEventListener('click', (e)=> selectDrawObject(idx, !!(e.shiftKey || e.ctrlKey || e.metaKey), true));
@@ -13075,15 +14453,33 @@ ctx.fill();</textarea>
   // fields directly) when there's nothing to animate.
   function getEffectiveObj(obj, time){
     let effective = obj;
+
+    let keyframeTime=time;
+
+    if(
+      obj &&
+      obj.type==='clipinstance' &&
+      obj._lukeAnimateNestedMainTimeline===true &&
+      nativeClipPartMainRenderTime!==null &&
+      Number.isFinite(Number(nativeClipPartMainRenderTime))
+    ){
+      /*
+        A nested Clip instance owns REAL object.keyframes, but while its parent
+        Clip renders the shared `t`/`time` value is parent-local. Use the
+        preserved main-stage clock for this nested instance's transform keys.
+      */
+      keyframeTime=Number(nativeClipPartMainRenderTime);
+    }
+
     if(obj && obj.keyframes && obj.keyframes.length){
       const colorKeys = obj.type === 'clipinstance' ? [] : ['fillColor','strokeColor'];
-      const kf = interpolateKeyframes(obj.keyframes, time, colorKeys);
+      const kf = interpolateKeyframes(obj.keyframes, keyframeTime, colorKeys);
       if(kf) effective = Object.assign({}, obj, kf);
     }
     if(obj && objectEvaluators.size){
       objectEvaluators.forEach((evaluator, evaluatorId)=>{
         try{
-          const result = evaluator(obj, time, effective, LukeAnimatePluginAPI);
+          const result = evaluator(obj, keyframeTime, effective, LukeAnimatePluginAPI);
           if(result && typeof result === 'object') effective = result;
         }catch(err){
           console.warn('Luke Animate object evaluator failed:', evaluatorId, err);
@@ -14769,6 +16165,89 @@ ctx.fill();</textarea>
     return wickEnsureCurrentDrawingLayers().find(layer=>String(layer.id)===String(layerId)) || null;
   }
 
+
+  function wickMoveDrawingLayerInStack(layerId,delta){
+    const model=wickEnsureCurrentDrawingLayers();
+
+    const currentIndex=model.findIndex(
+      layer=>String(layer.id)===String(layerId)
+    );
+
+    if(currentIndex<0){
+      return false;
+    }
+
+    const targetIndex=currentIndex+delta;
+
+    if(
+      targetIndex<0 ||
+      targetIndex>=model.length
+    ){
+      return false;
+    }
+
+    pushUndo();
+
+    /*
+      Reorder the real drawing-layer object. Every frame belonging to this
+      layer travels with it, so the change persists while scrubbing and while
+      editing a Clip's own internal timeline.
+    */
+    moveArrayItem(
+      model,
+      currentIndex,
+      delta
+    );
+
+    /*
+      wickNormalizeLayerModel() sorts by layer.order. Renumber every layer
+      immediately so the new array order is canonical and cannot snap back.
+    */
+    model.forEach((layer,index)=>{
+      layer.order=index+1;
+
+      if(Array.isArray(layer.frames)){
+        layer.frames.forEach(frame=>{
+          if(frame&&frame.object){
+            frame.object.timelineLayerId=layer.id;
+            frame.object.timelineLayerOrder=layer.order;
+          }
+        });
+      }
+    });
+
+    wickDrawingLayerOrderCounter=Math.max(
+      wickDrawingLayerOrderCounter,
+      model.length
+    );
+
+    wickActiveDrawingLayerId=String(
+      layerId
+    );
+
+    wickNormalizeLayerModel(
+      model,
+      timelineDuration
+    );
+
+    /*
+      Re-project all visible scene frames from the newly ordered canonical
+      model. syncActiveSceneFrameForTime() preserves selection by layer ID.
+    */
+    syncActiveSceneFrameForTime(
+      t,
+      false
+    );
+
+    renderLayerList();
+    updateInspector();
+    renderTimeline();
+    renderTransformHandles();
+    renderPoints();
+
+    return true;
+  }
+
   function wickCurrentFrameIndex(){
     return frameIndexForTime(t,timelineDuration);
   }
@@ -15222,19 +16701,58 @@ ctx.fill();</textarea>
     wickReconcileBusy=true;
     try{
       wickEnsureCurrentDrawingLayers();
+
       const frameIndex=wickCurrentFrameIndex();
-      const presentIds=new Set();
-      drawObjects.forEach(object=>{
-        if(!object) return;
+      const totalFrames=wickTotalFrameIndex(timelineDuration);
+      const currentObjects=drawObjects.filter(Boolean).slice();
+
+      currentObjects.forEach(object=>{
         ensureDrawObjectMetadata(object);
-        if(object.timelineLayerId) presentIds.add(String(object.timelineLayerId));
+
+        let layer=object.timelineLayerId
+          ? wickLayerById(object.timelineLayerId)
+          : null;
+
+        if(!layer){
+          wickRegisterObjectLayer(object,frameIndex,totalFrames);
+          return;
+        }
+
+        const active=wickFrameAt(layer,frameIndex);
+        if(!active || active.object!==object){
+          const frame=wickInsertLayerFrame(layer,frameIndex,'blank');
+          frame.blank=false;
+          frame.object=object;
+
+          object.timelineLayerId=layer.id;
+          object.timelineLayerOrder=layer.order;
+          object.frameLinkId=frame.id;
+          object.frameLinkStart=frame.startFrame;
+          object.frameLinkEnd=frame.endFrame;
+        }
       });
-      const activeIds=wickDrawingLayers.filter(layer=>{
-        const frame=wickFrameAt(layer,frameIndex);
-        return !!(frame && frame.object && !frame.blank);
-      }).map(layer=>String(layer.id));
-      wickRemoveLayersByIds(activeIds.filter(id=>!presentIds.has(id)));
-      wickIngestUnregisteredCurrentObjects();
+
+      const presentIds=new Set();
+      currentObjects.forEach(object=>{
+        if(object.timelineLayerId){
+          presentIds.add(String(object.timelineLayerId));
+        }
+      });
+
+      const activeIds=wickDrawingLayers
+        .filter(layer=>{
+          const frame=wickFrameAt(layer,frameIndex);
+          return !!(frame && frame.object && !frame.blank);
+        })
+        .map(layer=>String(layer.id));
+
+      const removeIds=activeIds.filter(id=>!presentIds.has(id));
+
+      if(removeIds.length){
+        wickRemoveLayersByIds(removeIds);
+      }else{
+        syncActiveSceneFrameForTime(t,false);
+      }
     }finally{
       wickReconcileBusy=false;
     }
@@ -15430,7 +16948,10 @@ ctx.fill();</textarea>
       return name && /^Bone\s/.test(name.textContent||'');
     }) || null;
 
-    wickDrawingLayers.forEach(layer=>{
+    wickDrawingLayers
+      .slice()
+      .reverse()
+      .forEach(layer=>{
       const row=document.createElement('div');
       row.className='timeline-track-row wick-drawing-layer';
       row.dataset.timelineKind='wick-object-layer';
@@ -15769,6 +17290,2903 @@ ctx.fill();</textarea>
     setTimelineFramePixelWidth(timelineFramePixelWidth,false);
   }
   initialiseTimelineFrameZoom();
+
+
+  // ---------------- v159 real native nested Clip keyframes ----------------
+  const NATIVE_CLIP_PART_DATA_KEY='_lukeAnimateClipPartAnimation';
+  const NATIVE_CLIP_PART_EVALUATOR_ID='luke-animate-native-clip-parts-v159';
+
+  const nativeClipPartState={
+    rootId:'',
+    selectedKey:'',
+    openChannel:'rotate',
+    expandedRoots:new Set(),
+    editUndoArmed:false,
+    editingControl:false,
+    editorSignature:''
+  };
+
+  function nativeClipPartNumber(value,fallback){
+    const number=Number(value);
+    return Number.isFinite(number)?number:Number(fallback)||0;
+  }
+
+  function nativeClipPartClamp(value,min,max){
+    return Math.max(min,Math.min(max,value));
+  }
+
+  function nativeClipPartRound(value){
+    return Math.round(nativeClipPartNumber(value,0)*1000)/1000;
+  }
+
+  function nativeClipPartObjectId(object){
+    if(!object) return '';
+    ensureDrawObjectMetadata(object);
+    return String(object.id||object.clipId||object.name||'clip-part');
+  }
+
+  function nativeClipPartSelectedRoot(){
+    const selected=getSelectedSingleObject();
+    return selected&&selected.obj&&selected.obj.type==='clipinstance'
+      ? selected.obj
+      : null;
+  }
+
+  function nativeClipPartNestedInstancesFromObject(object,output,seen){
+    if(!object) return;
+    if(object.type==='clipinstance'){
+      const id=nativeClipPartObjectId(object);
+      if(!seen.has(id)){
+        seen.add(id);
+        output.push(object);
+      }
+      return;
+    }
+    if(object.type==='group'&&Array.isArray(object.children)){
+      object.children.forEach(child=>nativeClipPartNestedInstancesFromObject(child,output,seen));
+    }
+  }
+
+  function nativeClipPartObjectsAtClipTime(clip,timeValue){
+    if(!clip) return [];
+
+    const duration=Math.max(
+      0.1,
+      nativeClipPartNumber(
+        clip.timelineDuration,
+        0.1
+      )
+    );
+
+    /*
+      IMPORTANT:
+      The main Luke Animate timeline uses frameIndexForTime(), which floors
+      time to the current frame cell. Nested Clip discovery must use the same
+      rule or the selected part can jump one frame ahead of the playhead.
+    */
+    const frameIndex=frameIndexForTime(
+      Math.max(
+        0,
+        nativeClipPartNumber(
+          timeValue,
+          0
+        )
+      ),
+      duration
+    );
+
+    const output=[];
+    const seen=new Set();
+    const drawingLayers=wickEnsureClipDrawingLayers(clip);
+
+    /*
+      The renderer keeps drawing layers back-to-front internally.
+      The hierarchy/timeline UI is camera-top-down, so inspect them in reverse:
+      frontmost first, backmost last.
+    */
+    drawingLayers
+      .slice()
+      .reverse()
+      .forEach(layer=>{
+      const frame=wickFrameAt(
+        layer,
+        frameIndex
+      );
+
+      if(
+        !frame ||
+        frame.blank ||
+        !frame.object
+      ){
+        return;
+      }
+
+      nativeClipPartNestedInstancesFromObject(
+        frame.object,
+        output,
+        seen
+      );
+    });
+
+    return output;
+  }
+
+  function nativeClipPartOwnerTime(node,contextTime){
+    let localTime=Math.max(0,nativeClipPartNumber(contextTime,0));
+    (node&&Array.isArray(node.ancestors)?node.ancestors:[]).forEach(instance=>{
+      const effective=getEffectiveObj(instance,localTime);
+      localTime=clipInstanceLocalTime(instance,effective,localTime);
+    });
+    return localTime;
+  }
+
+  function nativeClipPartOwnerFrame(node,contextTime){
+    /*
+      Historical function name retained for compatibility with the rest of the
+      nested Clip UI. From v158 onward its returned 1-based frame is the exact
+      main-stage timeline frame used for nested transform keys.
+    */
+    return nativeClipPartMainFrameNumber(
+      contextTime
+    );
+  }
+
+  function nativeClipPartMainFrameIndex(contextTime){
+    return frameIndexForTime(
+      snapTimeToFrame(
+        Math.max(
+          0,
+          nativeClipPartNumber(
+            contextTime,
+            0
+          )
+        )
+      ),
+      timelineDuration
+    );
+  }
+
+  function nativeClipPartMainFrameNumber(contextTime){
+    return nativeClipPartMainFrameIndex(contextTime)+1;
+  }
+
+  function nativeClipPartMainTimeForFrameIndex(frameIndex){
+    const info=getTimelineFrameInfo();
+    const index=Math.max(
+      0,
+      Math.min(
+        info.totalFrames,
+        Math.round(
+          nativeClipPartNumber(
+            frameIndex,
+            0
+          )
+        )
+      )
+    );
+
+    return Math.max(
+      0,
+      Math.min(
+        timelineDuration,
+        index/Math.max(
+          1,
+          info.fps
+        )
+      )
+    );
+  }
+
+  function nativeClipPartBuildHierarchy(root,contextTime){
+    const result={
+      root:root||null,
+      rootClip:null,
+      rootId:'',
+      rootName:'',
+      rootNode:null,
+      nodes:[],
+      nodeMap:new Map()
+    };
+    if(!root||root.type!=='clipinstance') return result;
+    ensureDrawObjectMetadata(root);
+    const rootClip=clips[root.clipId];
+    if(!rootClip) return result;
+
+    result.rootClip=rootClip;
+    result.rootId=nativeClipPartObjectId(root);
+    result.rootName=String(root.name||rootClip.name||'Clip');
+
+    const rootNode={
+      key:'root>'+result.rootId,
+      object:root,
+      clip:rootClip,
+      ownerClip:null,
+      ancestors:[],
+      pathInstances:[root],
+      depth:0,
+      name:result.rootName,
+      path:result.rootName,
+      root,
+      rootId:result.rootId,
+      isRoot:true
+    };
+    result.rootNode=rootNode;
+    result.nodeMap.set(rootNode.key,rootNode);
+
+    const rootEffective=getEffectiveObj(root,contextTime);
+    const rootLocalTime=clipInstanceLocalTime(root,rootEffective,contextTime);
+
+    function visit(definition,ownerTime,ancestors,depth,path,clipPath){
+      if(!definition||depth>12) return;
+      const childInstances=nativeClipPartObjectsAtClipTime(definition,ownerTime);
+      childInstances.forEach(child=>{
+        ensureDrawObjectMetadata(child);
+        const childDefinition=clips[child.clipId];
+        const childName=String(child.name||(childDefinition&&childDefinition.name)||'Clip part');
+        const pathInstances=ancestors.concat(child);
+        const key=pathInstances.map(nativeClipPartObjectId).join('>');
+        const node={
+          key,
+          object:child,
+          clip:childDefinition||null,
+          ownerClip:definition,
+          ancestors:ancestors.slice(),
+          pathInstances,
+          depth,
+          name:childName,
+          path:path+' › '+childName,
+          root,
+          rootId:result.rootId,
+          isRoot:false
+        };
+        nativeClipPartMigrateNestedToNative(node);
+
+        result.nodes.push(node);
+        result.nodeMap.set(key,node);
+
+        if(!childDefinition) return;
+        const nextClipPath=new Set(clipPath);
+        const childClipId=String(childDefinition.id||child.clipId||'');
+        if(childClipId&&nextClipPath.has(childClipId)) return;
+        if(childClipId) nextClipPath.add(childClipId);
+        const childEffective=getEffectiveObj(child,ownerTime);
+        const childLocalTime=clipInstanceLocalTime(child,childEffective,ownerTime);
+        visit(
+          childDefinition,
+          childLocalTime,
+          pathInstances,
+          depth+1,
+          node.path,
+          nextClipPath
+        );
+      });
+    }
+
+    visit(
+      rootClip,
+      rootLocalTime,
+      [root],
+      1,
+      result.rootName,
+      new Set([String(rootClip.id||root.clipId||'')])
+    );
+    return result;
+  }
+
+  function nativeClipPartIsRootNode(node){
+    return !!(node&&node.isRoot);
+  }
+
+  function nativeClipPartRootKeyTolerance(){
+    return 0.49/Math.max(1,getTimelineFPS());
+  }
+
+  function nativeClipPartRootKeyAtTime(object,timeValue){
+    if(!object||!Array.isArray(object.keyframes)) return null;
+
+    const targetTime=snapTimeToFrame(
+      Math.max(
+        0,
+        nativeClipPartNumber(timeValue,0)
+      )
+    );
+
+    const tolerance=nativeClipPartRootKeyTolerance();
+
+    return object.keyframes.find(keyframe=>{
+      return !!(
+        keyframe &&
+        Math.abs(
+          nativeClipPartNumber(keyframe.time,0)-targetTime
+        )<tolerance
+      );
+    })||null;
+  }
+
+  function nativeClipPartRootHasKeyAtPlayhead(node){
+    return !!(
+      node &&
+      node.object &&
+      nativeClipPartRootKeyAtTime(node.object,t)
+    );
+  }
+
+  function nativeClipPartRootNativePose(node,contextTime){
+    const object=node&&node.object;
+
+    if(!object){
+      return {
+        x:0,
+        y:0,
+        scale:1,
+        rotation:0
+      };
+    }
+
+    const mainTime=snapTimeToFrame(
+      Math.max(
+        0,
+        nativeClipPartNumber(contextTime,0)
+      )
+    );
+
+    const effective=getEffectiveObj(
+      object,
+      mainTime
+    );
+
+    return {
+      x:nativeClipPartNumber(
+        effective.x,
+        object.x
+      ),
+      y:nativeClipPartNumber(
+        effective.y,
+        object.y
+      ),
+      scale:Math.max(
+        .01,
+        nativeClipPartNumber(
+          effective.scale,
+          object.scale===undefined?1:object.scale
+        )
+      ),
+      rotation:nativeClipPartNumber(
+        effective.rotation,
+        object.rotation
+      )
+    };
+  }
+
+  function nativeClipPartRootBaseSnapshot(object){
+    const snapshot=makeObjectKeyframeSnapshot(
+      object,
+      0
+    );
+
+    snapshot.time=0;
+    snapshot.easing='linear';
+
+    return snapshot;
+  }
+
+  function nativeClipPartRootSetNativeKey(node,channelName,values,recordHistory){
+    if(!node||!node.object) return false;
+
+    const object=node.object;
+
+    if(recordHistory!==false){
+      pushUndo();
+    }
+
+    if(!Array.isArray(object.keyframes)){
+      object.keyframes=[];
+    }
+
+    /*
+      L1 / the top-level Clip lives directly on the main stage. Its animation
+      therefore belongs in the same object.keyframes array used by the normal
+      Luke Animate inspector and main timeline.
+    */
+    const currentTime=snapTimeToFrame(t);
+
+    if(
+      object.keyframes.length===0 &&
+      currentTime>0.000001
+    ){
+      upsertObjectKeyframe(
+        object,
+        nativeClipPartRootBaseSnapshot(object)
+      );
+    }
+
+    const currentPose=nativeClipPartRootNativePose(
+      node,
+      currentTime
+    );
+
+    const snapshot=makeObjectKeyframeSnapshot(
+      object,
+      currentTime
+    );
+
+    snapshot.time=currentTime;
+    snapshot.easing=normalizeKeyframeEasing(
+      snapshot.easing||'linear'
+    );
+
+    if(channelName==='move'){
+      snapshot.x=nativeClipPartRound(
+        values&&values.x!==undefined
+          ?values.x
+          :currentPose.x
+      );
+
+      snapshot.y=nativeClipPartRound(
+        values&&values.y!==undefined
+          ?values.y
+          :currentPose.y
+      );
+    }else if(channelName==='scale'){
+      snapshot.scale=nativeClipPartRound(
+        Math.max(
+          .01,
+          values&&values.scale!==undefined
+            ?values.scale
+            :currentPose.scale
+        )
+      );
+    }else{
+      snapshot.rotation=nativeClipPartRound(
+        values&&values.rotation!==undefined
+          ?values.rotation
+          :currentPose.rotation
+      );
+    }
+
+    upsertObjectKeyframe(
+      object,
+      snapshot
+    );
+
+    return true;
+  }
+
+  function nativeClipPartRootDeleteNativeKey(node,recordHistory){
+    if(
+      !node ||
+      !node.object ||
+      !Array.isArray(node.object.keyframes)
+    ){
+      return false;
+    }
+
+    const keyframe=nativeClipPartRootKeyAtTime(
+      node.object,
+      t
+    );
+
+    if(!keyframe) return false;
+
+    if(recordHistory!==false){
+      pushUndo();
+    }
+
+    node.object.keyframes=node.object.keyframes.filter(
+      entry=>entry!==keyframe
+    );
+
+    return true;
+  }
+
+  function nativeClipPartMigrateLegacyRootKeys(node){
+    if(
+      !nativeClipPartIsRootNode(node) ||
+      !node.object
+    ){
+      return;
+    }
+
+    const object=node.object;
+    const data=nativeClipPartEnsureData(object);
+
+    if(data.rootNativeMigrationComplete){
+      data.rootUsesNativeObjectKeyframes=true;
+      return;
+    }
+
+    const legacyFrames=nativeClipPartAllFrames(data);
+
+    /*
+      v153-v155 accidentally allowed a second private transform track on L1.
+      Convert those keys once into the real main-timeline object.keyframes,
+      then permanently disable private evaluation for this top-level instance.
+    */
+    legacyFrames.forEach(localFrame=>{
+      const mainFrameIndex=Math.max(
+        0,
+        localFrame-1
+      );
+
+      const mainTime=nativeClipPartMainTimeForFrameIndex(
+        mainFrameIndex
+      );
+
+      /*
+        Private evaluation is intentionally still active while taking this
+        snapshot so the migrated native key preserves the pose the user saw.
+      */
+      const snapshot=makeObjectKeyframeSnapshot(
+        object,
+        mainTime
+      );
+
+      snapshot.time=mainTime;
+
+      upsertObjectKeyframe(
+        object,
+        snapshot
+      );
+    });
+
+    data.rootUsesNativeObjectKeyframes=true;
+    data.rootNativeMigrationComplete=true;
+    data.revision=Math.max(
+      0,
+      Number(data.revision)||0
+    )+1;
+  }
+
+  function nativeClipPartFrameToMainTime(frameNumber){
+    return nativeClipPartMainTimeForFrameIndex(
+      Math.max(
+        0,
+        Math.round(nativeClipPartNumber(frameNumber,1))-1
+      )
+    );
+  }
+
+  function nativeClipPartNativeKeyAtFrame(object,frameNumber){
+    if(!object||!Array.isArray(object.keyframes)) return null;
+
+    const targetTime=nativeClipPartFrameToMainTime(frameNumber);
+    const tolerance=0.49/Math.max(1,getTimelineFPS());
+
+    return object.keyframes.find(keyframe=>{
+      return !!(
+        keyframe &&
+        Math.abs(nativeClipPartNumber(keyframe.time,0)-targetTime)<tolerance
+      );
+    })||null;
+  }
+
+  function nativeClipPartNativeKeyFrames(object){
+    if(!object||!Array.isArray(object.keyframes)) return [];
+    const frames=new Set();
+    object.keyframes.forEach(keyframe=>{
+      if(!keyframe) return;
+      frames.add(
+        nativeClipPartMainFrameNumber(
+          nativeClipPartNumber(keyframe.time,0)
+        )
+      );
+    });
+    return Array.from(frames).sort((a,b)=>a-b);
+  }
+
+  function nativeClipPartLegacySnapshotAtFrame(object,data,frameNumber){
+    const base=data&&data.base||{};
+    const mainTime=nativeClipPartFrameToMainTime(frameNumber);
+
+    let nativePose=null;
+    if(object&&Array.isArray(object.keyframes)&&object.keyframes.length){
+      const kf=interpolateKeyframes(object.keyframes,mainTime,[]);
+      if(kf) nativePose=kf;
+    }
+
+    const move=nativeClipPartInterpolateChannel(data,'move',frameNumber);
+    const scale=nativeClipPartInterpolateChannel(data,'scale',frameNumber);
+    const rotate=nativeClipPartInterpolateChannel(data,'rotate',frameNumber);
+
+    return {
+      time:mainTime,
+      easing:'linear',
+      x:nativeClipPartNumber(
+        move&&move.x,
+        nativeClipPartNumber(nativePose&&nativePose.x,nativeClipPartNumber(base.x,object.x))
+      ),
+      y:nativeClipPartNumber(
+        move&&move.y,
+        nativeClipPartNumber(nativePose&&nativePose.y,nativeClipPartNumber(base.y,object.y))
+      ),
+      scale:Math.max(
+        .01,
+        nativeClipPartNumber(
+          scale&&scale.scale,
+          nativeClipPartNumber(nativePose&&nativePose.scale,nativeClipPartNumber(base.scale,object.scale===undefined?1:object.scale))
+        )
+      ),
+      scaleX:nativeClipPartNumber(nativePose&&nativePose.scaleX,object.scaleX===undefined?1:object.scaleX),
+      scaleY:nativeClipPartNumber(nativePose&&nativePose.scaleY,object.scaleY===undefined?1:object.scaleY),
+      rotation:nativeClipPartNumber(
+        rotate&&rotate.rotation,
+        nativeClipPartNumber(nativePose&&nativePose.rotation,nativeClipPartNumber(base.rotation,object.rotation))
+      ),
+      opacity:nativeClipPartNumber(nativePose&&nativePose.opacity,object.opacity===undefined?1:object.opacity)
+    };
+  }
+
+  function nativeClipPartMigrateNestedToNative(node){
+    if(
+      !node ||
+      !node.object ||
+      nativeClipPartIsRootNode(node)
+    ){
+      return;
+    }
+
+    const object=node.object;
+    const data=nativeClipPartEnsureData(object);
+
+    if(
+      data.nativeObjectKeyframes &&
+      object._lukeAnimateNestedMainTimeline===true
+    ){
+      return;
+    }
+
+    if(!Array.isArray(object.keyframes)) object.keyframes=[];
+
+    const legacyFrames=nativeClipPartAllFrames(data);
+
+    if(legacyFrames.length){
+      legacyFrames.forEach(frameNumber=>{
+        upsertObjectKeyframe(
+          object,
+          nativeClipPartLegacySnapshotAtFrame(
+            object,
+            data,
+            frameNumber
+          )
+        );
+      });
+    }
+
+    object._lukeAnimateNestedMainTimeline=true;
+    data.nativeObjectKeyframes=true;
+    data.keyTimeBase='main-timeline-native';
+    data.legacyNestedMigrationComplete=true;
+    data.revision=Math.max(0,Number(data.revision)||0)+1;
+  }
+
+  function nativeClipPartNestedNativePose(node,contextTime){
+    nativeClipPartMigrateNestedToNative(node);
+
+    const effective=getEffectiveObj(
+      node.object,
+      Math.max(0,nativeClipPartNumber(contextTime,0))
+    );
+
+    return {
+      x:nativeClipPartNumber(effective.x,node.object.x),
+      y:nativeClipPartNumber(effective.y,node.object.y),
+      scale:Math.max(.01,nativeClipPartNumber(effective.scale,node.object.scale===undefined?1:node.object.scale)),
+      rotation:nativeClipPartNumber(effective.rotation,node.object.rotation)
+    };
+  }
+
+  function nativeClipPartSetNestedNativeKey(node,channelName,values,recordHistory){
+    if(!node||!node.object) return false;
+
+    nativeClipPartMigrateNestedToNative(node);
+
+    const object=node.object;
+    const data=nativeClipPartEnsureData(object);
+
+    if(recordHistory!==false) pushUndo();
+
+    if(!Array.isArray(object.keyframes)) object.keyframes=[];
+
+    const currentTime=snapTimeToFrame(t);
+    const currentFrame=nativeClipPartMainFrameNumber(currentTime);
+
+    if(
+      object.keyframes.length===0 &&
+      currentTime>0.000001
+    ){
+      const startSnapshot=makeObjectKeyframeSnapshot(object,0);
+      startSnapshot.time=0;
+      startSnapshot.easing='linear';
+      upsertObjectKeyframe(object,startSnapshot);
+    }
+
+    const pose=nativeClipPartNestedNativePose(node,currentTime);
+    const snapshot=makeObjectKeyframeSnapshot(object,currentTime);
+    snapshot.time=currentTime;
+    snapshot.easing=normalizeKeyframeEasing(snapshot.easing||'linear');
+
+    if(channelName==='move'){
+      snapshot.x=nativeClipPartRound(values&&values.x!==undefined?values.x:pose.x);
+      snapshot.y=nativeClipPartRound(values&&values.y!==undefined?values.y:pose.y);
+    }else if(channelName==='scale'){
+      snapshot.scale=nativeClipPartRound(
+        Math.max(.01,values&&values.scale!==undefined?values.scale:pose.scale)
+      );
+    }else{
+      snapshot.rotation=nativeClipPartRound(values&&values.rotation!==undefined?values.rotation:pose.rotation);
+    }
+
+    upsertObjectKeyframe(object,snapshot);
+
+    /*
+      These channel maps are now UI labels only. The real animation above is
+      physically in object.keyframes.
+    */
+    data.channels[channelName].keys[String(currentFrame)]=
+      channelName==='move'
+        ?{x:snapshot.x,y:snapshot.y}
+        :channelName==='scale'
+          ?{scale:snapshot.scale}
+          :{rotation:snapshot.rotation};
+    data.channels[channelName].easing[String(currentFrame)]=snapshot.easing||'linear';
+    data.nativeObjectKeyframes=true;
+    data.keyTimeBase='main-timeline-native';
+    data.revision++;
+
+    return true;
+  }
+
+  function nativeClipPartDeleteNestedNativeKey(node,frameNumber,recordHistory){
+    if(!node||!node.object) return false;
+
+    nativeClipPartMigrateNestedToNative(node);
+
+    const object=node.object;
+    const data=nativeClipPartEnsureData(object);
+    const frame=Math.max(1,Math.round(nativeClipPartNumber(frameNumber,nativeClipPartMainFrameNumber(t))));
+    const keyframe=nativeClipPartNativeKeyAtFrame(object,frame);
+
+    if(!keyframe) return false;
+    if(recordHistory!==false) pushUndo();
+
+    object.keyframes=object.keyframes.filter(entry=>entry!==keyframe);
+
+    ['move','scale','rotate'].forEach(channelName=>{
+      delete data.channels[channelName].keys[String(frame)];
+      delete data.channels[channelName].easing[String(frame)];
+    });
+
+    data.revision++;
+    return true;
+  }
+
+  function nativeClipPartEnsureState(hierarchy){
+    const rootId=hierarchy&&hierarchy.rootId||'';
+    const rootKey=hierarchy&&hierarchy.rootNode?hierarchy.rootNode.key:'';
+    if(nativeClipPartState.rootId!==rootId){
+      nativeClipPartState.rootId=rootId;
+      nativeClipPartState.selectedKey=rootKey;
+      nativeClipPartState.openChannel='rotate';
+      if(rootId) nativeClipPartState.expandedRoots.add(rootId);
+    }
+    if(!hierarchy||!hierarchy.rootNode){
+      nativeClipPartState.selectedKey='';
+      return;
+    }
+    if(!hierarchy.nodeMap.has(nativeClipPartState.selectedKey)){
+      nativeClipPartState.selectedKey=rootKey;
+    }
+  }
+
+  function nativeClipPartEmptyChannel(){
+    return {keys:{},easing:{}};
+  }
+
+  function nativeClipPartEnsureData(object){
+    if(!object[NATIVE_CLIP_PART_DATA_KEY]||typeof object[NATIVE_CLIP_PART_DATA_KEY]!=='object'){
+      object[NATIVE_CLIP_PART_DATA_KEY]={
+        version:1,
+        base:{
+          x:nativeClipPartNumber(object.x,0),
+          y:nativeClipPartNumber(object.y,0),
+          scale:Math.max(.01,nativeClipPartNumber(object.scale,1)),
+          rotation:nativeClipPartNumber(object.rotation,0)
+        },
+        rotationMin:-359,
+        rotationMax:360,
+        longestWay:false,
+        revision:0,
+        keyTimeBase:'main-timeline',
+        channels:{
+          move:nativeClipPartEmptyChannel(),
+          scale:nativeClipPartEmptyChannel(),
+          rotate:nativeClipPartEmptyChannel()
+        }
+      };
+    }
+    const data=object[NATIVE_CLIP_PART_DATA_KEY];
+    if(!data.base) data.base={x:0,y:0,scale:1,rotation:0};
+    if(!data.channels) data.channels={};
+    ['move','scale','rotate'].forEach(channelName=>{
+      if(!data.channels[channelName]) data.channels[channelName]=nativeClipPartEmptyChannel();
+      if(!data.channels[channelName].keys) data.channels[channelName].keys={};
+      if(!data.channels[channelName].easing) data.channels[channelName].easing={};
+    });
+    data.rotationMin=nativeClipPartNumber(data.rotationMin,-359);
+    data.rotationMax=nativeClipPartNumber(data.rotationMax,360);
+    if(data.rotationMin>data.rotationMax){
+      const swap=data.rotationMin;
+      data.rotationMin=data.rotationMax;
+      data.rotationMax=swap;
+    }
+    data.longestWay=!!data.longestWay;
+    data.revision=Math.max(0,Math.round(Number(data.revision)||0));
+    if(!data.keyTimeBase) data.keyTimeBase='main-timeline-legacy';
+    return data;
+  }
+
+  function nativeClipPartChannelFrames(data,channelName){
+    const channel=data&&data.channels&&data.channels[channelName];
+    return Object.keys(channel&&channel.keys||{})
+      .map(value=>Math.max(1,Math.round(Number(value)||1)))
+      .filter(Number.isFinite)
+      .sort((a,b)=>a-b);
+  }
+
+  function nativeClipPartAllFrames(data){
+    const frames=new Set();
+    ['move','scale','rotate'].forEach(channelName=>{
+      nativeClipPartChannelFrames(data,channelName).forEach(frame=>frames.add(frame));
+    });
+    return Array.from(frames).sort((a,b)=>a-b);
+  }
+
+  function nativeClipPartChannelsAtFrame(data,frame){
+    const key=String(Math.max(1,Math.round(Number(frame)||1)));
+    return ['move','scale','rotate'].filter(channelName=>{
+      const channel=data&&data.channels&&data.channels[channelName];
+      return !!(channel&&channel.keys&&channel.keys[key]);
+    });
+  }
+
+  function nativeClipPartEasingValue(value,easing){
+    const ratio=nativeClipPartClamp(nativeClipPartNumber(value,0),0,1);
+    if(easing==='hold') return 0;
+    if(easing==='ease-in') return ratio*ratio;
+    if(easing==='ease-out') return 1-Math.pow(1-ratio,2);
+    if(easing==='ease-in-out') return ratio<.5
+      ? 2*ratio*ratio
+      : 1-Math.pow(-2*ratio+2,2)/2;
+    return ratio;
+  }
+
+  function nativeClipPartRotationDelta(fromValue,toValue,longestWay){
+    const from=nativeClipPartNumber(fromValue,0);
+    const to=nativeClipPartNumber(toValue,from);
+    let delta=((to-from+180)%360+360)%360-180;
+    if(Math.abs(delta+180)<.000001){
+      delta=(to-from)>=0?180:-180;
+    }
+    if(!longestWay) return delta;
+    if(Math.abs(delta)<.000001) return 360;
+    return delta>0?delta-360:delta+360;
+  }
+
+  function nativeClipPartInterpolateChannel(data,channelName,frameFloat){
+    const channel=data&&data.channels&&data.channels[channelName];
+    const frames=nativeClipPartChannelFrames(data,channelName);
+    if(!channel||!frames.length) return null;
+    if(frameFloat<=frames[0]) return Object.assign({},channel.keys[String(frames[0])]);
+    if(frameFloat>=frames[frames.length-1]) return Object.assign({},channel.keys[String(frames[frames.length-1])]);
+
+    let previousFrame=frames[0];
+    let nextFrame=frames[frames.length-1];
+    for(let index=0;index<frames.length-1;index++){
+      if(frameFloat>=frames[index]&&frameFloat<=frames[index+1]){
+        previousFrame=frames[index];
+        nextFrame=frames[index+1];
+        break;
+      }
+    }
+    const previous=channel.keys[String(previousFrame)]||{};
+    const next=channel.keys[String(nextFrame)]||previous;
+    const easing=channel.easing[String(previousFrame)]||'linear';
+    const ratio=nativeClipPartEasingValue(
+      (frameFloat-previousFrame)/Math.max(1,nextFrame-previousFrame),
+      easing
+    );
+
+    if(channelName==='move'){
+      const fromX=nativeClipPartNumber(previous.x,0);
+      const fromY=nativeClipPartNumber(previous.y,0);
+      return {
+        x:fromX+(nativeClipPartNumber(next.x,fromX)-fromX)*ratio,
+        y:fromY+(nativeClipPartNumber(next.y,fromY)-fromY)*ratio
+      };
+    }
+    if(channelName==='scale'){
+      const fromScale=Math.max(.01,nativeClipPartNumber(previous.scale,1));
+      const toScale=Math.max(.01,nativeClipPartNumber(next.scale,fromScale));
+      return {scale:fromScale+(toScale-fromScale)*ratio};
+    }
+    const fromRotation=nativeClipPartNumber(previous.rotation,0);
+    const delta=nativeClipPartRotationDelta(
+      fromRotation,
+      nativeClipPartNumber(next.rotation,fromRotation),
+      !!data.longestWay
+    );
+    return {rotation:fromRotation+delta*ratio};
+  }
+
+  function nativeClipPartEvaluator(object,timeValue,effective){
+    const data=object&&object[NATIVE_CLIP_PART_DATA_KEY];
+
+    if(
+      !data ||
+      !data.channels
+    ){
+      return effective;
+    }
+
+    /*
+      v159 native mode: both root and nested Clip transforms are already in
+      object.keyframes. Never overwrite them with the old private channel data.
+    */
+    if(
+      data.rootUsesNativeObjectKeyframes ||
+      data.nativeObjectKeyframes ||
+      object._lukeAnimateNestedMainTimeline===true
+    ){
+      return effective;
+    }
+
+    /*
+      Legacy v153-v158 fallback only. This remains so an old project can still
+      display its private keys before the instance is migrated by the v159 UI.
+    */
+    const mainTime=(
+      nativeClipPartMainRenderTime!==null &&
+      Number.isFinite(Number(nativeClipPartMainRenderTime))
+    )
+      ?Number(nativeClipPartMainRenderTime)
+      :Math.max(
+          0,
+          nativeClipPartNumber(
+            timeValue,
+            0
+          )
+        );
+
+    const frameFloat=Math.max(
+      1,
+      mainTime*getTimelineFPS()+1
+    );
+
+    const output=Object.assign(
+      {},
+      effective||object
+    );
+
+    const move=nativeClipPartInterpolateChannel(data,'move',frameFloat);
+    const scale=nativeClipPartInterpolateChannel(data,'scale',frameFloat);
+    const rotate=nativeClipPartInterpolateChannel(data,'rotate',frameFloat);
+
+    if(move){
+      output.x=move.x;
+      output.y=move.y;
+    }
+    if(scale) output.scale=scale.scale;
+    if(rotate) output.rotation=rotate.rotation;
+
+    return output;
+  }
+
+  objectEvaluators.set(NATIVE_CLIP_PART_EVALUATOR_ID,nativeClipPartEvaluator);
+
+  function nativeClipPartPose(node,contextTime){
+    if(nativeClipPartIsRootNode(node)){
+      nativeClipPartMigrateLegacyRootKeys(node);
+      return nativeClipPartRootNativePose(node,contextTime);
+    }
+
+    return nativeClipPartNestedNativePose(
+      node,
+      contextTime
+    );
+  }
+
+  function nativeClipPartBaseChannelValue(node,channelName){
+    if(nativeClipPartIsRootNode(node)){
+      nativeClipPartMigrateLegacyRootKeys(node);
+
+      const pose=nativeClipPartRootNativePose(
+        node,
+        0
+      );
+
+      if(channelName==='move'){
+        return {
+          x:pose.x,
+          y:pose.y
+        };
+      }
+
+      if(channelName==='scale'){
+        return {
+          scale:pose.scale
+        };
+      }
+
+      return {
+        rotation:pose.rotation
+      };
+    }
+
+    const effective=getEffectiveObj(
+      node.object,
+      0
+    );
+
+    if(channelName==='move'){
+      return {
+        x:nativeClipPartNumber(
+          effective.x,
+          node.object.x
+        ),
+        y:nativeClipPartNumber(
+          effective.y,
+          node.object.y
+        )
+      };
+    }
+
+    if(channelName==='scale'){
+      return {
+        scale:Math.max(
+          .01,
+          nativeClipPartNumber(
+            effective.scale,
+            node.object.scale===undefined?1:node.object.scale
+          )
+        )
+      };
+    }
+
+    return {
+      rotation:nativeClipPartNumber(
+        effective.rotation,
+        node.object.rotation
+      )
+    };
+  }
+
+  function nativeClipPartValuesFromPose(channelName,pose){
+    if(channelName==='move') return {x:pose.x,y:pose.y};
+    if(channelName==='scale') return {scale:pose.scale};
+    return {rotation:pose.rotation};
+  }
+
+  function nativeClipPartSetChannelKey(node,channelName,values,recordHistory){
+    if(!node||!node.object) return false;
+
+    if(nativeClipPartIsRootNode(node)){
+      nativeClipPartMigrateLegacyRootKeys(node);
+      return nativeClipPartRootSetNativeKey(
+        node,
+        channelName,
+        values,
+        recordHistory
+      );
+    }
+
+    return nativeClipPartSetNestedNativeKey(
+      node,
+      channelName,
+      values,
+      recordHistory
+    );
+  }
+
+  function nativeClipPartDeleteChannelKey(node,channelName,frameValue,recordHistory){
+    if(!node||!node.object) return false;
+
+    if(nativeClipPartIsRootNode(node)){
+      nativeClipPartMigrateLegacyRootKeys(node);
+      return nativeClipPartRootDeleteNativeKey(
+        node,
+        recordHistory
+      );
+    }
+
+    return nativeClipPartDeleteNestedNativeKey(
+      node,
+      frameValue,
+      recordHistory
+    );
+  }
+
+  function nativeClipPartMoveKeys(node,sourceFrame,targetFrame,channels){
+    if(!node||!node.object||nativeClipPartIsRootNode(node)) return false;
+
+    nativeClipPartMigrateNestedToNative(node);
+
+    const object=node.object;
+    const data=nativeClipPartEnsureData(object);
+    const source=Math.max(1,Math.round(nativeClipPartNumber(sourceFrame,1)));
+    const target=Math.max(1,Math.round(nativeClipPartNumber(targetFrame,1)));
+
+    if(source===target) return false;
+
+    const keyframe=nativeClipPartNativeKeyAtFrame(object,source);
+    if(!keyframe) return false;
+
+    keyframe.time=nativeClipPartFrameToMainTime(target);
+
+    const targetExisting=object.keyframes.find(entry=>{
+      return entry!==keyframe && Math.abs(
+        nativeClipPartNumber(entry&&entry.time,0)-keyframe.time
+      )<0.49/Math.max(1,getTimelineFPS());
+    });
+
+    if(targetExisting){
+      Object.assign(targetExisting,keyframe,{time:keyframe.time});
+      object.keyframes=object.keyframes.filter(entry=>entry!==keyframe);
+    }
+
+    object.keyframes.sort((a,b)=>nativeClipPartNumber(a&&a.time,0)-nativeClipPartNumber(b&&b.time,0));
+
+    ['move','scale','rotate'].forEach(channelName=>{
+      const channel=data.channels[channelName];
+      const sourceKey=String(source);
+      const targetKey=String(target);
+      if(!channel||!channel.keys[sourceKey]) return;
+      channel.keys[targetKey]=channel.keys[sourceKey];
+      channel.easing[targetKey]=channel.easing[sourceKey]||'linear';
+      delete channel.keys[sourceKey];
+      delete channel.easing[sourceKey];
+    });
+
+    data.revision++;
+    return true;
+  }
+
+  function nativeClipPartRefreshAfterEdit(){
+    nativeClipPartState.editingControl=false;
+
+    t=nativeClipPartMainTimeForFrameIndex(
+      nativeClipPartMainFrameIndex(t)
+    );
+
+    syncActiveSceneFrameForTime(
+      t,
+      false
+    );
+
+    updateInspector();
+    renderTransformHandles();
+    renderTimeline();
+    renderClipLibrary();
+    nativeClipPartRenderEditor(true);
+  }
+
+  function nativeClipPartEnsureEditor(){
+    let panel=document.getElementById('native-clip-part-editor');
+    if(panel) return panel;
+    panel=document.createElement('div');
+    panel.id='native-clip-part-editor';
+    const anchor=document.getElementById('clip-frame-names-section')||document.getElementById('inspector-section');
+    if(anchor&&anchor.parentNode) anchor.parentNode.insertBefore(panel,anchor);
+    else{
+      const host=document.getElementById('devpanel-animate');
+      if(host) host.appendChild(panel);
+    }
+    return panel;
+  }
+
+  function nativeClipPartCreateButton(text,className){
+    const button=document.createElement('button');
+    button.type='button';
+    button.className=className||'btn small';
+    button.textContent=text;
+    return button;
+  }
+
+  function nativeClipPartMakeControl(node,channelName,field,label,value,min,max,step,applyValues){
+    const row=document.createElement('div');
+    row.className='native-clip-control-row';
+
+    const labelNode=document.createElement('label');
+    labelNode.textContent=label;
+
+    const range=document.createElement('input');
+    range.type='range';
+    range.min=String(min);
+    range.max=String(max);
+    range.step=String(step);
+    range.value=String(value);
+    range.dataset.nativeField=field;
+
+    const number=document.createElement('input');
+    number.type='number';
+    number.min=String(min);
+    number.max=String(max);
+    number.step=String(step);
+    number.value=String(value);
+    number.dataset.nativeField=field;
+
+    let historyArmed=false;
+    function beginHistory(){
+      nativeClipPartState.editingControl=true;
+      if(historyArmed) return;
+      pushUndo();
+      historyArmed=true;
+    }
+    function live(source,target){
+      target.value=source.value;
+      beginHistory();
+      applyValues();
+    }
+    function finish(){
+      historyArmed=false;
+      nativeClipPartState.editUndoArmed=false;
+      nativeClipPartState.editingControl=false;
+      nativeClipPartRefreshAfterEdit();
+    }
+
+    range.addEventListener('input',()=>live(range,number));
+    number.addEventListener('input',()=>live(number,range));
+    range.addEventListener('change',finish);
+    number.addEventListener('change',finish);
+    range.addEventListener('pointercancel',finish);
+
+    row.appendChild(labelNode);
+    row.appendChild(range);
+    row.appendChild(number);
+    return row;
+  }
+
+  function nativeClipPartReadValues(container,channelName){
+    const value=field=>{
+      const input=container.querySelector('[data-native-field="'+field+'"]');
+      return input?nativeClipPartNumber(input.value,0):0;
+    };
+    if(channelName==='move') return {x:value('x'),y:value('y')};
+    if(channelName==='scale') return {scale:Math.max(.01,value('scale'))};
+    return {rotation:value('rotation')};
+  }
+
+  function nativeClipPartFitAngleToRange(rawAngle,minValue,maxValue,referenceValue){
+    const min=nativeClipPartNumber(minValue,-359);
+    const max=nativeClipPartNumber(maxValue,360);
+    const reference=nativeClipPartNumber(referenceValue,0);
+    const candidates=[];
+    for(let turn=-4;turn<=4;turn++){
+      const candidate=rawAngle+turn*360;
+      if(candidate>=min&&candidate<=max) candidates.push(candidate);
+    }
+    if(!candidates.length) return nativeClipPartClamp(rawAngle,min,max);
+    candidates.sort((a,b)=>Math.abs(a-reference)-Math.abs(b-reference));
+    return candidates[0];
+  }
+
+  function nativeClipPartUpdateRotationHand(container,value){
+    const hand=container.querySelector('.native-clip-rotation-hand');
+    if(hand) hand.style.transform='rotate('+nativeClipPartNumber(value,0)+'deg)';
+    container.querySelectorAll('.native-clip-rotation-dot').forEach(dot=>{
+      dot.classList.toggle('active',Math.abs(nativeClipPartNumber(dot.dataset.value,0)-nativeClipPartNumber(value,0))<.001);
+    });
+  }
+
+  function nativeClipPartBuildRotationBody(node,body,pose,data){
+    const dialWrap=document.createElement('div');
+    dialWrap.className='native-clip-rotation-dial-wrap';
+    const dial=document.createElement('div');
+    dial.className='native-clip-rotation-dial';
+    dial.setAttribute('role','slider');
+    dial.setAttribute('aria-label','Rotation');
+    dial.tabIndex=0;
+
+    const hand=document.createElement('div');
+    hand.className='native-clip-rotation-hand';
+    const centre=document.createElement('div');
+    centre.className='native-clip-rotation-centre';
+    dial.appendChild(hand);
+    dial.appendChild(centre);
+
+    const quickValues=[0,45,90,135,180,-135,-90,-45];
+    quickValues.forEach(value=>{
+      const radians=value*Math.PI/180;
+      const dot=document.createElement('button');
+      dot.type='button';
+      dot.className='native-clip-rotation-dot';
+      dot.dataset.value=String(value);
+      dot.title='Set '+value+'°';
+      dot.style.left=(50+Math.sin(radians)*36)+'%';
+      dot.style.top=(50-Math.cos(radians)*36)+'%';
+
+      const label=document.createElement('span');
+      label.className='native-clip-rotation-label';
+      label.textContent=String(value);
+      label.style.left=(50+Math.sin(radians)*43)+'%';
+      label.style.top=(50-Math.cos(radians)*43)+'%';
+
+      dot.addEventListener('pointerdown',event=>event.stopPropagation());
+      dot.addEventListener('click',event=>{
+        event.preventDefault();
+        event.stopPropagation();
+        const current=body.querySelector('[data-native-field="rotation"]');
+        if(current) current.value=String(value);
+        pushUndo();
+        nativeClipPartSetChannelKey(node,'rotate',{rotation:value},false);
+        nativeClipPartRefreshAfterEdit();
+      });
+      dial.appendChild(label);
+      dial.appendChild(dot);
+    });
+    dialWrap.appendChild(dial);
+    body.appendChild(dialWrap);
+
+    const fields=document.createElement('div');
+    fields.className='native-clip-rotation-fields';
+
+    function rotationField(labelText,role,value){
+      const wrap=document.createElement('div');
+      wrap.className='native-clip-rotation-field';
+      const label=document.createElement('label');
+      label.textContent=labelText;
+      const input=document.createElement('input');
+      input.type='number';
+      input.step=role==='current'?'0.1':'1';
+      input.value=String(value);
+      input.dataset.rotationRole=role;
+      if(role==='current') input.dataset.nativeField='rotation';
+      wrap.appendChild(label);
+      wrap.appendChild(input);
+      fields.appendChild(wrap);
+      return input;
+    }
+
+    const minInput=rotationField('Min','min',data.rotationMin);
+    const currentInput=rotationField('Current','current',nativeClipPartRound(pose.rotation));
+    const maxInput=rotationField('Max','max',data.rotationMax);
+    currentInput.min=String(data.rotationMin);
+    currentInput.max=String(data.rotationMax);
+
+    body.appendChild(fields);
+    nativeClipPartUpdateRotationHand(body,currentInput.value);
+
+    let dialUndoArmed=false;
+    function setRotationLive(value){
+      nativeClipPartState.editingControl=true;
+      const clamped=nativeClipPartClamp(
+        nativeClipPartNumber(value,0),
+        nativeClipPartNumber(minInput.value,-359),
+        nativeClipPartNumber(maxInput.value,360)
+      );
+      currentInput.value=String(nativeClipPartRound(clamped));
+      dial.setAttribute('aria-valuenow',currentInput.value);
+      nativeClipPartUpdateRotationHand(body,clamped);
+      if(!dialUndoArmed){
+        pushUndo();
+        dialUndoArmed=true;
+      }
+      nativeClipPartSetChannelKey(node,'rotate',{rotation:clamped},false);
+    }
+
+    function angleFromPointer(event){
+      const rect=dial.getBoundingClientRect();
+      const centreX=rect.left+rect.width/2;
+      const centreY=rect.top+rect.height/2;
+      const raw=Math.atan2(event.clientX-centreX,centreY-event.clientY)*180/Math.PI;
+      return nativeClipPartFitAngleToRange(
+        raw,
+        minInput.value,
+        maxInput.value,
+        currentInput.value
+      );
+    }
+
+    dial.addEventListener('pointerdown',event=>{
+      if(event.target.closest('.native-clip-rotation-dot')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dialUndoArmed=false;
+      dial.setPointerCapture(event.pointerId);
+      setRotationLive(angleFromPointer(event));
+
+      function move(moveEvent){
+        if(moveEvent.pointerId!==event.pointerId) return;
+        moveEvent.preventDefault();
+        setRotationLive(angleFromPointer(moveEvent));
+      }
+      function finish(finishEvent){
+        if(finishEvent.pointerId!==event.pointerId) return;
+        dial.removeEventListener('pointermove',move);
+        dial.removeEventListener('pointerup',finish);
+        dial.removeEventListener('pointercancel',finish);
+        dialUndoArmed=false;
+        nativeClipPartState.editingControl=false;
+        nativeClipPartRefreshAfterEdit();
+      }
+      dial.addEventListener('pointermove',move);
+      dial.addEventListener('pointerup',finish);
+      dial.addEventListener('pointercancel',finish);
+    });
+
+    currentInput.addEventListener('input',()=>{
+      if(!dialUndoArmed){
+        pushUndo();
+        dialUndoArmed=true;
+      }
+      setRotationLive(currentInput.value);
+    });
+    currentInput.addEventListener('change',()=>{
+      dialUndoArmed=false;
+      nativeClipPartState.editingControl=false;
+      nativeClipPartRefreshAfterEdit();
+    });
+
+    function updateRotationRange(){
+      pushUndo();
+      data.rotationMin=nativeClipPartNumber(minInput.value,-359);
+      data.rotationMax=nativeClipPartNumber(maxInput.value,360);
+      if(data.rotationMin>data.rotationMax){
+        const swap=data.rotationMin;
+        data.rotationMin=data.rotationMax;
+        data.rotationMax=swap;
+      }
+      data.revision++;
+      nativeClipPartRenderEditor(true);
+    }
+    minInput.addEventListener('change',updateRotationRange);
+    maxInput.addEventListener('change',updateRotationRange);
+
+    const longestLabel=document.createElement('label');
+    longestLabel.className='native-clip-longest';
+    const longestInput=document.createElement('input');
+    longestInput.type='checkbox';
+    longestInput.checked=!!data.longestWay;
+    const longestText=document.createElement('div');
+    const longestStrong=document.createElement('strong');
+    longestStrong.textContent='Longest way';
+    const longestHint=document.createElement('span');
+    longestHint.textContent='Unchecked uses the shortest rotation between keys.';
+    longestText.appendChild(longestStrong);
+    longestText.appendChild(document.createElement('br'));
+    longestText.appendChild(longestHint);
+    longestLabel.appendChild(longestInput);
+    longestLabel.appendChild(longestText);
+    longestInput.addEventListener('change',()=>{
+      pushUndo();
+      data.longestWay=!!longestInput.checked;
+      data.revision++;
+      renderTimeline();
+      nativeClipPartRenderEditor(true);
+    });
+    body.appendChild(longestLabel);
+  }
+
+  function nativeClipPartBuildChannel(
+    node,
+    channelName,
+    pose,
+    data,
+    currentOwnerFrame,
+    currentMainFrame
+  ){
+    const channel=document.createElement('div');
+
+    channel.className=
+      'native-clip-channel'+
+      (
+        nativeClipPartState.openChannel===channelName
+          ?' open'
+          :''
+      );
+
+    channel.dataset.channel=channelName;
+
+    const keyed=nativeClipPartIsRootNode(node)
+      ?nativeClipPartRootHasKeyAtPlayhead(node)
+      :!!nativeClipPartNativeKeyAtFrame(
+          node.object,
+          currentMainFrame
+        );
+
+    const header=document.createElement('div');
+    header.className='native-clip-channel-head';
+
+    const title=document.createElement('div');
+    title.className='native-clip-channel-title';
+
+    const icon=document.createElement('span');
+    icon.className='native-clip-channel-icon';
+    icon.textContent=
+      channelName==='move'
+        ?'↔'
+        :channelName==='scale'
+          ?'⤢'
+          :'↻';
+
+    const titleText=document.createElement('span');
+    titleText.textContent=channelName;
+
+    title.appendChild(icon);
+    title.appendChild(titleText);
+
+    const badge=document.createElement('span');
+    badge.className=
+      'native-clip-channel-badge'+
+      (
+        keyed
+          ?' keyed'
+          :''
+      );
+
+    badge.textContent=
+      keyed
+        ?'Keyed'
+        :'No key';
+
+    const toggle=nativeClipPartCreateButton(
+      nativeClipPartState.openChannel===channelName
+        ?'−'
+        :'+',
+      'native-clip-channel-toggle'
+    );
+
+    function openChannel(event){
+      if(event){
+        event.stopPropagation();
+      }
+
+      nativeClipPartState.openChannel=channelName;
+
+      nativeClipPartRenderEditor(
+        true
+      );
+    }
+
+    title.addEventListener(
+      'click',
+      openChannel
+    );
+
+    badge.addEventListener(
+      'click',
+      openChannel
+    );
+
+    toggle.addEventListener(
+      'click',
+      openChannel
+    );
+
+    header.appendChild(title);
+    header.appendChild(badge);
+    header.appendChild(toggle);
+    channel.appendChild(header);
+
+    const body=document.createElement('div');
+    body.className='native-clip-channel-body';
+    channel.appendChild(body);
+
+    function applyValues(){
+      nativeClipPartSetChannelKey(
+        node,
+        channelName,
+        nativeClipPartReadValues(
+          body,
+          channelName
+        ),
+        false
+      );
+    }
+
+    if(channelName==='move'){
+      const rangeX=Math.max(
+        1000,
+        W*2
+      );
+
+      const rangeY=Math.max(
+        1000,
+        H*2
+      );
+
+      body.appendChild(
+        nativeClipPartMakeControl(
+          node,
+          channelName,
+          'x',
+          'X',
+          nativeClipPartRound(pose.x),
+          -rangeX,
+          rangeX,
+          .1,
+          applyValues
+        )
+      );
+
+      body.appendChild(
+        nativeClipPartMakeControl(
+          node,
+          channelName,
+          'y',
+          'Y',
+          nativeClipPartRound(pose.y),
+          -rangeY,
+          rangeY,
+          .1,
+          applyValues
+        )
+      );
+    }else if(channelName==='scale'){
+      body.appendChild(
+        nativeClipPartMakeControl(
+          node,
+          channelName,
+          'scale',
+          'Scale',
+          nativeClipPartRound(pose.scale),
+          .01,
+          10,
+          .01,
+          applyValues
+        )
+      );
+    }else{
+      nativeClipPartBuildRotationBody(
+        node,
+        body,
+        pose,
+        data
+      );
+    }
+
+    const actions=document.createElement('div');
+    actions.className='native-clip-channel-actions';
+
+    const setButton=nativeClipPartCreateButton(
+      keyed
+        ?'Update Key'
+        :'Set Key',
+      'btn small primary'
+    );
+
+    const deleteButton=nativeClipPartCreateButton(
+      'Delete Key',
+      'btn small danger'
+    );
+
+    deleteButton.disabled=!keyed;
+
+    setButton.addEventListener('click',()=>{
+      const values=nativeClipPartReadValues(
+        body,
+        channelName
+      );
+
+      nativeClipPartSetChannelKey(
+        node,
+        channelName,
+        values,
+        true
+      );
+
+      nativeClipPartRefreshAfterEdit();
+    });
+
+    deleteButton.addEventListener('click',()=>{
+      if(
+        nativeClipPartDeleteChannelKey(
+          node,
+          channelName,
+          currentOwnerFrame,
+          true
+        )
+      ){
+        nativeClipPartRefreshAfterEdit();
+      }
+    });
+
+    if(nativeClipPartIsRootNode(node)){
+      deleteButton.title=
+        'Top-level Clips use native Luke Animate transform keyframes. '+
+        'Delete removes the complete transform key at this main-timeline frame.';
+    }
+
+    actions.appendChild(setButton);
+    actions.appendChild(deleteButton);
+    body.appendChild(actions);
+
+    const note=document.createElement('div');
+    note.className='native-clip-channel-note';
+
+    note.textContent=nativeClipPartIsRootNode(node)
+      ?(
+          'Top-level Clip uses Luke Animate native main-timeline keys. '+
+          'Current main timeline Frame '+
+          currentMainFrame+
+          '.'
+        )
+      :(
+          'Nested Clip has a REAL native keyframe on main timeline Frame '+
+          currentMainFrame+
+          '.'
+        );
+
+    body.appendChild(note);
+
+    return channel;
+  }
+
+  function nativeClipPartRenderEditor(forceRender){
+    const panel=nativeClipPartEnsureEditor();
+    const root=nativeClipPartSelectedRoot();
+    if(!root){
+      panel.style.display='none';
+      panel.innerHTML='';
+      panel.classList.remove('native-single-target');
+      nativeClipPartState.rootId='';
+      nativeClipPartState.selectedKey='';
+      nativeClipPartState.editorSignature='';
+      return;
+    }
+
+    if(nativeClipPartState.editingControl&&!forceRender) return;
+
+    const hierarchy=nativeClipPartBuildHierarchy(root,t);
+    nativeClipPartEnsureState(hierarchy);
+
+    const target=hierarchy.nodeMap.get(nativeClipPartState.selectedKey)||hierarchy.rootNode;
+    if(!target){
+      panel.style.display='none';
+      panel.innerHTML='';
+      nativeClipPartState.editorSignature='';
+      return;
+    }
+
+    if(nativeClipPartIsRootNode(target)){
+      nativeClipPartMigrateLegacyRootKeys(target);
+    }
+
+    const data=nativeClipPartEnsureData(target.object);
+    const currentOwnerFrame=nativeClipPartOwnerFrame(target,t);
+    const currentMainFrame=nativeClipPartMainFrameNumber(t);
+    const pose=nativeClipPartPose(target,t);
+    const signature=[
+      hierarchy.rootId,
+      target.key,
+      currentMainFrame,
+      currentOwnerFrame,
+      nativeClipPartState.openChannel,
+      data.revision
+    ].join('::');
+
+    if(
+      !forceRender &&
+      signature===nativeClipPartState.editorSignature &&
+      panel.style.display==='block'
+    ){
+      nativeClipPartDecorateLibrary();
+      return;
+    }
+
+    nativeClipPartState.editorSignature=signature;
+    panel.style.display='block';
+    panel.classList.add('native-single-target');
+    panel.innerHTML='';
+
+    const head=document.createElement('div');
+    head.className='native-clip-part-editor-head';
+
+    const titleWrap=document.createElement('div');
+    titleWrap.className='native-clip-target-title';
+
+    const heading=document.createElement('strong');
+    heading.textContent='Clip Animation — '+target.name;
+
+    const chip=document.createElement('span');
+    chip.className='native-clip-target-chip';
+    chip.textContent=target.isRoot?'PARENT':'SUBCLIP';
+
+    titleWrap.appendChild(heading);
+    titleWrap.appendChild(chip);
+
+    const keyCount=document.createElement('span');
+    keyCount.className='native-clip-part-editor-count';
+    const totalKeys=Array.isArray(target.object.keyframes)
+      ?target.object.keyframes.length
+      :0;
+
+    keyCount.textContent=
+      totalKeys+
+      ' key frame'+
+      (
+        totalKeys===1
+          ?''
+          :'s'
+      );
+
+    head.appendChild(titleWrap);
+    head.appendChild(keyCount);
+    panel.appendChild(head);
+
+    const path=document.createElement('div');
+    path.className='native-clip-part-editor-path';
+    path.textContent=target.isRoot
+      ? 'Main stage › '+target.name
+      : 'Main stage › '+target.path;
+    panel.appendChild(path);
+
+    if(!target.isRoot){
+      const parentStackPanel=nativeClipPartBuildParentStackPanel(
+        target
+      );
+
+      if(parentStackPanel){
+        panel.appendChild(
+          parentStackPanel
+        );
+      }
+    }
+
+    const targetCard=document.createElement('div');
+    targetCard.className='native-clip-target-card';
+    targetCard.appendChild(
+      nativeClipPartBuildChannel(
+        target,
+        'move',
+        pose,
+        data,
+        currentOwnerFrame,
+        currentMainFrame
+      )
+    );
+    targetCard.appendChild(
+      nativeClipPartBuildChannel(
+        target,
+        'scale',
+        pose,
+        data,
+        currentOwnerFrame,
+        currentMainFrame
+      )
+    );
+    targetCard.appendChild(
+      nativeClipPartBuildChannel(
+        target,
+        'rotate',
+        pose,
+        data,
+        currentOwnerFrame,
+        currentMainFrame
+      )
+    );
+    panel.appendChild(targetCard);
+
+    nativeClipPartDecorateLibrary();
+  }
+
+
+  function nativeClipPartParentStackInfo(node){
+    if(
+      !node ||
+      node.isRoot ||
+      !node.ownerClip ||
+      !node.object
+    ){
+      return null;
+    }
+
+    const layerId=String(
+      node.object.timelineLayerId||''
+    );
+
+    if(!layerId){
+      return null;
+    }
+
+    const model=wickEnsureClipDrawingLayers(
+      node.ownerClip
+    );
+
+    const index=model.findIndex(layer=>{
+      return String(layer&&layer.id||'')===layerId;
+    });
+
+    if(index<0){
+      return null;
+    }
+
+    return {
+      model,
+      index,
+      layer:model[index],
+      total:model.length,
+      parentClip:node.ownerClip,
+      parentName:String(
+        node.ownerClip.name ||
+        'Parent Clip'
+      )
+    };
+  }
+
+  function nativeClipPartRenumberOwnerStack(model){
+    if(!Array.isArray(model)) return;
+
+    model.forEach((layer,index)=>{
+      if(!layer) return;
+
+      layer.order=index+1;
+
+      if(Array.isArray(layer.frames)){
+        layer.frames.forEach(frame=>{
+          if(
+            frame &&
+            frame.object
+          ){
+            frame.object.timelineLayerId=layer.id;
+            frame.object.timelineLayerOrder=layer.order;
+          }
+        });
+      }
+    });
+
+    wickDrawingLayerOrderCounter=Math.max(
+      wickDrawingLayerOrderCounter,
+      model.length
+    );
+  }
+
+  function nativeClipPartMoveInParentStack(node,mode){
+    const info=nativeClipPartParentStackInfo(
+      node
+    );
+
+    if(!info){
+      return false;
+    }
+
+    let targetIndex=info.index;
+
+    if(mode==='back'){
+      targetIndex=0;
+    }else if(mode==='backward'){
+      targetIndex=Math.max(
+        0,
+        info.index-1
+      );
+    }else if(mode==='forward'){
+      targetIndex=Math.min(
+        info.total-1,
+        info.index+1
+      );
+    }else if(mode==='front'){
+      targetIndex=info.total-1;
+    }else{
+      return false;
+    }
+
+    if(targetIndex===info.index){
+      return false;
+    }
+
+    pushUndo();
+
+    /*
+      The child remains inside exactly the same Parent Clip definition.
+      Only its canonical drawing-layer position changes.
+
+      wickProjectLayerModel() renders lower array indexes first, therefore:
+        internal index 0 = furthest back
+        final array item = furthest front
+
+      The UI intentionally displays this array in REVERSE:
+        top visible row    = final array item = closest/front
+        bottom visible row = index 0          = furthest/back
+    */
+    const movedLayer=info.model.splice(
+      info.index,
+      1
+    )[0];
+
+    info.model.splice(
+      targetIndex,
+      0,
+      movedLayer
+    );
+
+    nativeClipPartRenumberOwnerStack(
+      info.model
+    );
+
+    wickNormalizeLayerModel(
+      info.model,
+      info.parentClip.timelineDuration
+    );
+
+    wickProjectLayerModel(
+      info.model,
+      info.parentClip.sceneFrames,
+      info.parentClip.timelineDuration
+    );
+
+    const firstFrame=sceneFrameAtIndex(
+      info.parentClip.sceneFrames,
+      0
+    );
+
+    info.parentClip.drawObjects=(
+      firstFrame &&
+      Array.isArray(firstFrame.objects)
+    )
+      ?firstFrame.objects
+      :[];
+
+    /*
+      Do not touch node.ownerClip, node.ancestors or the child Clip ID.
+      This is strictly z-order / layer-stack movement.
+    */
+    const data=nativeClipPartEnsureData(
+      node.object
+    );
+
+    data.revision=Math.max(
+      0,
+      Number(data.revision)||0
+    )+1;
+
+    nativeClipPartState.editorSignature='';
+
+    /*
+      If the user happens to be editing this Parent Clip directly, immediately
+      re-project the current editor view from the reordered canonical model.
+    */
+    if(
+      editingClipId &&
+      String(editingClipId)===String(info.parentClip.id)
+    ){
+      wickDrawingLayers=info.model;
+
+      syncActiveSceneFrameForTime(
+        t,
+        false
+      );
+
+      renderLayerList();
+    }
+
+    updateInspector();
+    renderTimeline();
+    renderClipLibrary();
+    renderTransformHandles();
+
+    return true;
+  }
+
+  function nativeClipPartMakeStackButton(
+    label,
+    title,
+    disabled,
+    callback,
+    className
+  ){
+    const button=document.createElement('button');
+
+    button.type='button';
+    button.className=className||'btn small';
+    button.textContent=label;
+    button.title=title;
+    button.disabled=!!disabled;
+
+    button.addEventListener('click',event=>{
+      event.preventDefault();
+      event.stopPropagation();
+
+      if(button.disabled){
+        return;
+      }
+
+      callback();
+    });
+
+    return button;
+  }
+
+  function nativeClipPartBuildParentStackPanel(node){
+    const info=nativeClipPartParentStackInfo(
+      node
+    );
+
+    if(!info){
+      return null;
+    }
+
+    const panel=document.createElement('div');
+    panel.className='native-clip-parent-stack';
+
+    const head=document.createElement('div');
+    head.className='native-clip-parent-stack-head';
+
+    const title=document.createElement('div');
+    title.className='native-clip-parent-stack-title';
+    title.textContent='Stack inside '+info.parentName;
+
+    const position=document.createElement('div');
+    position.className='native-clip-parent-stack-position';
+    const visualPosition=info.total-info.index;
+
+    position.textContent=
+      'Layer '+
+      String(visualPosition)+
+      ' of '+
+      String(info.total)+
+      ' · '+
+      (
+        info.index===info.total-1
+          ?'FRONT'
+          :info.index===0
+            ?'BACK'
+            :'middle'
+      );
+
+    head.appendChild(title);
+    head.appendChild(position);
+    panel.appendChild(head);
+
+    const buttons=document.createElement('div');
+    buttons.className='native-clip-parent-stack-buttons';
+
+    buttons.appendChild(
+      nativeClipPartMakeStackButton(
+        'Send Back',
+        'Send this child Clip to the BOTTOM of the visible stack, behind all other artwork in '+info.parentName,
+        info.index===0,
+        ()=>{
+          nativeClipPartMoveInParentStack(
+            node,
+            'back'
+          );
+        },
+        'btn small'
+      )
+    );
+
+    buttons.appendChild(
+      nativeClipPartMakeStackButton(
+        '▼ Back 1',
+        'Move this child Clip one visible layer DOWN / away from camera inside '+info.parentName,
+        info.index===0,
+        ()=>{
+          nativeClipPartMoveInParentStack(
+            node,
+            'backward'
+          );
+        },
+        'btn small'
+      )
+    );
+
+    buttons.appendChild(
+      nativeClipPartMakeStackButton(
+        '▲ Front 1',
+        'Move this child Clip one visible layer UP / toward camera inside '+info.parentName,
+        info.index>=info.total-1,
+        ()=>{
+          nativeClipPartMoveInParentStack(
+            node,
+            'forward'
+          );
+        },
+        'btn small'
+      )
+    );
+
+    buttons.appendChild(
+      nativeClipPartMakeStackButton(
+        'Bring Front',
+        'Bring this child Clip to the TOP of the visible stack, closest to camera in '+info.parentName,
+        info.index>=info.total-1,
+        ()=>{
+          nativeClipPartMoveInParentStack(
+            node,
+            'front'
+          );
+        },
+        'btn small'
+      )
+    );
+
+    panel.appendChild(buttons);
+
+    const note=document.createElement('div');
+    note.className='native-clip-parent-stack-note';
+    note.textContent=
+      'This changes draw order only. '+
+      node.name+
+      ' remains a child of '+
+      info.parentName+
+      ' and keeps following its parent animation.';
+
+    panel.appendChild(note);
+
+    return panel;
+  }
+
+  function nativeClipPartCurrentTarget(){
+    const root=nativeClipPartSelectedRoot();
+    if(!root) return null;
+    const hierarchy=nativeClipPartBuildHierarchy(root,t);
+    nativeClipPartEnsureState(hierarchy);
+    return hierarchy.nodeMap.get(nativeClipPartState.selectedKey)||hierarchy.rootNode||null;
+  }
+
+  function nativeClipPartCurrentTargetClipId(){
+    const target=nativeClipPartCurrentTarget();
+    return target&&target.object?String(target.object.clipId||''):'';
+  }
+
+  function nativeClipPartFindTopLevelRootForClipId(clipId){
+    const wanted=String(clipId||'');
+    if(!wanted) return null;
+
+    const selectedRoot=nativeClipPartSelectedRoot();
+    if(selectedRoot){
+      const hierarchy=nativeClipPartBuildHierarchy(selectedRoot,t);
+      if(String(selectedRoot.clipId||'')===wanted){
+        return {root:selectedRoot,hierarchy,target:hierarchy.rootNode,index:null};
+      }
+      const nested=hierarchy.nodes.find(
+        node=>String(node.object&&node.object.clipId||'')===wanted
+      );
+      if(nested){
+        return {root:selectedRoot,hierarchy,target:nested,index:null};
+      }
+    }
+
+    for(let index=0;index<drawObjects.length;index++){
+      const object=drawObjects[index];
+      if(!object||object.type!=='clipinstance') continue;
+      const hierarchy=nativeClipPartBuildHierarchy(object,t);
+
+      if(String(object.clipId||'')===wanted){
+        return {root:object,hierarchy,target:hierarchy.rootNode,index};
+      }
+
+      const nested=hierarchy.nodes.find(
+        node=>String(node.object&&node.object.clipId||'')===wanted
+      );
+      if(nested){
+        return {root:object,hierarchy,target:nested,index};
+      }
+    }
+    return null;
+  }
+
+  function nativeClipPartSelectLibraryClip(clipId){
+    const match=nativeClipPartFindTopLevelRootForClipId(clipId);
+    if(!match) return false;
+
+    if(Number.isInteger(match.index)){
+      selectedDrawIndices.clear();
+      selectedDrawIndices.add(match.index);
+      isolatedGroupEdit=null;
+      updateSelectedCountUI();
+      renderLayerList();
+      renderTransformHandles();
+    }
+
+    const hierarchy=nativeClipPartBuildHierarchy(match.root,t);
+    nativeClipPartEnsureState(hierarchy);
+
+    let target=null;
+    if(String(match.root.clipId||'')===String(clipId||'')){
+      target=hierarchy.rootNode;
+    }else{
+      target=hierarchy.nodes.find(
+        node=>String(node.object&&node.object.clipId||'')===String(clipId||'')
+      )||null;
+    }
+
+    if(!target) return false;
+
+    if(nativeClipPartIsRootNode(target)){
+      nativeClipPartMigrateLegacyRootKeys(target);
+    }else{
+      nativeClipPartMigrateNestedToNative(target);
+    }
+
+    nativeClipPartState.rootId=hierarchy.rootId;
+    nativeClipPartState.selectedKey=target.key;
+    if(!nativeClipPartState.openChannel){
+      nativeClipPartState.openChannel='rotate';
+    }
+
+    nativeClipPartState.expandedRoots.add(hierarchy.rootId);
+    nativeClipPartState.editorSignature='';
+
+    updateInspector();
+    renderClipLibrary();
+    renderTimeline();
+    renderTransformHandles();
+    return true;
+  }
+
+  function nativeClipPartLibraryDepthForClipId(clipId){
+    const root=nativeClipPartSelectedRoot();
+    if(!root) return 0;
+    const hierarchy=nativeClipPartBuildHierarchy(root,t);
+    if(String(root.clipId||'')===String(clipId||'')) return 0;
+    const node=hierarchy.nodes.find(
+      item=>String(item.object&&item.object.clipId||'')===String(clipId||'')
+    );
+    return node?Math.max(1,node.depth):0;
+  }
+
+  function nativeClipPartDecorateLibrary(){
+    const list=document.getElementById('clip-library');
+    if(!list) return;
+
+    const ids=Object.keys(clips);
+    const rows=Array.from(list.querySelectorAll(':scope > .behaviour-row'));
+    const selectedClipId=nativeClipPartCurrentTargetClipId();
+
+    rows.forEach((row,index)=>{
+      const clipId=ids[index];
+      if(!clipId) return;
+
+      row.classList.add('native-clip-library-row');
+      row.dataset.nativeClipId=clipId;
+      row.classList.toggle(
+        'selected-target',
+        String(clipId)===String(selectedClipId)
+      );
+
+      const name=row.querySelector('.layer-name');
+      if(name){
+        const depth=nativeClipPartLibraryDepthForClipId(clipId);
+        name.classList.toggle('native-clip-library-child',depth>0);
+        name.style.paddingLeft=depth>1
+          ? String(18+(depth-1)*12)+'px'
+          : '';
+
+        name.title=depth>0
+          ? 'Select this nested Clip for Move, Scale and Rotate animation controls'
+          : 'Select this Clip for Move, Scale and Rotate animation controls';
+
+        if(name.dataset.nativeClipSelectorBound!=='1'){
+          name.dataset.nativeClipSelectorBound='1';
+          name.addEventListener('click',event=>{
+            event.preventDefault();
+            event.stopPropagation();
+            nativeClipPartSelectLibraryClip(clipId);
+          });
+        }
+      }
+
+      if(row.dataset.nativeClipSelectorBound!=='1'){
+        row.dataset.nativeClipSelectorBound='1';
+        row.addEventListener('click',event=>{
+          if(event.target.closest('button')) return;
+          if(event.target.closest('.layer-name')) return;
+          nativeClipPartSelectLibraryClip(clipId);
+        });
+      }
+    });
+  }
+
+  function nativeClipPartTimelineContextFrameForOwnerFrame(node,ownerFrame,info){
+    const details=info||getTimelineFrameInfo();
+
+    return Math.max(
+      0,
+      Math.min(
+        details.totalFrames,
+        Math.round(
+          nativeClipPartNumber(
+            ownerFrame,
+            1
+          )
+        )-1
+      )
+    );
+  }
+
+  function nativeClipPartTimelineTimeFromClientX(track,clientX){
+    const info=getTimelineFrameInfo();
+
+    const mainFrameIndex=timelineFrameFromClientX(
+      track,
+      clientX,
+      info
+    );
+
+    return nativeClipPartMainTimeForFrameIndex(
+      mainFrameIndex
+    );
+  }
+
+  function nativeClipPartBeginKeyDrag(event,node,ownerFrame,channels,track,dot){
+    if(event.button!==0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if(nativeClipPartIsRootNode(node)){
+      return;
+    }
+
+    const pointerId=event.pointerId;
+    const info=getTimelineFrameInfo();
+
+    let targetOwnerFrame=ownerFrame;
+
+    let targetMainFrame=Math.max(
+      0,
+      Math.min(
+        info.totalFrames,
+        Math.round(
+          nativeClipPartNumber(
+            ownerFrame,
+            1
+          )
+        )-1
+      )
+    );
+
+    let moved=false;
+
+    dot.classList.add(
+      'dragging'
+    );
+
+    try{
+      dot.setPointerCapture(
+        pointerId
+      );
+    }catch(_error){}
+
+    function preview(clientX){
+      targetMainFrame=timelineFrameFromClientX(
+        track,
+        clientX,
+        info
+      );
+
+      targetOwnerFrame=targetMainFrame+1;
+
+      dot.style.left=timelineFrameCenterPercent(
+        targetMainFrame,
+        info
+      )+'%';
+
+      moved=moved||targetOwnerFrame!==ownerFrame;
+    }
+
+    function move(moveEvent){
+      if(moveEvent.pointerId!==pointerId) return;
+
+      moveEvent.preventDefault();
+
+      preview(
+        moveEvent.clientX
+      );
+    }
+
+    function cleanup(){
+      dot.classList.remove(
+        'dragging'
+      );
+
+      window.removeEventListener(
+        'pointermove',
+        move,
+        true
+      );
+
+      window.removeEventListener(
+        'pointerup',
+        up,
+        true
+      );
+
+      window.removeEventListener(
+        'pointercancel',
+        cancel,
+        true
+      );
+    }
+
+    function up(upEvent){
+      if(upEvent.pointerId!==pointerId) return;
+
+      upEvent.preventDefault();
+
+      preview(
+        upEvent.clientX
+      );
+
+      cleanup();
+
+      if(moved){
+        pushUndo();
+
+        nativeClipPartMoveKeys(
+          node,
+          ownerFrame,
+          targetOwnerFrame,
+          channels
+        );
+      }
+
+      t=nativeClipPartMainTimeForFrameIndex(
+        targetMainFrame
+      );
+
+      nativeClipPartRefreshAfterEdit();
+    }
+
+    function cancel(cancelEvent){
+      if(cancelEvent.pointerId!==pointerId) return;
+
+      cleanup();
+
+      renderTimeline();
+    }
+
+    window.addEventListener(
+      'pointermove',
+      move,
+      true
+    );
+
+    window.addEventListener(
+      'pointerup',
+      up,
+      true
+    );
+
+    window.addEventListener(
+      'pointercancel',
+      cancel,
+      true
+    );
+  }
+
+  function nativeClipPartCreateTimelineRow(node,info){
+    nativeClipPartMigrateNestedToNative(node);
+
+    const data=nativeClipPartEnsureData(node.object);
+
+    const row=document.createElement('div');
+    row.className='timeline-track-row native-clip-part-row'+(
+      node.key===nativeClipPartState.selectedKey?' active':''
+    );
+    row.dataset.timelineKind='native-clip-part-row';
+    row.dataset.nativeClipPartKey=node.key;
+
+    const name=document.createElement('div');
+    name.className='timeline-track-name native-clip-part-timeline-name';
+    name.style.paddingLeft=Math.min(30,node.depth*7)+'px';
+    name.title=
+      node.path+
+      ' — child remains parented; ▲ = toward camera/front, ▼ = away/back';
+
+    const branch=document.createElement('span');
+    branch.className='native-clip-part-timeline-branch';
+    branch.textContent='↳';
+
+    const nameText=document.createElement('span');
+    nameText.className='native-clip-part-timeline-text';
+    nameText.textContent=node.name;
+
+    name.appendChild(branch);
+    name.appendChild(nameText);
+
+    const parentStackInfo=nativeClipPartParentStackInfo(
+      node
+    );
+
+    if(parentStackInfo){
+      const stackControls=document.createElement('div');
+      stackControls.className='native-clip-timeline-stack-controls';
+
+      const backButton=nativeClipPartMakeStackButton(
+        '▼',
+        'Move '+node.name+' DOWN one visible layer / away from camera inside '+parentStackInfo.parentName+' without changing its parent',
+        parentStackInfo.index===0,
+        ()=>{
+          nativeClipPartMoveInParentStack(
+            node,
+            'backward'
+          );
+        },
+        'native-clip-timeline-stack-btn'
+      );
+
+      const forwardButton=nativeClipPartMakeStackButton(
+        '▲',
+        'Move '+node.name+' UP one visible layer / toward camera inside '+parentStackInfo.parentName+' without changing its parent',
+        parentStackInfo.index>=parentStackInfo.total-1,
+        ()=>{
+          nativeClipPartMoveInParentStack(
+            node,
+            'forward'
+          );
+        },
+        'native-clip-timeline-stack-btn'
+      );
+
+      stackControls.appendChild(
+        backButton
+      );
+
+      stackControls.appendChild(
+        forwardButton
+      );
+
+      name.appendChild(
+        stackControls
+      );
+    }
+
+    const track=document.createElement('div');
+    track.className='timeline-track native-clip-part-timeline-track';
+    track.title='REAL nested Clip object.keyframes driven by the main timeline.';
+
+    const exposure=document.createElement('div');
+    exposure.className='native-clip-part-timeline-exposure';
+    track.appendChild(exposure);
+
+    const nativeKeys=Array.isArray(node.object.keyframes)
+      ?node.object.keyframes.slice().sort((a,b)=>nativeClipPartNumber(a&&a.time,0)-nativeClipPartNumber(b&&b.time,0))
+      :[];
+
+    nativeKeys.forEach(keyframe=>{
+      const mainFrameIndex=nativeClipPartMainFrameIndex(
+        nativeClipPartNumber(keyframe.time,0)
+      );
+      const mainFrameNumber=mainFrameIndex+1;
+      const channels=nativeClipPartChannelsAtFrame(data,mainFrameNumber);
+
+      const dot=document.createElement('div');
+      dot.className='native-clip-part-key-dot '+(
+        channels.length===1?channels[0]:'multiple'
+      );
+      dot.style.left=timelineFrameCenterPercent(mainFrameIndex,info)+'%';
+      dot.title=node.name+' · REAL keyframe · Main Frame '+mainFrameNumber;
+
+      dot.addEventListener('pointerdown',event=>nativeClipPartBeginKeyDrag(
+        event,
+        node,
+        mainFrameNumber,
+        channels.length?channels:['move','scale','rotate'],
+        track,
+        dot
+      ));
+
+      dot.addEventListener('click',event=>{
+        event.preventDefault();
+        event.stopPropagation();
+        t=nativeClipPartMainTimeForFrameIndex(mainFrameIndex);
+        nativeClipPartState.selectedKey=node.key;
+        syncActiveSceneFrameForTime(t,false);
+        updateInspector();
+        renderClipLibrary();
+        renderTimeline();
+      });
+
+      dot.addEventListener('contextmenu',event=>{
+        event.preventDefault();
+        event.stopPropagation();
+        openKeyframeContextMenu(event,{actions:[{
+          label:'Delete transform key',
+          hint:node.name+' · Main Frame '+mainFrameNumber,
+          icon:'⌫',
+          pushHistory:false,
+          callback:()=>{
+            nativeClipPartDeleteNestedNativeKey(node,mainFrameNumber,true);
+            nativeClipPartRefreshAfterEdit();
+          }
+        }]});
+      });
+
+      track.appendChild(dot);
+    });
+
+    function selectAtEvent(event){
+      const mainFrameIndex=timelineFrameFromClientX(track,event.clientX,info);
+      t=nativeClipPartMainTimeForFrameIndex(mainFrameIndex);
+      playing=false;
+      stopAudioIfLoaded();
+      nativeClipPartState.selectedKey=node.key;
+      syncActiveSceneFrameForTime(t,false);
+      updateInspector();
+      renderClipLibrary();
+      renderTimeline();
+    }
+
+    name.addEventListener('click',event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      nativeClipPartState.selectedKey=node.key;
+      nativeClipPartRenderEditor(true);
+      renderClipLibrary();
+      renderTimeline();
+    });
+
+    track.addEventListener('click',event=>{
+      if(event.target.closest('.native-clip-part-key-dot')) return;
+      selectAtEvent(event);
+    });
+
+    track.addEventListener('contextmenu',event=>{
+      if(event.target.closest('.native-clip-part-key-dot')) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const mainFrameIndex=timelineFrameFromClientX(track,event.clientX,info);
+      const contextTime=nativeClipPartMainTimeForFrameIndex(mainFrameIndex);
+      const mainFrameNumber=mainFrameIndex+1;
+
+      const actions=['move','scale','rotate'].map(channelName=>({
+        label:'Set '+channelName+' key',
+        hint:node.name+' at Main Frame '+mainFrameNumber,
+        icon:channelName==='move'?'↔':channelName==='scale'?'⤢':'↻',
+        pushHistory:false,
+        callback:()=>{
+          t=contextTime;
+          syncActiveSceneFrameForTime(t,false);
+          const pose=nativeClipPartPose(node,t);
+          nativeClipPartSetChannelKey(
+            node,
+            channelName,
+            nativeClipPartValuesFromPose(channelName,pose),
+            true
+          );
+          nativeClipPartState.selectedKey=node.key;
+          nativeClipPartRefreshAfterEdit();
+        }
+      }));
+
+      openKeyframeContextMenu(event,{actions});
+    });
+
+    row.appendChild(name);
+    row.appendChild(track);
+    return row;
+  }
+
+  function nativeClipPartDecorateRootTimelineKeys(rootNode,parentRow,info){
+    if(!rootNode||!parentRow) return;
+
+    nativeClipPartMigrateLegacyRootKeys(
+      rootNode
+    );
+
+    /*
+      The normal Luke Animate drawing-layer renderer already calls
+      addObjectKeyframeDots(track, frame.object) for this top-level Clip.
+      Adding private Clip-part dots here would create a second competing
+      animation track for L1, so v156 deliberately draws none.
+    */
+    parentRow.classList.toggle(
+      'native-clip-root-target-active',
+      rootNode.key===nativeClipPartState.selectedKey
+    );
+  }
+
+  function nativeClipPartDecorateTimeline(){
+    const tracks=document.getElementById('timeline-tracks');
+    if(!tracks) return;
+
+    tracks
+      .querySelectorAll('[data-timeline-kind="native-clip-part-row"]')
+      .forEach(row=>row.remove());
+
+    tracks
+      .querySelectorAll('.native-clip-timeline-toggle')
+      .forEach(button=>button.remove());
+
+    tracks
+      .querySelectorAll('.native-clip-root-key-dot')
+      .forEach(dot=>dot.remove());
+
+    tracks
+      .querySelectorAll('.timeline-track-row.wick-drawing-layer.native-clip-root-target-active')
+      .forEach(row=>row.classList.remove('native-clip-root-target-active'));
+
+    const root=nativeClipPartSelectedRoot();
+    if(!root) return;
+
+    const hierarchy=nativeClipPartBuildHierarchy(root,t);
+    nativeClipPartEnsureState(hierarchy);
+    if(!hierarchy.rootNode) return;
+
+    const layerId=String(root.timelineLayerId||'');
+    const parentRow=Array
+      .from(tracks.querySelectorAll('.timeline-track-row.wick-drawing-layer'))
+      .find(row=>String(row.dataset.timelineKey||'')===layerId);
+
+    if(!parentRow) return;
+
+    const info=getTimelineFrameInfo();
+    nativeClipPartDecorateRootTimelineKeys(
+      hierarchy.rootNode,
+      parentRow,
+      info
+    );
+
+    if(!hierarchy.nodes.length) return;
+
+    const parentName=parentRow.querySelector('.timeline-track-name');
+    const expanded=nativeClipPartState.expandedRoots.has(hierarchy.rootId);
+
+    if(parentName){
+      const toggle=nativeClipPartCreateButton(
+        expanded?'−':'+',
+        'native-clip-timeline-toggle'
+      );
+      toggle.title=expanded
+        ? 'Hide nested Clip layers'
+        : 'Show nested Clip layers';
+
+      toggle.addEventListener('click',event=>{
+        event.preventDefault();
+        event.stopPropagation();
+
+        if(nativeClipPartState.expandedRoots.has(hierarchy.rootId)){
+          nativeClipPartState.expandedRoots.delete(hierarchy.rootId);
+        }else{
+          nativeClipPartState.expandedRoots.add(hierarchy.rootId);
+        }
+        renderTimeline();
+      });
+
+      const deleteButton=parentName.querySelector('.wick-layer-delete-button');
+      if(deleteButton&&deleteButton.nextSibling){
+        parentName.insertBefore(toggle,deleteButton.nextSibling);
+      }else{
+        parentName.insertBefore(toggle,parentName.firstChild);
+      }
+    }
+
+    if(!expanded) return;
+
+    let cursor=parentRow;
+    hierarchy.nodes.forEach(node=>{
+      const childRow=nativeClipPartCreateTimelineRow(node,info);
+      cursor.insertAdjacentElement('afterend',childRow);
+      cursor=childRow;
+    });
+  }
+
+  const nativeClipPartUpdateInspectorBase=updateInspector;
+  updateInspector=function(){
+    const result=nativeClipPartUpdateInspectorBase();
+    nativeClipPartRenderEditor();
+    return result;
+  };
+
+  const nativeClipPartRenderTimelineBase=renderTimeline;
+  renderTimeline=function(){
+    const result=nativeClipPartRenderTimelineBase();
+    nativeClipPartDecorateTimeline();
+    return result;
+  };
+
+  const nativeClipPartRenderClipLibraryBase=renderClipLibrary;
+  renderClipLibrary=function(){
+    const result=nativeClipPartRenderClipLibraryBase();
+    nativeClipPartDecorateLibrary();
+    nativeClipPartRenderEditor();
+    return result;
+  };
+
+
 
   // ---------------- init ----------------
   // v126 remains based on the user's v110 file. It keeps clip double-click
