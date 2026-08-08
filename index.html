@@ -1,5 +1,5 @@
 
-<!-- LukeAnimate GPT v166: stage rulers and ruler corner now use 30% opacity. All ruler markings, guide dragging, dimensions, camera-stack behaviour and Clip animation fixes remain unchanged. -->
+<!-- LukeAnimate GPT v167: restored the original stage marquee multi-selection. Dragging empty stage space in Select/Edit mode draws a marquee and selects all visible objects whose effective bounds intersect it. Shift/Ctrl/Cmd marquee adds to the existing selection. Ctrl/Cmd is again available for multi-selection; stage panning is restored to Space-drag or middle-mouse drag. Retains v166 30% rulers and all v165-v159 Clip/timeline fixes. -->
 <!-- LukeAnimate GPT v153: native nested Clip-part animator. Selecting a parent Clip shows its child Clips as indented timeline sublayers and opens stage-styled Move, Scale and Rotate concertinas. Includes the v152 nested Clip preservation fix and all v151 Config, Scripts, SVG and Bezier fixes. -->
 <!DOCTYPE html>
 <!-- LukeAnimate GPT v148: Flowing Line layers can use animated dashes, built-in shapes, custom text or an uploaded image as the moving path item. -->
@@ -2018,6 +2018,17 @@
   .native-clip-timeline-stack-btn:disabled{
     opacity:.24;
     cursor:default;
+  }
+
+
+  /* ---------- v167 restored stage marquee selection ---------- */
+  .stage-selection-marquee{
+    position:absolute;
+    z-index:80;
+    pointer-events:none;
+    border:1px solid #087e70;
+    background:rgba(79,224,196,.16);
+    box-shadow:0 0 0 1px rgba(255,255,255,.65) inset;
   }
 
 </style>
@@ -11161,8 +11172,199 @@ ctx.fill();</textarea>
     renderTimeline();
   });
 
+  function beginStageMarqueeSelection(event,startCanvas,additive){
+    const overlayRect=overlay.getBoundingClientRect();
+    const startClientX=event.clientX;
+    const startClientY=event.clientY;
+    const originalSelection=new Set(selectedDrawIndices);
+
+    const marquee=document.createElement('div');
+    marquee.className='stage-selection-marquee';
+    marquee.style.left=(startClientX-overlayRect.left)+'px';
+    marquee.style.top=(startClientY-overlayRect.top)+'px';
+    marquee.style.width='0px';
+    marquee.style.height='0px';
+    overlay.appendChild(marquee);
+
+    let moved=false;
+
+    function updateMarquee(clientX,clientY){
+      const dx=clientX-startClientX;
+      const dy=clientY-startClientY;
+
+      if(!moved && Math.hypot(dx,dy)<4){
+        return;
+      }
+
+      moved=true;
+
+      marquee.style.left=(Math.min(startClientX,clientX)-overlayRect.left)+'px';
+      marquee.style.top=(Math.min(startClientY,clientY)-overlayRect.top)+'px';
+      marquee.style.width=Math.abs(dx)+'px';
+      marquee.style.height=Math.abs(dy)+'px';
+    }
+
+    function boundsIntersectRect(bounds,left,top,right,bottom){
+      if(!bounds) return false;
+
+      const bLeft=Number.isFinite(Number(bounds.x1))
+        ?Number(bounds.x1)
+        :Number(bounds.x)||0;
+
+      const bTop=Number.isFinite(Number(bounds.y1))
+        ?Number(bounds.y1)
+        :Number(bounds.y)||0;
+
+      const bRight=Number.isFinite(Number(bounds.x2))
+        ?Number(bounds.x2)
+        :bLeft+Math.max(0,Number(bounds.w)||0);
+
+      const bBottom=Number.isFinite(Number(bounds.y2))
+        ?Number(bounds.y2)
+        :bTop+Math.max(0,Number(bounds.h)||0);
+
+      return (
+        bRight>=left &&
+        bLeft<=right &&
+        bBottom>=top &&
+        bTop<=bottom
+      );
+    }
+
+    function onMove(moveEvent){
+      moveEvent.preventDefault();
+      updateMarquee(
+        moveEvent.clientX,
+        moveEvent.clientY
+      );
+    }
+
+    function finish(endEvent){
+      window.removeEventListener('mousemove',onMove);
+      window.removeEventListener('mouseup',onUp);
+      window.removeEventListener('blur',onCancel);
+      marquee.remove();
+      document.body.style.userSelect='';
+
+      /*
+        A simple click on empty stage space still clears the selection.
+      */
+      if(!moved){
+        if(!additive){
+          selectedDrawIndices.clear();
+          updateSelectedCountUI();
+          renderLayerList();
+          renderTimeline();
+          renderTransformHandles();
+        }
+        return;
+      }
+
+      const endCanvas=canvasCoords(
+        endEvent.clientX,
+        endEvent.clientY
+      );
+
+      const left=Math.min(startCanvas.x,endCanvas.x);
+      const top=Math.min(startCanvas.y,endCanvas.y);
+      const right=Math.max(startCanvas.x,endCanvas.x);
+      const bottom=Math.max(startCanvas.y,endCanvas.y);
+
+      const hits=[];
+
+      for(let index=0;index<drawObjects.length;index++){
+        const object=ensureDrawObjectMetadata(
+          drawObjects[index]
+        );
+
+        if(object.enabled===false){
+          continue;
+        }
+
+        if(
+          boundsIntersectRect(
+            getEffectiveBounds(object),
+            left,
+            top,
+            right,
+            bottom
+          )
+        ){
+          hits.push(index);
+        }
+      }
+
+      selectedDrawIndices=additive
+        ?new Set(originalSelection)
+        :new Set();
+
+      hits.forEach(index=>{
+        selectedDrawIndices.add(index);
+      });
+
+      /*
+        Route the owning UI from the frontmost selected hit without changing
+        the complete marquee selection.
+      */
+      const topHit=hits.length
+        ?hits[hits.length-1]
+        :-1;
+
+      if(topHit>=0){
+        const object=drawObjects[topHit];
+
+        if(object){
+          wickActiveDrawingLayerId=
+            object.timelineLayerId ||
+            wickActiveDrawingLayerId;
+
+          routeSelectionToPanel(
+            panelForDrawObject(object),
+            true
+          );
+
+          queueTimelineLayerReveal(
+            'object',
+            object.timelineLayerId ||
+              object.frameLinkId ||
+              object.id
+          );
+        }
+      }
+
+      updateSelectedCountUI();
+      updateInspector();
+      renderLayerList();
+      renderTimeline();
+      renderTransformHandles();
+    }
+
+    function onUp(upEvent){
+      finish(upEvent);
+    }
+
+    function onCancel(){
+      window.removeEventListener('mousemove',onMove);
+      window.removeEventListener('mouseup',onUp);
+      window.removeEventListener('blur',onCancel);
+      marquee.remove();
+      document.body.style.userSelect='';
+    }
+
+    document.body.style.userSelect='none';
+    window.addEventListener('mousemove',onMove,{passive:false});
+    window.addEventListener('mouseup',onUp);
+    window.addEventListener('blur',onCancel,{once:true});
+  }
+
   overlay.addEventListener('mousedown', (e)=>{
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
+
+    /*
+      Space-drag and middle-mouse belong to stage panning. Ctrl/Cmd is NOT
+      consumed here: it is again available for additive selection/marquee.
+    */
+    if(e.button===1 || window.__lukeStageSpacePanHeld) return;
 
     if(shapePointEditMode){
       const obj=currentShapePointEditObject();
@@ -11177,8 +11379,6 @@ ctx.fill();</textarea>
       }
       if(e.target===overlay){e.preventDefault();return;}
     }
-
-    if(e.ctrlKey || e.metaKey) return; // Ctrl/Cmd+drag pans regardless of panel
 
     if(placingClipId){
       const c = canvasCoords(e.clientX, e.clientY);
@@ -11303,16 +11503,54 @@ ctx.fill();</textarea>
       if(pointInBounds(c.x, c.y, b, 6)){ hitObjectIndex = i; break; }
     }
     if(hitObjectIndex >= 0){
-      selectDrawObject(hitObjectIndex, e.shiftKey, true);
-      if(!e.shiftKey && selectedDrawIndices.has(hitObjectIndex)) startObjectStageDrag(hitObjectIndex, c);
+      const additiveSelection=!!(
+        e.shiftKey ||
+        e.ctrlKey ||
+        e.metaKey
+      );
+
+      selectDrawObject(
+        hitObjectIndex,
+        additiveSelection,
+        true
+      );
+
+      if(
+        !additiveSelection &&
+        selectedDrawIndices.has(hitObjectIndex)
+      ){
+        startObjectStageDrag(
+          hitObjectIndex,
+          c
+        );
+      }
+
       return;
     }
 
-    if(!e.shiftKey){
+    /*
+      Empty stage drag in Select/Edit mode restores the original marquee.
+      A plain drag replaces selection; Shift/Ctrl/Cmd adds to it.
+    */
+    if(selectShapesMode){
+      beginStageMarqueeSelection(
+        e,
+        c,
+        !!(
+          e.shiftKey ||
+          e.ctrlKey ||
+          e.metaKey
+        )
+      );
+      return;
+    }
+
+    if(!(e.shiftKey || e.ctrlKey || e.metaKey)){
       selectedDrawIndices.clear();
       updateSelectedCountUI();
       renderLayerList();
     }
+
     return;
   });
 
@@ -12020,65 +12258,186 @@ ctx.fill();</textarea>
   }
   initialiseTimelineDockLift();
 
-  // Ctrl/Cmd + drag pans only from the stage canvas. The toolbar lives inside
-  // the scrolling stage wrapper, so its transform is counter-scrolled to keep it
-  // permanently visible instead of letting a stage pan drag it off screen.
+  // Space + drag or middle-mouse drag pans the stage canvas. Ctrl/Cmd remains
+  // available for additive stage selection. The toolbar is counter-scrolled so
+  // it stays visible while the stage is panned.
   (function setupStagePan(){
-    const wrap = document.getElementById('stage-wrap');
-    const shell = document.getElementById('canvas-shell');
-    const topbar = document.getElementById('topbar');
-    let panning = false, startX = 0, startY = 0, startScrollLeft = 0, startScrollTop = 0;
+    const wrap=document.getElementById('stage-wrap');
+    const shell=document.getElementById('canvas-shell');
+    const topbar=document.getElementById('topbar');
+
+    let panning=false;
+    let spaceHeld=false;
+    let startX=0;
+    let startY=0;
+    let startScrollLeft=0;
+    let startScrollTop=0;
+
+    window.__lukeStageSpacePanHeld=false;
 
     function pinToolbar(){
       if(!topbar) return;
-      topbar.style.transform='translate3d('+wrap.scrollLeft+'px,'+wrap.scrollTop+'px,0)';
+
+      topbar.style.transform=
+        'translate3d('+
+        wrap.scrollLeft+
+        'px,'+
+        wrap.scrollTop+
+        'px,0)';
     }
+
     pinToolbar();
-    wrap.addEventListener('scroll',pinToolbar,{passive:true});
 
-    function updateCursor(e){
+    wrap.addEventListener(
+      'scroll',
+      pinToolbar,
+      {passive:true}
+    );
+
+    function updateCursor(event){
       if(panning) return;
-      wrap.style.cursor = (e.ctrlKey || e.metaKey) && shell.contains(e.target) ? 'grab' : '';
+
+      wrap.style.cursor=
+        (
+          spaceHeld &&
+          shell.contains(event.target)
+        )
+          ?'grab'
+          :'';
     }
-    window.addEventListener('keydown', updateCursorFromKeyEvent);
-    window.addEventListener('keyup', updateCursorFromKeyEvent);
-    function updateCursorFromKeyEvent(e){
-      if(e.key !== 'Control' && e.key !== 'Meta') return;
-      if(panning) return;
-      wrap.style.cursor = (e.ctrlKey || e.metaKey) ? 'grab' : '';
+
+    function updateCursorFromKeyEvent(event){
+      if(event.code!=='Space'){
+        return;
+      }
+
+      const target=event.target;
+
+      const typing=!!(
+        target &&
+        (
+          target.tagName==='INPUT' ||
+          target.tagName==='TEXTAREA' ||
+          target.isContentEditable
+        )
+      );
+
+      if(typing){
+        return;
+      }
+
+      spaceHeld=event.type==='keydown';
+      window.__lukeStageSpacePanHeld=spaceHeld;
+
+      if(spaceHeld){
+        event.preventDefault();
+      }
+
+      if(panning){
+        return;
+      }
+
+      wrap.style.cursor=spaceHeld
+        ?'grab'
+        :'';
     }
-    wrap.addEventListener('mousemove', updateCursor);
-    wrap.addEventListener('dragstart',e=>{
-      if((e.ctrlKey||e.metaKey) && shell.contains(e.target)) e.preventDefault();
+
+    window.addEventListener(
+      'keydown',
+      updateCursorFromKeyEvent
+    );
+
+    window.addEventListener(
+      'keyup',
+      updateCursorFromKeyEvent
+    );
+
+    wrap.addEventListener(
+      'mousemove',
+      updateCursor
+    );
+
+    wrap.addEventListener('dragstart',event=>{
+      if(
+        (
+          spaceHeld ||
+          event.button===1
+        ) &&
+        shell.contains(event.target)
+      ){
+        event.preventDefault();
+      }
     });
 
-    wrap.addEventListener('mousedown', (e)=>{
-      if(!(e.ctrlKey || e.metaKey) || !shell.contains(e.target)) return;
-      panning = true;
-      startX = e.clientX; startY = e.clientY;
-      startScrollLeft = wrap.scrollLeft; startScrollTop = wrap.scrollTop;
-      wrap.style.cursor = 'grabbing';
+    wrap.addEventListener('mousedown',event=>{
+      if(
+        !(
+          spaceHeld ||
+          event.button===1
+        ) ||
+        !shell.contains(event.target)
+      ){
+        return;
+      }
+
+      panning=true;
+      startX=event.clientX;
+      startY=event.clientY;
+      startScrollLeft=wrap.scrollLeft;
+      startScrollTop=wrap.scrollTop;
+
+      wrap.style.cursor='grabbing';
       document.documentElement.style.userSelect='none';
-      e.preventDefault();
-      e.stopPropagation();
+
+      event.preventDefault();
+      event.stopPropagation();
     });
-    window.addEventListener('mousemove', (e)=>{
-      if(!panning) return;
-      wrap.scrollLeft = startScrollLeft - (e.clientX - startX);
-      wrap.scrollTop = startScrollTop - (e.clientY - startY);
-      pinToolbar();
-      e.preventDefault();
-    }, {passive:false});
-    window.addEventListener('mouseup', (e)=>{
-      if(!panning) return;
-      panning = false;
-      document.documentElement.style.userSelect='';
-      wrap.style.cursor = (e.ctrlKey || e.metaKey) ? 'grab' : '';
-      pinToolbar();
-    });
-    window.addEventListener('blur',()=>{
-      if(!panning) return;
+
+    window.addEventListener(
+      'mousemove',
+      event=>{
+        if(!panning){
+          return;
+        }
+
+        wrap.scrollLeft=
+          startScrollLeft-
+          (
+            event.clientX-
+            startX
+          );
+
+        wrap.scrollTop=
+          startScrollTop-
+          (
+            event.clientY-
+            startY
+          );
+
+        pinToolbar();
+        event.preventDefault();
+      },
+      {passive:false}
+    );
+
+    window.addEventListener('mouseup',()=>{
+      if(!panning){
+        return;
+      }
+
       panning=false;
+      document.documentElement.style.userSelect='';
+      wrap.style.cursor=spaceHeld
+        ?'grab'
+        :'';
+
+      pinToolbar();
+    });
+
+    window.addEventListener('blur',()=>{
+      panning=false;
+      spaceHeld=false;
+      window.__lukeStageSpacePanHeld=false;
       document.documentElement.style.userSelect='';
       wrap.style.cursor='';
       pinToolbar();
