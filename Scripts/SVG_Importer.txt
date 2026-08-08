@@ -677,7 +677,7 @@
 
     if (!result.objects.length) {
       throw new Error(
-        "No supported vector geometry was found. Use Clip mode for SVGs made mainly from text, masks, filters, images or other unsupported SVG elements."
+        "No editable SVG geometry was found after parsing. Curves mode supports path, rect, circle, ellipse, line, polyline and polygon. If the SVG is built from text, <use> references, masks, filters or images, use Clip mode."
       );
     }
 
@@ -764,14 +764,28 @@
 
   function svgToLukeAnimateVectors(svgText) {
     var host = document.createElement("div");
+    /*
+      IMPORTANT:
+      Do NOT set visibility:hidden on this temporary host.
+
+      SVG visibility is inherited. If the host is hidden, every child path,
+      rect, circle etc. reports computed visibility:hidden and the importer
+      skips ALL vector geometry.
+
+      Keep the mounted SVG renderable for getComputedStyle(), getCTM() and SVG
+      geometry calculations, but move it far outside the viewport and make it
+      completely non-interactive/invisible.
+    */
     host.style.position = "fixed";
     host.style.left = "-100000px";
     host.style.top = "-100000px";
     host.style.width = "1px";
     host.style.height = "1px";
-    host.style.overflow = "hidden";
-    host.style.visibility = "hidden";
+    host.style.overflow = "visible";
     host.style.pointerEvents = "none";
+    host.style.opacity = "0";
+    host.style.zIndex = "-2147483647";
+    host.setAttribute("aria-hidden", "true");
     host.innerHTML = svgText;
     document.body.appendChild(host);
 
@@ -794,14 +808,20 @@
         "path,rect,circle,ellipse,line,polyline,polygon"
       );
 
+      if (!candidates.length) {
+        warnings.push(
+          "The SVG contains no direct path/rect/circle/ellipse/line/polyline/polygon geometry."
+        );
+      }
+
       Array.prototype.forEach.call(candidates, function (element, elementIndex) {
         if (isTemplateGeometry(element)) return;
 
         var computed = window.getComputedStyle(element);
         if (
           computed.display === "none" ||
-          computed.visibility === "hidden" ||
-          Number(computed.opacity) === 0
+          Number(computed.opacity) === 0 ||
+          svgElementExplicitlyHidden(element, root)
         ) {
           return;
         }
@@ -881,6 +901,33 @@
     } finally {
       if (host.parentNode) host.parentNode.removeChild(host);
     }
+  }
+
+  function svgElementExplicitlyHidden(element, root) {
+    var current = element;
+
+    while (current && current.nodeType === 1) {
+      var displayAttr = String(
+        current.getAttribute("display") || ""
+      ).trim().toLowerCase();
+
+      var visibilityAttr = String(
+        current.getAttribute("visibility") || ""
+      ).trim().toLowerCase();
+
+      if (
+        displayAttr === "none" ||
+        visibilityAttr === "hidden" ||
+        visibilityAttr === "collapse"
+      ) {
+        return true;
+      }
+
+      if (current === root) break;
+      current = current.parentElement;
+    }
+
+    return false;
   }
 
   function isTemplateGeometry(element) {
