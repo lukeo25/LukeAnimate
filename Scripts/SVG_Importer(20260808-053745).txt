@@ -1,0 +1,1900 @@
+(function () {
+  "use strict";
+
+  var API = LukeAnimate;
+  var TOOL_ID = String((item && (item.id || item.label)) || "Import_SVG");
+  var GROUP_ID = String((group && group.id) || "import");
+  var PANEL_ID = "lukeanimate-svg-importer-panel";
+  var STYLE_ID = "lukeanimate-svg-importer-style";
+  var MIN_API_VERSION = 112;
+  var TRANSPARENT_PIXEL =
+    "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+
+  if (!API || Number(API.version || 0) < MIN_API_VERSION) {
+    throw new Error(
+      "SVG Import requires LukeAnimate Plugin API version " +
+        MIN_API_VERSION +
+        " or newer."
+    );
+  }
+
+  [
+    "getCurrentFrame",
+    "getActiveDrawingLayer",
+    "createDrawingLayer",
+    "setDrawingLayerFrameObject",
+    "createImageClip",
+    "createClipInstance",
+    "pushUndo",
+    "refreshUI",
+    "selectDrawObject",
+    "stageToScenePoint",
+    "setConfiguredToolActive"
+  ].forEach(function (methodName) {
+    if (typeof API[methodName] !== "function") {
+      throw new Error(
+        "LukeAnimate is missing the required method: " + methodName
+      );
+    }
+  });
+
+  var existing = document.getElementById(PANEL_ID);
+  if (existing) {
+    existing.style.display = "flex";
+    if (typeof API.bringFloatingPanelToFront === "function") {
+      API.bringFloatingPanelToFront(existing);
+    } else {
+      existing.style.zIndex = String(nextPanelZIndex());
+    }
+    API.setConfiguredToolActive(GROUP_ID, TOOL_ID, true);
+    return;
+  }
+
+  installStyles();
+
+  var state = {
+    file: null,
+    fileName: "",
+    sourceText: "",
+    busy: false
+  };
+
+  var panel = document.createElement("section");
+  panel.id = PANEL_ID;
+  panel.className = "la-svg-importer-panel";
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Luke Animate SVG Importer");
+  panel.innerHTML = [
+    '<header class="la-svg-header">',
+    '  <div class="la-svg-title-wrap">',
+    '    <div class="la-svg-icon">SVG</div>',
+    '    <div>',
+    '      <div class="la-svg-title">SVG Import</div>',
+    '      <div class="la-svg-subtitle">Luke Animate native importer</div>',
+    '    </div>',
+    '  </div>',
+    '  <button class="la-svg-close" type="button" title="Close" aria-label="Close">×</button>',
+    '</header>',
+    '<div class="la-svg-body">',
+    '  <label class="la-svg-file-box" for="la-svg-file">',
+    '    <strong>Load SVG</strong>',
+    '    <span>Choose an .svg file from your computer</span>',
+    '    <input id="la-svg-file" type="file" accept=".svg,image/svg+xml">',
+    '  </label>',
+    '  <div id="la-svg-file-summary" class="la-svg-summary">No SVG loaded.</div>',
+    '',
+    '  <fieldset class="la-svg-mode">',
+    '    <legend>Import as</legend>',
+    '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-curves" value="curves" checked> <span><b>Curves</b><small>Editable Luke Animate vector paths</small></span></label>',
+    '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-clip" value="clip"> <span><b>Clip</b><small>Complete SVG appearance inside one Luke Animate Clip</small></span></label>',
+    '  </fieldset>',
+    '',
+    '  <div id="la-svg-curves-options" class="la-svg-options">',
+    '    <label class="la-svg-check"><input id="la-svg-separate" type="checkbox" checked> <span>Separate SVG paths onto separate Luke Animate layers</span></label>',
+    '    <div class="la-svg-note">Unchecked: paths are kept together as one Luke Animate Group object. SVG paint order is preserved.</div>',
+    '  </div>',
+    '',
+    '  <div id="la-svg-clip-options" class="la-svg-options is-hidden">',
+    '    <label>New Clip name',
+    '      <input id="la-svg-clip-name" type="text" value="SVG_Clip" maxlength="80">',
+    '    </label>',
+    '    <div class="la-svg-note">Clip mode keeps the sanitized SVG as an SVG image inside the Clip, so gradients, text and complex SVG appearance are retained.</div>',
+    '  </div>',
+    '',
+    '  <label>Optional target width',
+    '    <input id="la-svg-width" type="number" min="1" step="1" placeholder="Leave blank to keep the SVG scale">',
+    '  </label>',
+    '',
+    '  <details class="la-svg-security">',
+    '    <summary>SVG cleanup</summary>',
+    '    <div class="la-svg-cleanup">',
+    '      <label class="la-svg-check"><input id="la-svg-keep-defs" type="checkbox" checked> <span>Keep defs</span></label>',
+    '      <label class="la-svg-check"><input id="la-svg-remove-images" type="checkbox"> <span>Remove embedded image tags</span></label>',
+    '      <label class="la-svg-check"><input id="la-svg-strip-styles" type="checkbox"> <span>Strip SVG style tags</span></label>',
+    '    </div>',
+    '  </details>',
+    '',
+    '  <div class="la-svg-actions">',
+    '    <button id="la-svg-import" class="la-svg-primary" type="button" disabled>Import SVG</button>',
+    '    <button id="la-svg-clear-log" type="button">Clear Log</button>',
+    '  </div>',
+    '  <pre id="la-svg-log" class="la-svg-log" aria-live="polite">Ready.</pre>',
+    '  <p class="la-svg-hint">Curves supports SVG path, rect, circle, ellipse, line, polyline and polygon geometry, including transforms. Clip mode is the most faithful choice for gradients, masks, filters, text and other complex SVG features.</p>',
+    '</div>'
+  ].join("\n");
+
+  document.body.appendChild(panel);
+
+  if (typeof API.registerFloatingPanel === "function") {
+    try {
+      API.registerFloatingPanel(panel);
+    } catch (ignore) {}
+  }
+
+  API.setConfiguredToolActive(GROUP_ID, TOOL_ID, true);
+
+  var fileInput = panel.querySelector("#la-svg-file");
+  var fileSummary = panel.querySelector("#la-svg-file-summary");
+  var curvesRadio = panel.querySelector("#la-svg-mode-curves");
+  var clipRadio = panel.querySelector("#la-svg-mode-clip");
+  var curvesOptions = panel.querySelector("#la-svg-curves-options");
+  var clipOptions = panel.querySelector("#la-svg-clip-options");
+  var separateInput = panel.querySelector("#la-svg-separate");
+  var clipNameInput = panel.querySelector("#la-svg-clip-name");
+  var widthInput = panel.querySelector("#la-svg-width");
+  var keepDefsInput = panel.querySelector("#la-svg-keep-defs");
+  var removeImagesInput = panel.querySelector("#la-svg-remove-images");
+  var stripStylesInput = panel.querySelector("#la-svg-strip-styles");
+  var importButton = panel.querySelector("#la-svg-import");
+  var clearLogButton = panel.querySelector("#la-svg-clear-log");
+  var closeButton = panel.querySelector(".la-svg-close");
+  var logElement = panel.querySelector("#la-svg-log");
+
+  makePanelDraggable(panel, panel.querySelector(".la-svg-header"));
+
+  panel.addEventListener("pointerdown", function () {
+    if (typeof API.bringFloatingPanelToFront === "function") {
+      try {
+        API.bringFloatingPanelToFront(panel);
+        return;
+      } catch (ignore) {}
+    }
+    panel.style.zIndex = String(nextPanelZIndex());
+  });
+
+  fileInput.addEventListener("change", function () {
+    var file = fileInput.files && fileInput.files[0];
+    if (!file) {
+      resetSource();
+      return;
+    }
+    loadSvgFile(file).catch(function (error) {
+      resetSource();
+      logError(error);
+    });
+  });
+
+  curvesRadio.addEventListener("change", updateMode);
+  clipRadio.addEventListener("change", updateMode);
+
+  clearLogButton.addEventListener("click", function () {
+    setLog("Ready.");
+  });
+
+  closeButton.addEventListener("click", closePanel);
+
+  importButton.addEventListener("click", function () {
+    importSvg().catch(function (error) {
+      logError(error);
+      setBusy(false);
+    });
+  });
+
+  updateMode();
+
+  function nextPanelZIndex() {
+    var highest = 12000;
+    Array.prototype.forEach.call(
+      document.querySelectorAll(".la-svg-importer-panel"),
+      function (element) {
+        var value = parseInt(window.getComputedStyle(element).zIndex, 10);
+        if (Number.isFinite(value)) highest = Math.max(highest, value);
+      }
+    );
+    return highest + 1;
+  }
+
+  function installStyles() {
+    if (document.getElementById(STYLE_ID)) return;
+
+    var style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = [
+      ".la-svg-importer-panel{position:fixed;top:88px;right:18px;width:400px;max-width:calc(100vw - 24px);max-height:calc(100vh - 108px);display:flex;flex-direction:column;background:rgba(255,255,255,.985);color:var(--text,#1b1f24);border:1px solid var(--line,#d9dce1);border-radius:10px;box-shadow:0 14px 38px rgba(0,0,0,.24);font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;line-height:1.35;z-index:12001;overflow:hidden;isolation:isolate;backdrop-filter:blur(8px)}",
+      ".la-svg-header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px 9px 12px;background:var(--panel-2,#f1f2f5);border-bottom:1px solid var(--line,#d9dce1);cursor:move;user-select:none;touch-action:none}",
+      ".la-svg-title-wrap{display:flex;align-items:center;gap:9px;min-width:0}",
+      ".la-svg-icon{width:34px;height:30px;display:grid;place-items:center;flex:0 0 34px;border-radius:7px;background:var(--accent,#0e9c86);color:#fff;font-family:var(--mono,monospace);font-weight:800;font-size:10px;letter-spacing:.04em}",
+      ".la-svg-title{font-size:13px;font-weight:750;color:var(--text,#1b1f24)}",
+      ".la-svg-subtitle{font-family:var(--mono,monospace);font-size:10px;color:var(--text-dim,#6b7280)}",
+      ".la-svg-close{width:30px;height:30px;min-width:30px;padding:0;border:1px solid var(--line,#d9dce1);border-radius:6px;background:var(--panel,#fff);color:var(--text-dim,#6b7280);font-size:20px;line-height:1;cursor:pointer}",
+      ".la-svg-body{padding:11px 12px 12px;overflow:auto;display:flex;flex-direction:column;gap:10px;background:var(--panel,#fff)}",
+      ".la-svg-file-box{position:relative;display:flex!important;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:66px;padding:10px;border:1px dashed var(--line,#d9dce1);border-radius:8px;background:var(--panel-2,#f1f2f5);text-align:center;cursor:pointer}",
+      ".la-svg-file-box:hover{border-color:var(--accent,#0e9c86);background:#e8f7f4}",
+      ".la-svg-file-box strong{font-size:12.5px;color:var(--text,#1b1f24)}",
+      ".la-svg-file-box span{font-size:10.5px;color:var(--text-dim,#6b7280)}",
+      ".la-svg-file-box input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}",
+      ".la-svg-summary{min-height:17px;padding:7px 8px;background:var(--panel-2,#f1f2f5);border:1px solid var(--line,#d9dce1);border-radius:6px;color:var(--text-dim,#6b7280);font-family:var(--mono,monospace);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+      ".la-svg-importer-panel label{display:flex;flex-direction:column;gap:5px;color:var(--text-dim,#6b7280);font-size:11.5px}",
+      ".la-svg-importer-panel input[type=number],.la-svg-importer-panel input[type=text]{width:100%;box-sizing:border-box;padding:7px 8px;border:1px solid var(--line,#d9dce1);border-radius:6px;background:var(--panel-2,#f1f2f5);color:var(--text,#1b1f24);font:12px inherit;outline:none}",
+      ".la-svg-importer-panel input[type=number]:focus,.la-svg-importer-panel input[type=text]:focus{border-color:var(--accent,#0e9c86)}",
+      ".la-svg-mode{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:0;padding:8px;border:1px solid var(--line,#d9dce1);border-radius:8px;background:var(--panel-2,#f1f2f5)}",
+      ".la-svg-mode legend{padding:0 5px;color:var(--text-dim,#6b7280);font-size:10.5px}",
+      ".la-svg-mode label{display:flex;flex-direction:row;align-items:flex-start;gap:7px;padding:7px;border:1px solid transparent;border-radius:6px;background:var(--panel,#fff);cursor:pointer;color:var(--text,#1b1f24)}",
+      ".la-svg-mode input{margin:2px 0 0;accent-color:var(--accent,#0e9c86)}",
+      ".la-svg-mode span{display:flex;flex-direction:column;gap:2px}",
+      ".la-svg-mode small{font-size:9.5px;color:var(--text-dim,#6b7280);font-weight:400}",
+      ".la-svg-options{padding:8px;border:1px solid var(--line,#d9dce1);border-radius:8px;background:var(--panel-2,#f1f2f5);display:flex;flex-direction:column;gap:7px}",
+      ".la-svg-options.is-hidden{display:none}",
+      ".la-svg-check{display:flex!important;flex-direction:row!important;align-items:flex-start!important;gap:8px!important;color:var(--text,#1b1f24)!important;cursor:pointer}",
+      ".la-svg-check input{width:16px;height:16px;flex:0 0 16px;margin:0;accent-color:var(--accent,#0e9c86)}",
+      ".la-svg-note{font-size:10px;line-height:1.4;color:var(--text-dim,#6b7280)}",
+      ".la-svg-security{border:1px solid var(--line,#d9dce1);border-radius:7px;background:var(--panel-2,#f1f2f5);padding:7px 8px}",
+      ".la-svg-security summary{cursor:pointer;color:var(--text-dim,#6b7280);font-size:10.5px;font-weight:650}",
+      ".la-svg-cleanup{display:flex;flex-direction:column;gap:7px;padding-top:8px}",
+      ".la-svg-actions{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:8px}",
+      ".la-svg-actions button{min-height:38px;border:1px solid var(--line,#d9dce1);border-radius:6px;padding:9px 10px;background:var(--panel-2,#f1f2f5);color:var(--text,#1b1f24);font-family:inherit;font-size:12px;cursor:pointer}",
+      ".la-svg-actions button:hover:not(:disabled){border-color:var(--accent,#0e9c86);color:var(--accent,#0e9c86)}",
+      ".la-svg-actions .la-svg-primary{background:var(--accent,#0e9c86);border-color:var(--accent,#0e9c86);color:#fff;font-weight:750}",
+      ".la-svg-actions .la-svg-primary:hover:not(:disabled){filter:brightness(1.06);color:#fff}",
+      ".la-svg-actions button:disabled{opacity:.38;cursor:not-allowed}",
+      ".la-svg-log{height:126px;margin:0;padding:7px 8px;box-sizing:border-box;overflow:auto;border:1px solid var(--line,#d9dce1);border-radius:6px;background:var(--panel-2,#f1f2f5);color:var(--text-dim,#6b7280);font:10.5px/1.45 var(--mono,monospace);white-space:pre-wrap;word-break:break-word}",
+      ".la-svg-hint{margin:0;color:var(--text-dim,#6b7280);font-size:10px;line-height:1.45}",
+      "@media(max-width:520px){.la-svg-importer-panel{top:56px;right:12px;left:12px;width:auto}.la-svg-mode{grid-template-columns:1fr}.la-svg-actions{grid-template-columns:1fr}}"
+    ].join("\n");
+    document.head.appendChild(style);
+  }
+
+  function closePanel() {
+    if (state.busy) return;
+    if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+    API.setConfiguredToolActive(GROUP_ID, TOOL_ID, false);
+  }
+
+  function updateMode() {
+    var curves = curvesRadio.checked;
+    curvesOptions.classList.toggle("is-hidden", !curves);
+    clipOptions.classList.toggle("is-hidden", curves);
+  }
+
+  function setBusy(value) {
+    state.busy = !!value;
+    fileInput.disabled = state.busy;
+    curvesRadio.disabled = state.busy;
+    clipRadio.disabled = state.busy;
+    separateInput.disabled = state.busy;
+    clipNameInput.disabled = state.busy;
+    widthInput.disabled = state.busy;
+    keepDefsInput.disabled = state.busy;
+    removeImagesInput.disabled = state.busy;
+    stripStylesInput.disabled = state.busy;
+    importButton.disabled = state.busy || !state.sourceText;
+    closeButton.disabled = state.busy;
+  }
+
+  function setLog(message) {
+    logElement.textContent = String(message || "");
+    logElement.scrollTop = logElement.scrollHeight;
+  }
+
+  function log(message) {
+    var text = String(message || "");
+    logElement.textContent +=
+      (logElement.textContent ? "\n" : "") + text;
+    logElement.scrollTop = logElement.scrollHeight;
+  }
+
+  function logError(error) {
+    var message =
+      error && error.message ? error.message : String(error || "Unknown error");
+    log("ERROR: " + message);
+    try {
+      API.warn("SVG Import: " + message);
+    } catch (ignore) {}
+    console.error("LukeAnimate SVG Import:", error);
+  }
+
+  function resetSource() {
+    state.file = null;
+    state.fileName = "";
+    state.sourceText = "";
+    fileSummary.textContent = "No SVG loaded.";
+    importButton.disabled = true;
+  }
+
+  function baseName(fileName) {
+    return String(fileName || "SVG")
+      .replace(/\.[^.]+$/, "")
+      .trim() || "SVG";
+  }
+
+  function safeName(value, fallback) {
+    var name = String(value || "")
+      .replace(/[\u0000-\u001f<>:"/\\|?*]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return (name || fallback || "SVG").slice(0, 80);
+  }
+
+  function readFileAsText(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        resolve(String(reader.result || ""));
+      };
+      reader.onerror = function () {
+        reject(reader.error || new Error("Could not read " + file.name));
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  async function loadSvgFile(file) {
+    var text = await readFileAsText(file);
+    var doc = parseSvg(text);
+    var root = doc.documentElement;
+    if (!root || String(root.localName || "").toLowerCase() !== "svg") {
+      throw new Error("The selected file does not contain an SVG root element.");
+    }
+
+    state.file = file;
+    state.fileName = String(file.name || "Imported.svg");
+    state.sourceText = text;
+
+    var size = svgDocumentDimensions(doc);
+    fileSummary.textContent =
+      state.fileName +
+      "  ·  " +
+      Math.round(size.width) +
+      " × " +
+      Math.round(size.height);
+
+    clipNameInput.value = safeName(baseName(state.fileName), "SVG_Clip");
+    importButton.disabled = false;
+    setLog(
+      "Loaded " +
+        state.fileName +
+        ".\nChoose Curves for editable Luke Animate vectors or Clip for the complete SVG appearance."
+    );
+  }
+
+  function parseSvg(svgText) {
+    var parser = new DOMParser();
+    var doc = parser.parseFromString(String(svgText || ""), "image/svg+xml");
+    var parserError = doc.getElementsByTagName("parsererror")[0];
+    if (parserError) {
+      throw new Error("SVG parse error.");
+    }
+    return doc;
+  }
+
+  function isUnsafeUrl(value) {
+    var text = String(value || "").trim().toLowerCase();
+    return (
+      text.indexOf("javascript:") === 0 ||
+      text.indexOf("http:") === 0 ||
+      text.indexOf("https:") === 0 ||
+      text.indexOf("//") === 0
+    );
+  }
+
+  function cleanCssUrls(cssText) {
+    return String(cssText || "")
+      .replace(/@import\s+[^;]+;/gi, "")
+      .replace(/url\(\s*(['"]?)\s*javascript:[^)]*\)/gi, "url()")
+      .replace(/url\(\s*(['"]?)\s*https?:[^)]*\)/gi, "url()")
+      .replace(/url\(\s*(['"]?)\s*\/\/[^)]*\)/gi, "url()");
+  }
+
+  function sanitizeSvg(svgText, options) {
+    var doc = parseSvg(svgText);
+    var svg = doc.documentElement;
+    var settings = options || {};
+
+    [
+      "script",
+      "foreignObject",
+      "iframe",
+      "object",
+      "embed",
+      "audio",
+      "video",
+      "canvas",
+      "set",
+      "animate",
+      "animateTransform",
+      "animateMotion"
+    ].forEach(function (tag) {
+      Array.prototype.slice
+        .call(doc.getElementsByTagName(tag))
+        .forEach(function (node) {
+          if (node.parentNode) node.parentNode.removeChild(node);
+        });
+    });
+
+    if (settings.removeImages) {
+      Array.prototype.slice
+        .call(doc.getElementsByTagName("image"))
+        .forEach(function (node) {
+          if (node.parentNode) node.parentNode.removeChild(node);
+        });
+    }
+
+    if (!settings.keepDefs) {
+      Array.prototype.slice
+        .call(doc.getElementsByTagName("defs"))
+        .forEach(function (node) {
+          if (node.parentNode) node.parentNode.removeChild(node);
+        });
+    }
+
+    if (settings.stripStyles) {
+      Array.prototype.slice
+        .call(doc.getElementsByTagName("style"))
+        .forEach(function (node) {
+          if (node.parentNode) node.parentNode.removeChild(node);
+        });
+    }
+
+    var walker = doc.createTreeWalker(
+      svg,
+      NodeFilter.SHOW_ELEMENT,
+      null,
+      false
+    );
+    var nodes = [svg];
+
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+
+    nodes.forEach(function (element) {
+      Array.prototype.slice.call(element.attributes || []).forEach(function (attr) {
+        var name = String(attr.name || "");
+        var lower = name.toLowerCase();
+        var value = String(attr.value || "");
+
+        if (lower.indexOf("on") === 0) {
+          element.removeAttribute(name);
+          return;
+        }
+
+        if (
+          (lower === "href" || lower === "xlink:href") &&
+          isUnsafeUrl(value)
+        ) {
+          element.removeAttribute(name);
+          return;
+        }
+
+        if (lower === "style") {
+          element.setAttribute(name, cleanCssUrls(value));
+          return;
+        }
+
+        if (
+          ["filter", "clip-path", "mask", "fill", "stroke"].indexOf(lower) >= 0 &&
+          value.toLowerCase().indexOf("url(") >= 0
+        ) {
+          element.setAttribute(name, cleanCssUrls(value));
+        }
+      });
+    });
+
+    if (!settings.stripStyles) {
+      Array.prototype.slice
+        .call(doc.getElementsByTagName("style"))
+        .forEach(function (styleNode) {
+          styleNode.textContent = cleanCssUrls(styleNode.textContent || "");
+        });
+    }
+
+    if (!svg.getAttribute("viewBox")) {
+      var width = numericSvgLength(svg.getAttribute("width"));
+      var height = numericSvgLength(svg.getAttribute("height"));
+      if (width > 0 && height > 0) {
+        svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+      }
+    }
+
+    return new XMLSerializer().serializeToString(doc);
+  }
+
+  function numericSvgLength(value) {
+    var text = String(value || "").trim();
+    if (!text || /%\s*$/.test(text)) return 0;
+
+    var match = text.match(
+      /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/
+    );
+
+    return match ? Number(match[0]) || 0 : 0;
+  }
+
+  function svgDocumentDimensions(docOrSvg) {
+    var svg =
+      docOrSvg &&
+      String(docOrSvg.localName || "").toLowerCase() === "svg"
+        ? docOrSvg
+        : docOrSvg && docOrSvg.documentElement;
+
+    if (
+      !svg ||
+      String(svg.localName || svg.nodeName || "").toLowerCase() !== "svg"
+    ) {
+      return { width: 300, height: 150 };
+    }
+
+    var viewBox = String(svg.getAttribute("viewBox") || "")
+      .trim()
+      .split(/[\s,]+/)
+      .map(Number);
+
+    var width = numericSvgLength(svg.getAttribute("width"));
+    var height = numericSvgLength(svg.getAttribute("height"));
+
+    if (!(width > 0) && viewBox.length === 4 && viewBox[2] > 0) {
+      width = viewBox[2];
+    }
+    if (!(height > 0) && viewBox.length === 4 && viewBox[3] > 0) {
+      height = viewBox[3];
+    }
+
+    return {
+      width: width > 0 ? width : 300,
+      height: height > 0 ? height : 150
+    };
+  }
+
+  function encodedSvgDataUrl(svgText) {
+    return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svgText);
+  }
+
+  function cleanupOptions() {
+    return {
+      keepDefs: !!keepDefsInput.checked,
+      removeImages: !!removeImagesInput.checked,
+      stripStyles: !!stripStylesInput.checked
+    };
+  }
+
+  function requestedTargetWidth() {
+    var value = Number(widthInput.value);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  function currentSceneCentre() {
+    var stagePoint = {
+      x: Number(API.width || 0) / 2,
+      y: Number(API.height || 0) / 2
+    };
+    return API.stageToScenePoint(stagePoint);
+  }
+
+  async function importSvg() {
+    if (state.busy) return;
+    if (!state.sourceText) throw new Error("Load an SVG first.");
+
+    setBusy(true);
+    setLog("Sanitizing " + state.fileName + " …");
+
+    var sanitized = sanitizeSvg(state.sourceText, cleanupOptions());
+
+    if (clipRadio.checked) {
+      await importClipMode(sanitized);
+    } else {
+      await importCurvesMode(sanitized);
+    }
+
+    setBusy(false);
+  }
+
+  async function importClipMode(sanitized) {
+    var doc = parseSvg(sanitized);
+    var natural = svgDocumentDimensions(doc);
+    var targetWidth = requestedTargetWidth();
+    var scale =
+      targetWidth && natural.width > 0 ? targetWidth / natural.width : 1;
+
+    var width = Math.max(1, natural.width * scale);
+    var height = Math.max(1, natural.height * scale);
+    var clipName = safeName(
+      clipNameInput.value || baseName(state.fileName),
+      "SVG_Clip"
+    );
+    var dataUrl = encodedSvgDataUrl(sanitized);
+    var centre = currentSceneCentre();
+    var frame = Math.max(1, Math.round(Number(API.getCurrentFrame()) || 1));
+
+    API.pushUndo();
+
+    var clip = API.createImageClip(
+      {
+        src: dataUrl,
+        name: clipName,
+        width: width,
+        height: height
+      },
+      {
+        name: clipName,
+        imageName: baseName(state.fileName),
+        width: width,
+        height: height,
+        durationSeconds: 1 / Math.max(1, Number(API.fps) || 30),
+        pushUndo: false,
+        refresh: true
+      }
+    );
+
+    if (!clip || !clip.id) {
+      throw new Error("Luke Animate could not create the SVG Clip.");
+    }
+
+    var instance = API.createClipInstance(clip.id, {
+      name: clipName,
+      x: Number(centre.x) || 0,
+      y: Number(centre.y) || 0
+    });
+
+    var layer = API.createDrawingLayer(clipName, {
+      pushUndo: false,
+      refresh: false
+    });
+
+    API.setDrawingLayerFrameObject(layer.id, frame, instance, {
+      pushUndo: false,
+      refresh: false
+    });
+
+    API.refreshUI();
+    API.selectDrawObject(instance);
+    API.refreshUI();
+
+    log(
+      "Complete.\nImported " +
+        state.fileName +
+        " as Luke Animate Clip “" +
+        clipName +
+        "”.\n" +
+        Math.round(width) +
+        " × " +
+        Math.round(height) +
+        " at frame " +
+        frame +
+        "."
+    );
+  }
+
+  async function importCurvesMode(sanitized) {
+    var result = svgToLukeAnimateVectors(sanitized);
+
+    if (!result.objects.length) {
+      throw new Error(
+        "No supported vector geometry was found. Use Clip mode for SVGs made mainly from text, masks, filters, images or other unsupported SVG elements."
+      );
+    }
+
+    var targetWidth = requestedTargetWidth();
+    var scale =
+      targetWidth && result.bounds.width > 0
+        ? targetWidth / result.bounds.width
+        : 1;
+
+    var centre = currentSceneCentre();
+    centreVectors(result.objects, result.bounds, scale, centre);
+
+    var frame = Math.max(1, Math.round(Number(API.getCurrentFrame()) || 1));
+    var firstObject = null;
+
+    API.pushUndo();
+
+    if (separateInput.checked) {
+      result.objects.forEach(function (object, index) {
+        var layer = API.createDrawingLayer(
+          object.name || "SVG Path " + (index + 1),
+          {
+            pushUndo: false,
+            refresh: false
+          }
+        );
+
+        API.setDrawingLayerFrameObject(layer.id, frame, object, {
+          pushUndo: false,
+          refresh: false
+        });
+
+        if (!firstObject) firstObject = object;
+      });
+    } else {
+      var groupObject = {
+        type: "group",
+        name: safeName(baseName(state.fileName), "SVG Group"),
+        children: result.objects,
+        tx: 0,
+        ty: 0,
+        tscale: 1,
+        tscaleX: 1,
+        tscaleY: 1,
+        trotation: 0,
+        opacity: 1,
+        keyframes: []
+      };
+
+      var groupLayer = API.createDrawingLayer(groupObject.name, {
+        pushUndo: false,
+        refresh: false
+      });
+
+      API.setDrawingLayerFrameObject(groupLayer.id, frame, groupObject, {
+        pushUndo: false,
+        refresh: false
+      });
+
+      firstObject = groupObject;
+    }
+
+    API.refreshUI();
+
+    if (firstObject) {
+      API.selectDrawObject(firstObject);
+      API.refreshUI();
+    }
+
+    log(
+      "Complete.\nImported " +
+        result.objects.length +
+        " editable vector path" +
+        (result.objects.length === 1 ? "" : "s") +
+        " at frame " +
+        frame +
+        "."
+    );
+
+    if (result.warnings.length) {
+      log("\nNotes:\n• " + result.warnings.join("\n• "));
+    }
+  }
+
+  function svgToLukeAnimateVectors(svgText) {
+    var host = document.createElement("div");
+    host.style.position = "fixed";
+    host.style.left = "-100000px";
+    host.style.top = "-100000px";
+    host.style.width = "1px";
+    host.style.height = "1px";
+    host.style.overflow = "hidden";
+    host.style.visibility = "hidden";
+    host.style.pointerEvents = "none";
+    host.innerHTML = svgText;
+    document.body.appendChild(host);
+
+    var warnings = [];
+    var objects = [];
+
+    try {
+      var root = host.querySelector("svg");
+      if (!root) throw new Error("Could not mount the SVG for vector conversion.");
+
+      var dimensions = svgDocumentDimensions(root);
+      if (!root.getAttribute("width")) {
+        root.setAttribute("width", String(dimensions.width));
+      }
+      if (!root.getAttribute("height")) {
+        root.setAttribute("height", String(dimensions.height));
+      }
+
+      var candidates = root.querySelectorAll(
+        "path,rect,circle,ellipse,line,polyline,polygon"
+      );
+
+      Array.prototype.forEach.call(candidates, function (element, elementIndex) {
+        if (isTemplateGeometry(element)) return;
+
+        var computed = window.getComputedStyle(element);
+        if (
+          computed.display === "none" ||
+          computed.visibility === "hidden" ||
+          Number(computed.opacity) === 0
+        ) {
+          return;
+        }
+
+        var subpaths = shapeElementToSubpaths(element);
+        if (!subpaths.length) return;
+
+        var matrix = safeElementMatrix(element);
+        var style = styleForElement(element, root, computed, warnings);
+        var base = elementDisplayName(element, elementIndex);
+
+        if (subpaths.length > 1 && style.fillEnabled) {
+          warnings.push(
+            "A compound/multi-subpath fill was split into editable Luke Animate paths. Holes may not match the source exactly; use Clip mode when exact compound-fill appearance matters."
+          );
+        }
+
+        subpaths.forEach(function (subpath, subIndex) {
+          var transformed = transformSubpath(subpath, matrix);
+
+          if (!transformed.points || transformed.points.length < 2) return;
+
+          var object = {
+            type: "freehand",
+            name:
+              subpaths.length > 1
+                ? base + " " + String(subIndex + 1)
+                : base,
+            points: transformed.points,
+            bezierHandles: transformed.handles,
+            bezierModes: transformed.points.map(function () {
+              return "corner";
+            }),
+            closedPath: !!transformed.closed,
+            fillEnabled: !!style.fillEnabled && !!transformed.closed,
+            strokeEnabled: !!style.strokeEnabled,
+            fillColor: style.fillColor,
+            strokeColor: style.strokeColor,
+            strokeWidth: style.strokeWidth,
+            opacity: style.opacity,
+            tx: 0,
+            ty: 0,
+            tscale: 1,
+            tscaleX: 1,
+            tscaleY: 1,
+            trotation: 0,
+            keyframes: []
+          };
+
+          objects.push(object);
+        });
+      });
+
+      var unsupported = root.querySelectorAll(
+        "text,use,image,filter,mask,clipPath,pattern"
+      ).length;
+
+      if (unsupported) {
+        warnings.push(
+          "Some SVG features are not editable in Curves mode. Clip mode preserves the complete sanitized SVG appearance."
+        );
+      }
+
+      if (root.querySelectorAll("linearGradient,radialGradient").length) {
+        warnings.push(
+          "Gradient paints are reduced to a representative solid colour in Curves mode."
+        );
+      }
+
+      var bounds = boundsForVectorObjects(objects);
+
+      return {
+        objects: objects,
+        bounds: bounds,
+        warnings: uniqueStrings(warnings)
+      };
+    } finally {
+      if (host.parentNode) host.parentNode.removeChild(host);
+    }
+  }
+
+  function isTemplateGeometry(element) {
+    return !!element.closest(
+      "defs,clipPath,mask,marker,pattern,symbol"
+    );
+  }
+
+  function elementDisplayName(element, index) {
+    return safeName(
+      element.getAttribute("data-name") ||
+        element.getAttribute("aria-label") ||
+        element.getAttribute("inkscape:label") ||
+        element.getAttribute("id") ||
+        String(element.localName || "Path") + " " + String(index + 1),
+      "SVG Path " + String(index + 1)
+    );
+  }
+
+  function safeElementMatrix(element) {
+    try {
+      var matrix = element.getCTM();
+      if (matrix) {
+        return {
+          a: Number(matrix.a) || 0,
+          b: Number(matrix.b) || 0,
+          c: Number(matrix.c) || 0,
+          d: Number(matrix.d) || 0,
+          e: Number(matrix.e) || 0,
+          f: Number(matrix.f) || 0
+        };
+      }
+    } catch (ignore) {}
+
+    return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+  }
+
+  function transformPoint(point, matrix) {
+    return {
+      x:
+        matrix.a * Number(point.x || 0) +
+        matrix.c * Number(point.y || 0) +
+        matrix.e,
+      y:
+        matrix.b * Number(point.x || 0) +
+        matrix.d * Number(point.y || 0) +
+        matrix.f
+    };
+  }
+
+  function transformSubpath(subpath, matrix) {
+    var points = [];
+    var handles = [];
+
+    subpath.points.forEach(function (point, index) {
+      var handle = subpath.handles[index] || {
+        inX: 0,
+        inY: 0,
+        outX: 0,
+        outY: 0
+      };
+
+      var transformedPoint = transformPoint(point, matrix);
+      var transformedIn = transformPoint(
+        {
+          x: point.x + Number(handle.inX || 0),
+          y: point.y + Number(handle.inY || 0)
+        },
+        matrix
+      );
+      var transformedOut = transformPoint(
+        {
+          x: point.x + Number(handle.outX || 0),
+          y: point.y + Number(handle.outY || 0)
+        },
+        matrix
+      );
+
+      points.push(transformedPoint);
+      handles.push({
+        inX: transformedIn.x - transformedPoint.x,
+        inY: transformedIn.y - transformedPoint.y,
+        outX: transformedOut.x - transformedPoint.x,
+        outY: transformedOut.y - transformedPoint.y
+      });
+    });
+
+    return {
+      points: points,
+      handles: handles,
+      closed: !!subpath.closed
+    };
+  }
+
+  function styleForElement(element, root, computed, warnings) {
+    var fill = resolveSvgPaint(computed.fill, element, root, "#4fe0c4", warnings);
+    var stroke = resolveSvgPaint(
+      computed.stroke,
+      element,
+      root,
+      "#1b1f24",
+      warnings
+    );
+
+    var matrix = safeElementMatrix(element);
+    var determinant = Math.abs(matrix.a * matrix.d - matrix.b * matrix.c);
+    var strokeScale =
+      Number.isFinite(determinant) && determinant > 0
+        ? Math.sqrt(determinant)
+        : 1;
+
+    var strokeWidth =
+      Math.max(0, parseFloat(computed.strokeWidth) || 0) * strokeScale;
+
+    var opacity = clamp01(parseOpacity(computed.opacity, 1));
+    var fillOpacity = clamp01(parseOpacity(computed.fillOpacity, 1));
+    var strokeOpacity = clamp01(parseOpacity(computed.strokeOpacity, 1));
+    var enabledOpacity = Math.max(
+      fill.enabled ? fillOpacity : 0,
+      stroke.enabled ? strokeOpacity : 0
+    );
+
+    return {
+      fillEnabled: fill.enabled,
+      strokeEnabled: stroke.enabled && strokeWidth > 0,
+      fillColor: fill.color,
+      strokeColor: stroke.color,
+      strokeWidth: strokeWidth || 1,
+      opacity: clamp01(opacity * (enabledOpacity || 1))
+    };
+  }
+
+  function resolveSvgPaint(value, element, root, fallback, warnings) {
+    var text = String(value || "").trim();
+
+    if (!text || text.toLowerCase() === "none") {
+      return { enabled: false, color: fallback };
+    }
+
+    var urlMatch = text.match(/^url\(\s*["']?#([^)"']+)["']?\s*\)/i);
+
+    if (urlMatch) {
+      var paintNode = root.querySelector("#" + cssEscape(urlMatch[1]));
+      var stop = paintNode && paintNode.querySelector("stop");
+      if (stop) {
+        var stopStyle = window.getComputedStyle(stop);
+        var stopColor =
+          stopStyle.stopColor ||
+          stop.getAttribute("stop-color") ||
+          fallback;
+        warnings.push(
+          "A gradient/pattern paint was converted to a solid colour in Curves mode."
+        );
+        return { enabled: true, color: cssColorToHex(stopColor, fallback) };
+      }
+      return { enabled: true, color: fallback };
+    }
+
+    return {
+      enabled: true,
+      color: cssColorToHex(text, fallback)
+    };
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === "function") {
+      return window.CSS.escape(String(value || ""));
+    }
+    return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  }
+
+  function cssColorToHex(value, fallback) {
+    var text = String(value || "").trim();
+
+    var shortHex = text.match(/^#([0-9a-f]{3})$/i);
+    if (shortHex) {
+      return (
+        "#" +
+        shortHex[1]
+          .split("")
+          .map(function (part) {
+            return part + part;
+          })
+          .join("")
+      ).toLowerCase();
+    }
+
+    var longHex = text.match(/^#([0-9a-f]{6})/i);
+    if (longHex) return ("#" + longHex[1]).toLowerCase();
+
+    var rgb = text.match(
+      /^rgba?\(\s*([0-9.]+)[,\s]+([0-9.]+)[,\s]+([0-9.]+)/
+    );
+
+    if (rgb) {
+      return (
+        "#" +
+        [rgb[1], rgb[2], rgb[3]]
+          .map(function (part) {
+            var number = Math.max(
+              0,
+              Math.min(255, Math.round(Number(part) || 0))
+            );
+            return number.toString(16).padStart(2, "0");
+          })
+          .join("")
+      );
+    }
+
+    var probe = document.createElement("span");
+    probe.style.color = "";
+    probe.style.color = text;
+    if (probe.style.color) {
+      document.body.appendChild(probe);
+      var computed = window.getComputedStyle(probe).color;
+      probe.remove();
+      if (computed && computed !== text) {
+        return cssColorToHex(computed, fallback);
+      }
+    }
+
+    return fallback;
+  }
+
+  function parseOpacity(value, fallback) {
+    var number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  }
+
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, Number(value) || 0));
+  }
+
+  function shapeElementToSubpaths(element) {
+    var tag = String(element.localName || "").toLowerCase();
+
+    if (tag === "path") {
+      return parsePathData(element.getAttribute("d") || "");
+    }
+
+    if (tag === "line") {
+      return [
+        straightSubpath(
+          [
+            pointOf(
+              numericSvgLength(element.getAttribute("x1")),
+              numericSvgLength(element.getAttribute("y1"))
+            ),
+            pointOf(
+              numericSvgLength(element.getAttribute("x2")),
+              numericSvgLength(element.getAttribute("y2"))
+            )
+          ],
+          false
+        )
+      ];
+    }
+
+    if (tag === "polyline" || tag === "polygon") {
+      var points = parsePointList(element.getAttribute("points") || "");
+      return points.length >= 2
+        ? [straightSubpath(points, tag === "polygon")]
+        : [];
+    }
+
+    if (tag === "circle") {
+      var cx = numericSvgLength(element.getAttribute("cx"));
+      var cy = numericSvgLength(element.getAttribute("cy"));
+      var r = Math.abs(numericSvgLength(element.getAttribute("r")));
+      return r > 0 ? [ellipseSubpath(cx, cy, r, r)] : [];
+    }
+
+    if (tag === "ellipse") {
+      var ecx = numericSvgLength(element.getAttribute("cx"));
+      var ecy = numericSvgLength(element.getAttribute("cy"));
+      var rx = Math.abs(numericSvgLength(element.getAttribute("rx")));
+      var ry = Math.abs(numericSvgLength(element.getAttribute("ry")));
+      return rx > 0 && ry > 0 ? [ellipseSubpath(ecx, ecy, rx, ry)] : [];
+    }
+
+    if (tag === "rect") {
+      var x = numericSvgLength(element.getAttribute("x"));
+      var y = numericSvgLength(element.getAttribute("y"));
+      var width = Math.abs(numericSvgLength(element.getAttribute("width")));
+      var height = Math.abs(numericSvgLength(element.getAttribute("height")));
+      if (!(width > 0 && height > 0)) return [];
+
+      var rectRx = Math.abs(numericSvgLength(element.getAttribute("rx")));
+      var rectRy = Math.abs(numericSvgLength(element.getAttribute("ry")));
+
+      if (rectRx && !rectRy) rectRy = rectRx;
+      if (rectRy && !rectRx) rectRx = rectRy;
+
+      rectRx = Math.min(rectRx, width / 2);
+      rectRy = Math.min(rectRy, height / 2);
+
+      return [
+        rectRx > 0 || rectRy > 0
+          ? roundedRectSubpath(x, y, width, height, rectRx, rectRy)
+          : straightSubpath(
+              [
+                pointOf(x, y),
+                pointOf(x + width, y),
+                pointOf(x + width, y + height),
+                pointOf(x, y + height)
+              ],
+              true
+            )
+      ];
+    }
+
+    return [];
+  }
+
+  function pointOf(x, y) {
+    return { x: Number(x) || 0, y: Number(y) || 0 };
+  }
+
+  function zeroHandle() {
+    return { inX: 0, inY: 0, outX: 0, outY: 0 };
+  }
+
+  function straightSubpath(points, closed) {
+    return {
+      points: points.map(function (point) {
+        return pointOf(point.x, point.y);
+      }),
+      handles: points.map(zeroHandle),
+      closed: !!closed
+    };
+  }
+
+  function parsePointList(value) {
+    var numbers =
+      String(value || "").match(
+        /[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g
+      ) || [];
+    var points = [];
+
+    for (var index = 0; index + 1 < numbers.length; index += 2) {
+      points.push(pointOf(numbers[index], numbers[index + 1]));
+    }
+
+    return points;
+  }
+
+  function ellipseSubpath(cx, cy, rx, ry) {
+    var k = 0.5522847498307936;
+    var points = [
+      pointOf(cx + rx, cy),
+      pointOf(cx, cy + ry),
+      pointOf(cx - rx, cy),
+      pointOf(cx, cy - ry)
+    ];
+
+    var handles = [
+      { inX: 0, inY: -k * ry, outX: 0, outY: k * ry },
+      { inX: k * rx, inY: 0, outX: -k * rx, outY: 0 },
+      { inX: 0, inY: k * ry, outX: 0, outY: -k * ry },
+      { inX: -k * rx, inY: 0, outX: k * rx, outY: 0 }
+    ];
+
+    return { points: points, handles: handles, closed: true };
+  }
+
+  function roundedRectSubpath(x, y, width, height, rx, ry) {
+    var k = 0.5522847498307936;
+    var points = [
+      pointOf(x + rx, y),
+      pointOf(x + width - rx, y),
+      pointOf(x + width, y + ry),
+      pointOf(x + width, y + height - ry),
+      pointOf(x + width - rx, y + height),
+      pointOf(x + rx, y + height),
+      pointOf(x, y + height - ry),
+      pointOf(x, y + ry)
+    ];
+
+    var handles = points.map(zeroHandle);
+
+    handles[1].outX = k * rx;
+    handles[2].inY = -k * ry;
+
+    handles[3].outY = k * ry;
+    handles[4].inX = k * rx;
+
+    handles[5].outX = -k * rx;
+    handles[6].inY = k * ry;
+
+    handles[7].outY = -k * ry;
+    handles[0].inX = -k * rx;
+
+    return { points: points, handles: handles, closed: true };
+  }
+
+  function parsePathData(d) {
+    var tokens =
+      String(d || "").match(
+        /[a-zA-Z]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g
+      ) || [];
+
+    var index = 0;
+    var command = "";
+    var x = 0;
+    var y = 0;
+    var startX = 0;
+    var startY = 0;
+    var lastCubicControl = null;
+    var lastQuadControl = null;
+    var current = null;
+    var paths = [];
+
+    function isCommandToken(token) {
+      return /^[a-zA-Z]$/.test(token);
+    }
+
+    function hasNumbers(count) {
+      if (index + count > tokens.length) return false;
+      for (var offset = 0; offset < count; offset += 1) {
+        if (isCommandToken(tokens[index + offset])) return false;
+      }
+      return true;
+    }
+
+    function number() {
+      return Number(tokens[index++]);
+    }
+
+    function newSubpath(nx, ny) {
+      current = {
+        points: [pointOf(nx, ny)],
+        handles: [zeroHandle()],
+        closed: false
+      };
+      paths.push(current);
+      x = nx;
+      y = ny;
+      startX = nx;
+      startY = ny;
+      lastCubicControl = null;
+      lastQuadControl = null;
+    }
+
+    function lineTo(nx, ny) {
+      if (!current) newSubpath(x, y);
+      current.points.push(pointOf(nx, ny));
+      current.handles.push(zeroHandle());
+      x = nx;
+      y = ny;
+      lastCubicControl = null;
+      lastQuadControl = null;
+    }
+
+    function cubicTo(c1x, c1y, c2x, c2y, nx, ny) {
+      if (!current) newSubpath(x, y);
+
+      var previousIndex = current.points.length - 1;
+      var previous = current.points[previousIndex];
+      current.handles[previousIndex].outX = c1x - previous.x;
+      current.handles[previousIndex].outY = c1y - previous.y;
+
+      current.points.push(pointOf(nx, ny));
+      current.handles.push({
+        inX: c2x - nx,
+        inY: c2y - ny,
+        outX: 0,
+        outY: 0
+      });
+
+      x = nx;
+      y = ny;
+      lastCubicControl = pointOf(c2x, c2y);
+      lastQuadControl = null;
+    }
+
+    function quadTo(qx, qy, nx, ny) {
+      var c1x = x + (2 / 3) * (qx - x);
+      var c1y = y + (2 / 3) * (qy - y);
+      var c2x = nx + (2 / 3) * (qx - nx);
+      var c2y = ny + (2 / 3) * (qy - ny);
+      cubicTo(c1x, c1y, c2x, c2y, nx, ny);
+      lastQuadControl = pointOf(qx, qy);
+      lastCubicControl = null;
+    }
+
+    function closeCurrent() {
+      if (current) {
+        current.closed = true;
+        x = startX;
+        y = startY;
+      }
+      lastCubicControl = null;
+      lastQuadControl = null;
+    }
+
+    while (index < tokens.length) {
+      if (isCommandToken(tokens[index])) {
+        command = tokens[index++];
+      } else if (!command) {
+        break;
+      }
+
+      var lower = command.toLowerCase();
+      var relative = command === lower;
+
+      if (lower === "z") {
+        closeCurrent();
+        command = "";
+        continue;
+      }
+
+      if (lower === "m") {
+        if (!hasNumbers(2)) break;
+
+        var mx = number();
+        var my = number();
+        if (relative) {
+          mx += x;
+          my += y;
+        }
+
+        newSubpath(mx, my);
+
+        while (hasNumbers(2)) {
+          var mlx = number();
+          var mly = number();
+          if (relative) {
+            mlx += x;
+            mly += y;
+          }
+          lineTo(mlx, mly);
+        }
+
+        command = relative ? "l" : "L";
+        continue;
+      }
+
+      if (lower === "l") {
+        while (hasNumbers(2)) {
+          var lx = number();
+          var ly = number();
+          if (relative) {
+            lx += x;
+            ly += y;
+          }
+          lineTo(lx, ly);
+        }
+        continue;
+      }
+
+      if (lower === "h") {
+        while (hasNumbers(1)) {
+          var hx = number();
+          if (relative) hx += x;
+          lineTo(hx, y);
+        }
+        continue;
+      }
+
+      if (lower === "v") {
+        while (hasNumbers(1)) {
+          var vy = number();
+          if (relative) vy += y;
+          lineTo(x, vy);
+        }
+        continue;
+      }
+
+      if (lower === "c") {
+        while (hasNumbers(6)) {
+          var c1x = number();
+          var c1y = number();
+          var c2x = number();
+          var c2y = number();
+          var cx = number();
+          var cy = number();
+
+          if (relative) {
+            c1x += x;
+            c1y += y;
+            c2x += x;
+            c2y += y;
+            cx += x;
+            cy += y;
+          }
+
+          cubicTo(c1x, c1y, c2x, c2y, cx, cy);
+        }
+        continue;
+      }
+
+      if (lower === "s") {
+        while (hasNumbers(4)) {
+          var reflected = lastCubicControl
+            ? pointOf(2 * x - lastCubicControl.x, 2 * y - lastCubicControl.y)
+            : pointOf(x, y);
+
+          var sc2x = number();
+          var sc2y = number();
+          var sx = number();
+          var sy = number();
+
+          if (relative) {
+            sc2x += x;
+            sc2y += y;
+            sx += x;
+            sy += y;
+          }
+
+          cubicTo(
+            reflected.x,
+            reflected.y,
+            sc2x,
+            sc2y,
+            sx,
+            sy
+          );
+        }
+        continue;
+      }
+
+      if (lower === "q") {
+        while (hasNumbers(4)) {
+          var qx = number();
+          var qy = number();
+          var qex = number();
+          var qey = number();
+
+          if (relative) {
+            qx += x;
+            qy += y;
+            qex += x;
+            qey += y;
+          }
+
+          quadTo(qx, qy, qex, qey);
+        }
+        continue;
+      }
+
+      if (lower === "t") {
+        while (hasNumbers(2)) {
+          var tq = lastQuadControl
+            ? pointOf(2 * x - lastQuadControl.x, 2 * y - lastQuadControl.y)
+            : pointOf(x, y);
+
+          var tx = number();
+          var ty = number();
+
+          if (relative) {
+            tx += x;
+            ty += y;
+          }
+
+          quadTo(tq.x, tq.y, tx, ty);
+        }
+        continue;
+      }
+
+      if (lower === "a") {
+        while (hasNumbers(7)) {
+          var rx = Math.abs(number());
+          var ry = Math.abs(number());
+          var rotation = number();
+          var largeArc = number() ? 1 : 0;
+          var sweep = number() ? 1 : 0;
+          var ax = number();
+          var ay = number();
+
+          if (relative) {
+            ax += x;
+            ay += y;
+          }
+
+          if (!(rx > 0 && ry > 0) || (ax === x && ay === y)) {
+            lineTo(ax, ay);
+            continue;
+          }
+
+          var cubics = arcToCubics(
+            x,
+            y,
+            rx,
+            ry,
+            rotation,
+            largeArc,
+            sweep,
+            ax,
+            ay
+          );
+
+          if (!cubics.length) {
+            lineTo(ax, ay);
+            continue;
+          }
+
+          cubics.forEach(function (segment) {
+            cubicTo(
+              segment.c1.x,
+              segment.c1.y,
+              segment.c2.x,
+              segment.c2.y,
+              segment.p.x,
+              segment.p.y
+            );
+          });
+        }
+        continue;
+      }
+
+      break;
+    }
+
+    return paths.filter(function (path) {
+      return path.points && path.points.length >= 2;
+    });
+  }
+
+  function arcToCubics(
+    x1,
+    y1,
+    rx,
+    ry,
+    rotationDegrees,
+    largeArcFlag,
+    sweepFlag,
+    x2,
+    y2
+  ) {
+    var phi = (Number(rotationDegrees) || 0) * Math.PI / 180;
+    var cosPhi = Math.cos(phi);
+    var sinPhi = Math.sin(phi);
+    var dx2 = (x1 - x2) / 2;
+    var dy2 = (y1 - y2) / 2;
+    var x1p = cosPhi * dx2 + sinPhi * dy2;
+    var y1p = -sinPhi * dx2 + cosPhi * dy2;
+
+    rx = Math.abs(rx);
+    ry = Math.abs(ry);
+
+    var lambda =
+      (x1p * x1p) / (rx * rx) +
+      (y1p * y1p) / (ry * ry);
+
+    if (lambda > 1) {
+      var scale = Math.sqrt(lambda);
+      rx *= scale;
+      ry *= scale;
+    }
+
+    var rx2 = rx * rx;
+    var ry2 = ry * ry;
+    var x1p2 = x1p * x1p;
+    var y1p2 = y1p * y1p;
+
+    var numerator =
+      rx2 * ry2 -
+      rx2 * y1p2 -
+      ry2 * x1p2;
+
+    var denominator =
+      rx2 * y1p2 +
+      ry2 * x1p2;
+
+    var coefficient =
+      denominator > 0
+        ? Math.sqrt(Math.max(0, numerator / denominator))
+        : 0;
+
+    if (!!largeArcFlag === !!sweepFlag) coefficient *= -1;
+
+    var cxp = coefficient * (rx * y1p / ry);
+    var cyp = coefficient * (-ry * x1p / rx);
+
+    var cx =
+      cosPhi * cxp -
+      sinPhi * cyp +
+      (x1 + x2) / 2;
+    var cy =
+      sinPhi * cxp +
+      cosPhi * cyp +
+      (y1 + y2) / 2;
+
+    function vectorAngle(ux, uy, vx, vy) {
+      var dot = ux * vx + uy * vy;
+      var length =
+        Math.sqrt(ux * ux + uy * uy) *
+        Math.sqrt(vx * vx + vy * vy);
+      if (!(length > 0)) return 0;
+
+      var angle = Math.acos(
+        Math.max(-1, Math.min(1, dot / length))
+      );
+
+      if (ux * vy - uy * vx < 0) angle = -angle;
+      return angle;
+    }
+
+    var ux = (x1p - cxp) / rx;
+    var uy = (y1p - cyp) / ry;
+    var vx = (-x1p - cxp) / rx;
+    var vy = (-y1p - cyp) / ry;
+
+    var theta1 = vectorAngle(1, 0, ux, uy);
+    var deltaTheta = vectorAngle(ux, uy, vx, vy);
+
+    if (!sweepFlag && deltaTheta > 0) deltaTheta -= Math.PI * 2;
+    if (sweepFlag && deltaTheta < 0) deltaTheta += Math.PI * 2;
+
+    var segmentCount = Math.max(
+      1,
+      Math.ceil(Math.abs(deltaTheta) / (Math.PI / 2))
+    );
+    var segmentAngle = deltaTheta / segmentCount;
+    var segments = [];
+
+    function ellipsePoint(theta) {
+      var cosTheta = Math.cos(theta);
+      var sinTheta = Math.sin(theta);
+      return {
+        x:
+          cx +
+          cosPhi * rx * cosTheta -
+          sinPhi * ry * sinTheta,
+        y:
+          cy +
+          sinPhi * rx * cosTheta +
+          cosPhi * ry * sinTheta
+      };
+    }
+
+    function ellipseDerivative(theta) {
+      var cosTheta = Math.cos(theta);
+      var sinTheta = Math.sin(theta);
+      return {
+        x:
+          -cosPhi * rx * sinTheta -
+          sinPhi * ry * cosTheta,
+        y:
+          -sinPhi * rx * sinTheta +
+          cosPhi * ry * cosTheta
+      };
+    }
+
+    for (var segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+      var t1 = theta1 + segmentIndex * segmentAngle;
+      var t2 = t1 + segmentAngle;
+      var p1 = ellipsePoint(t1);
+      var p2 = ellipsePoint(t2);
+      var d1 = ellipseDerivative(t1);
+      var d2 = ellipseDerivative(t2);
+      var alpha = 4 / 3 * Math.tan((t2 - t1) / 4);
+
+      segments.push({
+        c1: {
+          x: p1.x + alpha * d1.x,
+          y: p1.y + alpha * d1.y
+        },
+        c2: {
+          x: p2.x - alpha * d2.x,
+          y: p2.y - alpha * d2.y
+        },
+        p: p2
+      });
+    }
+
+    if (segments.length) {
+      segments[segments.length - 1].p = pointOf(x2, y2);
+    }
+
+    return segments;
+  }
+
+  function boundsForVectorObjects(objects) {
+    var minX = Infinity;
+    var minY = Infinity;
+    var maxX = -Infinity;
+    var maxY = -Infinity;
+
+    objects.forEach(function (object) {
+      (object.points || []).forEach(function (point, index) {
+        var handle = (object.bezierHandles || [])[index] || zeroHandle();
+        [
+          point,
+          {
+            x: point.x + Number(handle.inX || 0),
+            y: point.y + Number(handle.inY || 0)
+          },
+          {
+            x: point.x + Number(handle.outX || 0),
+            y: point.y + Number(handle.outY || 0)
+          }
+        ].forEach(function (candidate) {
+          minX = Math.min(minX, candidate.x);
+          minY = Math.min(minY, candidate.y);
+          maxX = Math.max(maxX, candidate.x);
+          maxY = Math.max(maxY, candidate.y);
+        });
+      });
+    });
+
+    if (!Number.isFinite(minX)) {
+      minX = 0;
+      minY = 0;
+      maxX = 1;
+      maxY = 1;
+    }
+
+    return {
+      x1: minX,
+      y1: minY,
+      x2: maxX,
+      y2: maxY,
+      width: Math.max(0.000001, maxX - minX),
+      height: Math.max(0.000001, maxY - minY)
+    };
+  }
+
+  function centreVectors(objects, bounds, scale, targetCentre) {
+    var sourceCx = (bounds.x1 + bounds.x2) / 2;
+    var sourceCy = (bounds.y1 + bounds.y2) / 2;
+    var factor = Number.isFinite(Number(scale)) ? Number(scale) : 1;
+    var targetX = Number(targetCentre.x) || 0;
+    var targetY = Number(targetCentre.y) || 0;
+
+    objects.forEach(function (object) {
+      (object.points || []).forEach(function (point) {
+        point.x = targetX + (point.x - sourceCx) * factor;
+        point.y = targetY + (point.y - sourceCy) * factor;
+      });
+
+      (object.bezierHandles || []).forEach(function (handle) {
+        handle.inX *= factor;
+        handle.inY *= factor;
+        handle.outX *= factor;
+        handle.outY *= factor;
+      });
+
+      object.strokeWidth = Math.max(
+        0.25,
+        Number(object.strokeWidth || 1) * Math.abs(factor)
+      );
+    });
+  }
+
+  function uniqueStrings(values) {
+    var seen = Object.create(null);
+    return values.filter(function (value) {
+      var key = String(value || "");
+      if (!key || seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+  }
+
+  function makePanelDraggable(element, handle) {
+    var drag = null;
+
+    handle.addEventListener("pointerdown", function (event) {
+      if (
+        event.button !== 0 ||
+        event.target.closest("button,input,label,select")
+      ) {
+        return;
+      }
+
+      var rect = element.getBoundingClientRect();
+
+      drag = {
+        pointerId: event.pointerId,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top
+      };
+
+      element.style.left = rect.left + "px";
+      element.style.top = rect.top + "px";
+      element.style.right = "auto";
+
+      try {
+        handle.setPointerCapture(event.pointerId);
+      } catch (ignore) {}
+
+      event.preventDefault();
+    });
+
+    handle.addEventListener("pointermove", function (event) {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+
+      var maxLeft = Math.max(0, window.innerWidth - element.offsetWidth);
+      var maxTop = Math.max(0, window.innerHeight - 44);
+      var left = Math.max(
+        0,
+        Math.min(maxLeft, event.clientX - drag.offsetX)
+      );
+      var top = Math.max(
+        0,
+        Math.min(maxTop, event.clientY - drag.offsetY)
+      );
+
+      element.style.left = left + "px";
+      element.style.top = top + "px";
+    });
+
+    function stopDrag(event) {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+
+      try {
+        handle.releasePointerCapture(event.pointerId);
+      } catch (ignore) {}
+
+      drag = null;
+    }
+
+    handle.addEventListener("pointerup", stopDrag);
+    handle.addEventListener("pointercancel", stopDrag);
+  }
+}());
