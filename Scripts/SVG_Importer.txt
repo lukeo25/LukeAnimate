@@ -86,7 +86,7 @@
     '  <fieldset class="la-svg-mode">',
     '    <legend>Import as</legend>',
     '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-curves" value="curves" checked> <span><b>Curves</b><small>Editable Luke Animate vector paths</small></span></label>',
-    '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-clip" value="clip"> <span><b>Clip</b><small>Complete SVG appearance inside one Luke Animate Clip</small></span></label>',
+    '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-clip" value="clip"> <span><b>Vector Clip</b><small>Editable Luke Animate vector paths inside one real Clip</small></span></label>',
     '  </fieldset>',
     '',
     '  <div id="la-svg-curves-options" class="la-svg-options">',
@@ -98,7 +98,7 @@
     '    <label>New Clip name',
     '      <input id="la-svg-clip-name" type="text" value="SVG_Clip" maxlength="80">',
     '    </label>',
-    '    <div class="la-svg-note">Clip mode keeps the sanitized SVG as an SVG image inside the Clip, so gradients, text and complex SVG appearance are retained.</div>',
+    '    <div class="la-svg-note">Vector Clip mode converts supported SVG geometry to editable Luke Animate vector paths, then places those paths inside one real Clip. It does not create an image object.</div>',
     '  </div>',
     '',
     '  <label>Optional target width',
@@ -119,7 +119,7 @@
     '    <button id="la-svg-clear-log" type="button">Clear Log</button>',
     '  </div>',
     '  <pre id="la-svg-log" class="la-svg-log" aria-live="polite">Ready.</pre>',
-    '  <p class="la-svg-hint">Curves supports SVG path, rect, circle, ellipse, line, polyline and polygon geometry, including transforms. Clip mode is the most faithful choice for gradients, masks, filters, text and other complex SVG features.</p>',
+    '  <p class="la-svg-hint">Both modes import supported SVG geometry as real Luke Animate vectors. Curves puts them directly on the current timeline. Vector Clip puts the same editable paths inside one Clip. SVGs made from embedded images, text, masks, filters or unsupported elements may need conversion to paths in the source SVG first.</p>',
     '</div>'
   ].join("\n");
 
@@ -363,7 +363,7 @@
     setLog(
       "Loaded " +
         state.fileName +
-        ".\nChoose Curves for editable Luke Animate vectors or Clip for the complete SVG appearance."
+        ".\nBoth modes create editable Luke Animate vectors. Curves imports directly to the timeline; Vector Clip puts those vectors inside one real Clip."
     );
   }
 
@@ -597,61 +597,185 @@
   }
 
   async function importClipMode(sanitized) {
-    var doc = parseSvg(sanitized);
-    var natural = svgDocumentDimensions(doc);
+    /*
+      v3 — REAL VECTOR CLIP
+
+      The previous Luke Animate importer wrapped the SVG source in an SVG
+      data-URL image object. That preserved appearance but made the imported
+      artwork behave as one image.
+
+      This mode now converts the SVG geometry to native Luke Animate vector
+      objects first, exactly like Curves mode, then creates a real Clip whose
+      internal drawing layers contain those editable vector objects.
+    */
+    var result = svgToLukeAnimateVectors(sanitized);
+
+    if (!result.objects.length) {
+      throw new Error(
+        "No editable vector geometry was found for Vector Clip mode. This SVG may contain only embedded images, text, <use> references, masks, filters or other non-path content. Convert those elements to paths in the SVG source and import again."
+      );
+    }
+
     var targetWidth = requestedTargetWidth();
     var scale =
-      targetWidth && natural.width > 0 ? targetWidth / natural.width : 1;
+      targetWidth && result.bounds.width > 0
+        ? targetWidth / result.bounds.width
+        : 1;
 
-    var width = Math.max(1, natural.width * scale);
-    var height = Math.max(1, natural.height * scale);
+    /*
+      Centre all native paths around the Clip origin. The Clip instance itself
+      is then placed at the visible centre of the current stage/context.
+    */
+    centreVectors(
+      result.objects,
+      result.bounds,
+      scale,
+      { x: 0, y: 0 }
+    );
+
     var clipName = safeName(
       clipNameInput.value || baseName(state.fileName),
       "SVG_Clip"
     );
-    var dataUrl = encodedSvgDataUrl(sanitized);
+
+    var originalFrame = Math.max(
+      1,
+      Math.round(Number(API.getCurrentFrame()) || 1)
+    );
+
+    var originalEditingClipId =
+      typeof API.getEditingClipId === "function"
+        ? API.getEditingClipId()
+        : null;
+
     var centre = currentSceneCentre();
-    var frame = Math.max(1, Math.round(Number(API.getCurrentFrame()) || 1));
 
     API.pushUndo();
 
+    /*
+      Luke Animate currently exposes createImageClip() as its public Clip
+      factory. We use it only to allocate/register a new Clip ID, then
+      IMMEDIATELY remove its temporary image content before entering the Clip.
+
+      The completed Clip contains no image object and no SVG data URL.
+    */
     var clip = API.createImageClip(
       {
-        src: dataUrl,
+        src: TRANSPARENT_PIXEL,
         name: clipName,
-        width: width,
-        height: height
+        width: 1,
+        height: 1
       },
       {
         name: clipName,
-        imageName: baseName(state.fileName),
-        width: width,
-        height: height,
+        imageName: "__temporary_svg_clip_factory__",
+        width: 1,
+        height: 1,
         durationSeconds: 1 / Math.max(1, Number(API.fps) || 30),
         pushUndo: false,
-        refresh: true
+        refresh: false
       }
     );
 
     if (!clip || !clip.id) {
-      throw new Error("Luke Animate could not create the SVG Clip.");
+      throw new Error("Luke Animate could not create the new vector Clip.");
     }
 
-    var instance = API.createClipInstance(clip.id, {
-      name: clipName,
-      x: Number(centre.x) || 0,
-      y: Number(centre.y) || 0
-    });
+    /*
+      Remove every trace of the factory image before building the vector Clip.
+    */
+    clip.drawObjects = [];
+    clip.sceneFrames = [];
+    clip.drawingLayers = [];
+    clip.layers = [];
+    clip.points = [];
+    clip.targetPoints = [];
+    clip.pivotX = 0;
+    clip.pivotY = 0;
+    clip.timelineDuration =
+      1 / Math.max(1, Number(API.fps) || 30);
+    clip.loopTimeline = true;
 
-    var layer = API.createDrawingLayer(clipName, {
-      pushUndo: false,
-      refresh: false
-    });
+    if (!API.enterClip(clip.id)) {
+      throw new Error("Luke Animate could not enter the new vector Clip.");
+    }
 
-    API.setDrawingLayerFrameObject(layer.id, frame, instance, {
-      pushUndo: false,
-      refresh: false
-    });
+    try {
+      result.objects.forEach(function (object, index) {
+        var layer = API.createDrawingLayer(
+          object.name || "SVG Path " + String(index + 1),
+          {
+            pushUndo: false,
+            refresh: false
+          }
+        );
+
+        API.setDrawingLayerFrameObject(
+          layer.id,
+          1,
+          object,
+          {
+            pushUndo: false,
+            refresh: false
+          }
+        );
+      });
+
+      API.refreshUI();
+    } finally {
+      /*
+        This returns to the exact stage or parent Clip from which SVG Import
+        was launched. Therefore imported Vector Clips can also become children
+        of an existing parent Clip.
+      */
+      API.exitClip();
+    }
+
+    var restoredEditingClipId =
+      typeof API.getEditingClipId === "function"
+        ? API.getEditingClipId()
+        : null;
+
+    if (
+      String(restoredEditingClipId || "") !==
+      String(originalEditingClipId || "")
+    ) {
+      throw new Error(
+        "Luke Animate did not restore the original timeline after building the SVG Clip."
+      );
+    }
+
+    var instance = API.createClipInstance(
+      clip.id,
+      {
+        name: clipName,
+        x: Number(centre.x) || 0,
+        y: Number(centre.y) || 0,
+        scale: 1,
+        scaleX: 1,
+        scaleY: 1,
+        rotation: 0,
+        opacity: 1
+      }
+    );
+
+    var stageLayer = API.createDrawingLayer(
+      clipName,
+      {
+        pushUndo: false,
+        refresh: false
+      }
+    );
+
+    API.setDrawingLayerFrameObject(
+      stageLayer.id,
+      originalFrame,
+      instance,
+      {
+        pushUndo: false,
+        refresh: false
+      }
+    );
 
     API.refreshUI();
     API.selectDrawObject(instance);
@@ -659,17 +783,17 @@
 
     log(
       "Complete.\nImported " +
-        state.fileName +
-        " as Luke Animate Clip “" +
+        result.objects.length +
+        " editable SVG vector path" +
+        (result.objects.length === 1 ? "" : "s") +
+        " inside real Luke Animate Clip “" +
         clipName +
-        "”.\n" +
-        Math.round(width) +
-        " × " +
-        Math.round(height) +
-        " at frame " +
-        frame +
-        "."
+        "”.\nNo raster/image object exists in the finished Clip."
     );
+
+    if (result.warnings.length) {
+      log("\nNotes:\n• " + result.warnings.join("\n• "));
+    }
   }
 
   async function importCurvesMode(sanitized) {
@@ -677,7 +801,7 @@
 
     if (!result.objects.length) {
       throw new Error(
-        "No editable SVG geometry was found after parsing. Curves mode supports path, rect, circle, ellipse, line, polyline and polygon. If the SVG is built from text, <use> references, masks, filters or images, use Clip mode."
+        "No editable SVG geometry was found after parsing. Luke Animate SVG Import supports path, rect, circle, ellipse, line, polyline and polygon. If the source is built from text, <use> references, masks, filters or embedded images, convert those elements to paths first."
       );
     }
 
@@ -814,6 +938,18 @@
         );
       }
 
+      var embeddedImages = root.querySelectorAll("image").length;
+
+      if (embeddedImages) {
+        warnings.push(
+          "The source SVG contains " +
+            embeddedImages +
+            " embedded <image> element" +
+            (embeddedImages === 1 ? "" : "s") +
+            ". That part of the SVG is raster artwork and cannot become editable vector paths automatically."
+        );
+      }
+
       Array.prototype.forEach.call(candidates, function (element, elementIndex) {
         if (isTemplateGeometry(element)) return;
 
@@ -835,7 +971,7 @@
 
         if (subpaths.length > 1 && style.fillEnabled) {
           warnings.push(
-            "A compound/multi-subpath fill was split into editable Luke Animate paths. Holes may not match the source exactly; use Clip mode when exact compound-fill appearance matters."
+            "A compound/multi-subpath fill was split into editable Luke Animate paths. Holes may not match the source exactly."
           );
         }
 
@@ -881,13 +1017,13 @@
 
       if (unsupported) {
         warnings.push(
-          "Some SVG features are not editable in Curves mode. Clip mode preserves the complete sanitized SVG appearance."
+          "Some SVG features are not directly editable by Luke Animate SVG Import. Convert text, <use>, masks, filters or embedded images to paths in the source SVG when editable vectors are required."
         );
       }
 
       if (root.querySelectorAll("linearGradient,radialGradient").length) {
         warnings.push(
-          "Gradient paints are reduced to a representative solid colour in Curves mode."
+          "Gradient paints are currently reduced to a representative solid colour when converted to Luke Animate vectors."
         );
       }
 
@@ -1079,7 +1215,7 @@
           stop.getAttribute("stop-color") ||
           fallback;
         warnings.push(
-          "A gradient/pattern paint was converted to a solid colour in Curves mode."
+          "A gradient/pattern paint was converted to a solid colour in Luke Animate vector mode."
         );
         return { enabled: true, color: cssColorToHex(stopColor, fallback) };
       }
