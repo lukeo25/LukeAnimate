@@ -1,26 +1,25 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v12.0
+/* Luke Animate Dem Bones + MyCharacter GPT v13.0
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
 
-   v12 fixes the Character SVG/artwork jump introduced in v11.
-   The cause was a double coordinate conversion of demBones.restPoints:
-   shiftObject() already moves both visible vector points and DemBones rest
-   points, but v11 moved restPoints a second time when creating/capturing a
-   Character part. The bones therefore stayed correctly centred while the
-   deformed SVG artwork jumped approximately one stage-centre offset away.
-
-   v12:
-   - converts vector points, DemBones rest points and bones exactly once;
-   - keeps artwork and bone envelopes registered in the same local coordinates;
-   - fixes the reverse Character-part capture/edit path for the same issue;
-   - preserves all v11 Select / Move, Adjust, Animate and click-a-bone pinning.
+   v13 fixes Character/rig movement caused by DemBones UI interaction.
+   The panel is now read-only with respect to stage geometry:
+   - renderAll()/renderBody() never reconcile or rewrite Character transforms;
+   - the object evaluator no longer writes unpinned Clip transforms back into
+     Character data while Luke Animate is rendering;
+   - normal Build Character view does not draw the stale Build Parts rig overlay;
+   - Character child Clip instances are installed once as real native objects;
+   - returning to/selecting a Character part no longer rebuilds the root contents;
+   - explicit native stage movement is synced only after actual selection/mouse-up,
+     save, pin or other deliberate Character actions;
+   - only a real active pin is allowed to override a part transform at render time.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "12.0";
+  var TOOL_VERSION = "13.0";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1176,14 +1175,41 @@
     return root?root.drawObjects:[];
   }
 
+  function characterRootPartInstances(root){
+    if(!root)return[];
+
+    var found=[];
+    var seen={};
+
+    function add(object){
+      if(!object||object.__dbPartId===undefined||object.__dbPartId===null)return;
+      var key=String(object.__dbPartId);
+      if(seen[key])return;
+      seen[key]=true;
+      found.push(object);
+    }
+
+    /* Canonical drawing layers win after Luke Animate has opened the Clip. */
+    if(Array.isArray(root.drawingLayers)){
+      root.drawingLayers.forEach(function(layer){
+        (layer.frames||[]).forEach(function(frame){
+          if(frame&&!frame.blank&&frame.object)add(frame.object);
+        });
+      });
+    }
+
+    if(!found.length)characterRootObjectList(root).forEach(add);
+
+    return found;
+  }
+
   function partInstance(part){
     if(!part||!state.character.rootClipId)return null;
-
     var root=clips()[state.character.rootClipId];
     if(!root)return null;
 
-    return characterRootObjectList(root).filter(function(o){
-      return o&&Number(o.__dbPartId)===Number(part.id);
+    return characterRootPartInstances(root).filter(function(object){
+      return Number(object.__dbPartId)===Number(part.id);
     })[0]||null;
   }
 
@@ -1222,20 +1248,6 @@
 
     part.transform=transformFromPartInstance(instance,part.transform);
     return true;
-  }
-
-  function syncPartTransformFromEffective(part,effective){
-    if(!part||part.pin||!effective)return;
-
-    part.transform=normalisePartTransform({
-      x:effective.x,
-      y:effective.y,
-      scale:effective.scale,
-      scaleX:effective.scaleX,
-      scaleY:effective.scaleY,
-      rotation:effective.rotation,
-      opacity:effective.opacity
-    });
   }
 
   function syncAllUnpinnedCharacterTransforms(){
@@ -1383,11 +1395,10 @@
       if(!part)return effective;
 
       /*
-        Unpinned character parts use the real native Clip instance transform.
-        This makes Luke Animate's normal Select/Edit handles authoritative.
+        v13: an unpinned Character part is entirely owned by Luke Animate's
+        native Clip transform. Rendering is strictly read-only.
       */
       if(!part.pin){
-        syncPartTransformFromEffective(part,effective);
         return effective;
       }
 
@@ -1756,32 +1767,21 @@
     return true;
   }
 
-  function updateCharacterInstances(){
-    var root=ensureCharacterRoot();
-    root.name=state.character.name||"MyCharacter";
+  function makeCharacterPartInstance(part){
+    var transform=normalisePartTransform(part&&part.transform);
 
-    var list=characterRootObjectList(root);
-    var existing={};
-
-    list.forEach(function(object){
-      if(object&&object.__dbPartId!==undefined){
-        existing[String(object.__dbPartId)]=object;
-      }
-    });
-
-    var ordered=[];
-
-    state.character.parts.forEach(function(part){
-      if(!clips()[part.clipId]&&part.source){
-        createPartClip(part,part.source);
-      }
-
-      var instance=existing[String(part.id)];
-
-      if(!instance){
-        var transform=normalisePartTransform(part.transform);
-
-        instance={
+    var instance=typeof API.createClipInstance==="function"
+      ?API.createClipInstance(part.clipId,{
+          name:part.name,
+          x:transform.x,
+          y:transform.y,
+          scale:transform.scale,
+          scaleX:transform.scaleX,
+          scaleY:transform.scaleY,
+          rotation:transform.rotation,
+          opacity:transform.opacity
+        })
+      :{
           type:"clipinstance",
           clipId:part.clipId,
           name:part.name,
@@ -1794,38 +1794,60 @@
           timeOffset:0,
           opacity:transform.opacity,
           keyframes:[],
-          id:uid("db-part-instance"),
-          __dbPartId:part.id,
-          __dbCharacterId:state.character.id
+          id:uid("db-part-instance")
         };
-      }else if(!part.pin){
-        part.transform=transformFromPartInstance(instance,part.transform);
-      }
 
+    instance.__dbPartId=part.id;
+    instance.__dbCharacterId=state.character.id;
+    if(!Array.isArray(instance.keyframes))instance.keyframes=[];
+    return instance;
+  }
+
+  function updateCharacterInstances(){
+    /*
+      Metadata-only reconciliation. This function must never rewrite native
+      x/y/scale/rotation, sceneFrames, drawingLayers or object collections.
+    */
+    var root=state.character.rootClipId?clips()[state.character.rootClipId]:null;
+    if(!root)return;
+
+    var existing={};
+    characterRootPartInstances(root).forEach(function(instance){
+      existing[String(instance.__dbPartId)]=instance;
+    });
+
+    state.character.parts.forEach(function(part){
+      var instance=existing[String(part.id)];
+      if(!instance)return;
       instance.clipId=part.clipId;
       instance.name=part.name;
       instance.__dbPartId=part.id;
       instance.__dbCharacterId=state.character.id;
-
-      if(!Array.isArray(instance.keyframes)){
-        instance.keyframes=[];
-      }
-
-      ordered.push(instance);
+      if(!Array.isArray(instance.keyframes))instance.keyframes=[];
     });
+  }
 
-    /*
-      Keep the same native object-array reference so selection, keyframes and
-      Luke Animate layer ownership do not disappear on every panel refresh.
-    */
-    list.splice.apply(list,[0,list.length].concat(ordered));
-    root.drawObjects=list;
+  function installCharacterPartInstance(part){
+    if(!part||!part.clipId)return null;
+    if(!returnToCharacterRoot())return null;
 
-    if(Array.isArray(root.sceneFrames)&&root.sceneFrames.length){
-      root.sceneFrames[0].objects=list;
+    var existing=partInstance(part);
+    if(existing){
+      updateCharacterInstances();
+      return existing;
     }
 
+    var instance=makeCharacterPartInstance(part);
+
+    /*
+      This is an explicit structural operation, so use Luke Animate's own
+      addDrawObject path while the Character Clip is the active context.
+    */
+    API.addDrawObject(instance,"animate");
+
+    part.transform=transformFromPartInstance(instance,part.transform);
     API.refreshUI();
+    return instance;
   }
 
   function returnToCharacterRoot(){
@@ -1847,7 +1869,10 @@
       API.enterClip(root.id);
     }
 
-    updateCharacterInstances();
+    /* Navigation only. No Character child reconstruction is allowed here. */
+    state.activeRig=null;
+    state.selectedBoneId="";
+    state.selectedCurveId="";
 
     return API.getEditingClipId()===root.id;
   }
@@ -1980,14 +2005,15 @@
     state.editingPartId=null;
 
     ensureCharacterRoot();
-    updateCharacterInstances();
-
     if(!options.keepTab)state.tab="character";
+
+    var installedInstance=installCharacterPartInstance(part);
 
     renderAll();
 
-    if(!options.skipStageSelect){
-      selectCharacterPartOnStage(part);
+    if(!options.skipStageSelect&&installedInstance){
+      API.selectDrawObject(installedInstance);
+      API.refreshUI();
     }
 
     if(!options.silent){
@@ -2071,16 +2097,30 @@
   function deleteCharacterPart(part){
     if(!part)return;
 
-    if(part.clipId&&clips()[part.clipId]){
-      delete clips()[part.clipId];
+    if(state.character.rootClipId){
+      returnToCharacterRoot();
+
+      var instance=partInstance(part);
+      var objects=sceneObjects();
+      var objectIndex=objects.indexOf(instance);
+      if(objectIndex>=0)objects.splice(objectIndex,1);
+
+      if(typeof API.getDrawingLayers==="function"){
+        var drawingLayers=API.getDrawingLayers();
+        for(var i=drawingLayers.length-1;i>=0;i--){
+          var layer=drawingLayers[i];
+          var owns=(layer.frames||[]).some(function(frame){
+            return !!(frame&&frame.object&&Number(frame.object.__dbPartId)===Number(part.id));
+          });
+          if(owns)drawingLayers.splice(i,1);
+        }
+      }
     }
 
+    if(part.clipId&&clips()[part.clipId])delete clips()[part.clipId];
+
     state.character.parts.forEach(function(candidate){
-      if(
-        candidate!==part&&
-        candidate.pin&&
-        Number(candidate.pin.targetPartId)===Number(part.id)
-      ){
+      if(candidate!==part&&candidate.pin&&Number(candidate.pin.targetPartId)===Number(part.id)){
         clearPartPin(candidate,true);
       }
     });
@@ -2090,30 +2130,60 @@
     });
 
     if(state.character.selectedPartId===part.id){
-      state.character.selectedPartId=state.character.parts[0]
-        ?state.character.parts[0].id
-        :null;
+      state.character.selectedPartId=state.character.parts[0]?state.character.parts[0].id:null;
     }
 
     if(Number(state.character.pinPickSourceId)===Number(part.id)){
       state.character.pinPickSourceId=null;
     }
 
-    updateCharacterInstances();
+    API.refreshUI();
     renderAll();
   }
 
   function movePart(part,dir){
     var i=state.character.parts.indexOf(part);
     var j=i+dir;
-
     if(i<0||j<0||j>=state.character.parts.length)return;
 
     var temp=state.character.parts[i];
     state.character.parts[i]=state.character.parts[j];
     state.character.parts[j]=temp;
 
-    updateCharacterInstances();
+    if(returnToCharacterRoot()&&typeof API.getDrawingLayers==="function"){
+      var model=API.getDrawingLayers();
+      var byPart={};
+
+      model.forEach(function(layer){
+        (layer.frames||[]).some(function(frame){
+          if(frame&&frame.object&&frame.object.__dbPartId!==undefined){
+            byPart[String(frame.object.__dbPartId)]=layer;
+            return true;
+          }
+          return false;
+        });
+      });
+
+      var characterLayers=Object.keys(byPart).map(function(key){return byPart[key];});
+      var otherLayers=model.filter(function(layer){
+        return characterLayers.indexOf(layer)<0;
+      });
+
+      var ordered=state.character.parts.map(function(candidate){
+        return byPart[String(candidate.id)];
+      }).filter(Boolean);
+
+      model.splice.apply(model,[0,model.length].concat(otherLayers,ordered));
+
+      model.forEach(function(layer,index){
+        layer.order=index+1;
+        (layer.frames||[]).forEach(function(frame){
+          if(frame&&frame.object)frame.object.timelineLayerOrder=layer.order;
+        });
+      });
+    }
+
+    API.refreshUI();
     renderAll();
   }
 
@@ -2200,13 +2270,17 @@
       if(part.source)createPartClip(part,part.source);
     });
 
+    returnToCharacterRoot();
+
+    state.character.parts.forEach(function(part){
+      installCharacterPartInstance(part);
+    });
+
     updateCharacterInstances();
     renderAll();
 
     if(state.character.selectedPartId){
-      selectCharacterPartOnStage(
-        partById(state.character.selectedPartId)
-      );
+      selectCharacterPartOnStage(partById(state.character.selectedPartId));
     }
 
     notify("Loaded MyCharacter.",false);
@@ -3116,11 +3190,11 @@
   function overlayRenderer(ctx){
     if(!state.open)return;
 
-    if(
-      state.tab==="character"&&
-      state.character.pinPickSourceId
-    ){
-      drawCharacterPinTargets(ctx);
+    if(state.tab==="character"){
+      if(state.character.pinPickSourceId){
+        drawCharacterPinTargets(ctx);
+      }
+      /* Normal Character mode never draws a stale Build Parts rig. */
       return;
     }
 
@@ -3236,8 +3310,7 @@
   }
 
   function characterPage(){
-    syncAllUnpinnedCharacterTransforms();
-
+    /* PANEL RENDER IS READ-ONLY: never rewrite stage geometry here. */
     var cards=state.character.parts.length
       ?state.character.parts.map(function(part){
           var active=Number(state.character.selectedPartId)===Number(part.id);
@@ -3355,7 +3428,7 @@
     p.querySelectorAll('[data-db-expression-type]').forEach(function(b){b.onclick=function(){state.expressionType=b.getAttribute('data-db-expression-type');renderAll();};});var esn=p.querySelector('[data-db-expression-slot-name]');if(esn)esn.oninput=function(){state.expressionSlot=esn.value||'Default';};var ess=p.querySelector('[data-db-expression-slot]');if(ess)ess.onchange=function(){state.expressionSlot=ess.value||state.expressionSlot;};p.querySelectorAll('[data-db-import-expression]').forEach(function(b){b.onclick=function(){state.expressionSlot=(p.querySelector('[data-db-expression-slot-name]').value||'Default').trim();state.fileInputs.expression.click();};});p.querySelectorAll('[data-db-set-expression-key]').forEach(function(b){b.onclick=function(){setExpressionKey(state.expressionType,state.expressionSlot);};});p.querySelectorAll('[data-db-clear-expression-key]').forEach(function(b){b.onclick=function(){clearExpressionKey(state.expressionType);};});
   }
 
-  function createPanel(){ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){state.tab=b.getAttribute('data-db-tab');state.curvePointAddMode=false;state.mode=state.tab==='bones'?'add-bone':'select';if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}renderAll();};});state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();}
+  function createPanel(){ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){var nextTab=b.getAttribute('data-db-tab');if(state.tab==='character'&&nextTab!=='character'&&state.character.rootClipId&&API.getEditingClipId()===state.character.rootClipId){state.activeRig=null;state.selectedBoneId='';state.selectedCurveId='';}state.tab=nextTab;state.curvePointAddMode=false;state.mode=state.tab==='bones'?'add-bone':'select';if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}renderAll();};});state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();}
   function makeDraggable(panel,handle){handle.addEventListener('pointerdown',function(e){if(e.target.closest('button'))return;e.preventDefault();API.bringFloatingPanelToFront(panel);var r=panel.getBoundingClientRect(),ox=e.clientX-r.left,oy=e.clientY-r.top;function mv(ev){panel.style.left=(ev.clientX-ox)+'px';panel.style.top=(ev.clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto';}function up(){window.removeEventListener('pointermove',mv,true);window.removeEventListener('pointerup',up,true);API.clampFloatingPanelToViewport(panel);}window.addEventListener('pointermove',mv,true);window.addEventListener('pointerup',up,true);});}
 
   function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);}
