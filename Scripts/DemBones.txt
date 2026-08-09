@@ -1,6 +1,30 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v15.3
+/* Luke Animate Dem Bones + MyCharacter GPT v15.4
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
+
+   v15.4 fixes two real coordinate-continuity bugs, not just their symptoms:
+   - the Character root Clip's pivot/instance position used to be set to
+     wherever the stage view happened to be scrolled/centred at the moment
+     MyCharacter was first created, with no relationship to where the
+     character's actual artwork was built. That mismatch is exactly what
+     made the whole Clip render offset from itself on the main stage versus
+     inside its own part Clips. The pivot is now anchored to the first
+     part's real build-time centre instead, so the Character renders with
+     zero net offset from its content. Existing characters self-heal the
+     next time a part is added or MyCharacter is finalised;
+   - once a shape is bound to a rig its geometry is 100% bone-driven every
+     frame, but dragging it with Luke Animate's native Select/Edit tool could
+     still leave it a leftover x/y/tx/ty/scale/rotation that got applied a
+     second time on top of the rig's already-absolute output, making the
+     shape appear to detach and "pull away" from the character instead of
+     staying put. The evaluator now resets those fields on every bound
+     shape, so a native drag has no lasting effect;
+   - since dragging can no longer be used to fix a shape that was ingested
+     far from the rest of its part (a common cause of "doubled"/floating
+     artwork), the Curves tab gained a real, intentional replacement: Center
+     On Selected Bone moves a shape's own points (and its DemBones rest
+     points) so it sits centred on the selected bone, or the rig's centre if
+     no bone is selected.
 
    v15.3 removes the separate "Commit" tab/step, which was a leftover from an
    older version of this tool where finalising MyCharacter had to be done as
@@ -72,7 +96,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "15.3";
+  var TOOL_VERSION = "15.4";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1839,6 +1863,23 @@
       out.bezierHandles=geometry.bezierHandles;
     }
 
+    /*
+      demBones.restPoints/weights already bake this object's full absolute
+      position, rotation and scale into geometry.points every frame. Any x/y,
+      tx/ty, scale or rotation the object also carries - most commonly left
+      behind by dragging a rigged shape with Luke Animate's native Select/
+      Edit tool - would then be applied a second time on top of that already
+      -absolute geometry. That double application is what made a dragged
+      shape appear to detach and "pull away" from the character instead of
+      staying bone-driven. Neutralise those fields here so a native drag has
+      no lasting effect once the rig recomputes the shape's real position;
+      to actually move a badly-placed shape, reposition it relative to its
+      bones on the Curves tab instead.
+    */
+    out.x=0;out.y=0;out.tx=0;out.ty=0;
+    out.scale=1;out.scaleX=1;out.scaleY=1;
+    out.rotation=0;
+
     return out;
   }
 
@@ -1887,15 +1928,32 @@
     return rig;
   }
 
+  function characterContentOrigin(){
+    /*
+      The Character root's pivot/instance position used to be set to
+      "wherever the stage view happened to be centred" at creation time,
+      which has nothing to do with where the character's actual artwork
+      lives. That mismatch is what makes the whole Clip render offset from
+      the artwork it contains. Anchor the root to the first part's own
+      build-time centre instead, so the Character renders exactly where its
+      content already is with zero net offset.
+    */
+    var firstPart=state.character.parts&&state.character.parts[0];
+    if(firstPart&&firstPart.localOrigin&&isFinite(Number(firstPart.localOrigin.x))&&isFinite(Number(firstPart.localOrigin.y))){
+      return {x:Number(firstPart.localOrigin.x),y:Number(firstPart.localOrigin.y)};
+    }
+    return currentStageCentreScene();
+  }
+
   function ensureCharacterRoot(){
     var map=clips();
     var root=state.character.rootClipId
       ?map[state.character.rootClipId]
       :null;
-    var centre=currentStageCentreScene();
+    var centre=characterContentOrigin();
 
     if(root){
-      if(root.__dbCharacterPlacementVersion!==2){
+      if(root.__dbCharacterPlacementVersion!==3){
         root.pivotX=centre.x;
         root.pivotY=centre.y;
 
@@ -1905,7 +1963,7 @@
           rootInstance.y=centre.y;
         }
 
-        root.__dbCharacterPlacementVersion=2;
+        root.__dbCharacterPlacementVersion=3;
       }
       return root;
     }
@@ -1925,7 +1983,7 @@
       timelineDuration:Math.max(3,n(API.getTimelineDuration(),6)),
       loopTimeline:true,
       __demBonesCharacter:true,
-      __dbCharacterPlacementVersion:2
+      __dbCharacterPlacementVersion:3
     };
 
     map[id]=root;
@@ -3464,6 +3522,45 @@
     state.selectedPointIndex=clamp(index,0,o.points.length-1);API.refreshUI();renderAll();notify('Curve point deleted.',false);
   }
 
+  /*
+    Shapes are entirely bone-driven once bound (see the evaluator's fixed
+    transform reset), so Luke Animate's native drag can no longer be used to
+    fix a shape that was ingested far from the rest of its rig - dragging it
+    now has no lasting effect, by design. This gives a real, intentional way
+    to fix that: it shifts the shape's own points (and its DemBones rest
+    points, kept together via shiftObject) so its bounding-box centre lands
+    exactly on the selected bone's midpoint, or the whole rig's centre if no
+    bone is selected.
+  */
+  function centerSelectedCurveOnBone(){
+    var rig=state.activeRig;
+    var o=findObjectById(state.selectedCurveId);
+    if(!rig||!o||!Array.isArray(o.points)||!o.points.length){
+      notify("Select a shape with points first.",true);
+      return;
+    }
+    var bone=selectedBone();
+    var target;
+    if(bone){
+      target={x:(bone.restHead.x+bone.restTail.x)/2,y:(bone.restHead.y+bone.restTail.y)/2};
+    }else{
+      var bounds=rigTargetBounds(rig);
+      target={x:bounds.cx,y:bounds.cy};
+    }
+    var current=combinedBounds([o]);
+    var dx=target.x-current.cx;
+    var dy=target.y-current.cy;
+    if(Math.abs(dx)<0.01&&Math.abs(dy)<0.01){
+      notify("Shape is already centred there.",false);
+      return;
+    }
+    API.pushUndo();
+    shiftObject(o,dx,dy);
+    bindRig(false);
+    renderAll();
+    notify((bone?('Centred on bone "'+(bone.name||"Bone")+'".'):"Centred on the rig's centre."),false);
+  }
+
   function subdivideSelectedCurve(){
     var o=findObjectById(state.selectedCurveId);if(!o||!Array.isArray(o.points)||o.points.length<2)return;
     var eff=typeof API.getEffectiveObject==="function"?API.getEffectiveObject(o,currentTime()):o;
@@ -4234,7 +4331,7 @@
 
   function animatePage(){var b=selectedBone(),p=b?interpolatePose(b,currentTime()):{dx:0,dy:0,rotation:0,scale:1,easing:'linear'};return '<div class="db-page active"><div class="db-section"><h3>Animate Selected Bone</h3>'+(b?'<p class="db-help">'+esc(b.name)+' · Frame '+currentFrame()+'</p><div class="db-row three"><label>Move X</label><input type="range" min="-1000" max="1000" value="'+round3(p.dx)+'" data-db-pose-dx><input type="number" value="'+round3(p.dx)+'" data-db-pose-dx-num></div><div class="db-row three"><label>Move Y</label><input type="range" min="-1000" max="1000" value="'+round3(p.dy)+'" data-db-pose-dy><input type="number" value="'+round3(p.dy)+'" data-db-pose-dy-num></div><div class="db-row three"><label>Rotation</label><input type="range" min="-360" max="360" value="'+round3(p.rotation)+'" data-db-pose-rotation><input type="number" value="'+round3(p.rotation)+'" data-db-pose-rotation-num></div><div class="db-row three"><label>Scale</label><input type="range" min="0.05" max="5" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale><input type="number" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale-num></div><div class="db-row"><label>Easing</label><select data-db-pose-easing><option value="linear"'+(p.easing==='linear'?' selected':'')+'>Linear</option><option value="ease-in"'+(p.easing==='ease-in'?' selected':'')+'>Ease In</option><option value="ease-out"'+(p.easing==='ease-out'?' selected':'')+'>Ease Out</option><option value="ease-in-out"'+(p.easing==='ease-in-out'?' selected':'')+'>Ease In/Out</option><option value="hold"'+(p.easing==='hold'?' selected':'')+'>Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-bone-key>Set Key</button><button class="db-btn danger" data-db-delete-bone-key>Delete Key</button></div>':'<div class="db-empty">Select a bone first.</div>')+'</div></div>';}
 
-  function curvesPage(){var rig=state.activeRig,objs=rig?rigObjects(rig):[],o=findObjectById(state.selectedCurveId)||objs[0];if(o&&!state.selectedCurveId)state.selectedCurveId=o.id;var options=objs.map(function(x,i){return'<option value="'+esc(x.id)+'"'+(o&&o.id===x.id?' selected':'')+'>Curve '+(i+1)+'</option>';}).join('');var points=o&&o.points||[];var rows=points.map(function(p,i){return'<div class="db-point-row'+(i===state.selectedPointIndex?' active':'')+'" data-db-point-index="'+i+'"><span>'+i+'</span><input type="number" step="0.1" value="'+round3(p.x)+'" data-db-point-x="'+i+'"><input type="number" step="0.1" value="'+round3(p.y)+'" data-db-point-y="'+i+'"></div>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Curves</h3>'+(o?'<div class="db-note">Edit the source outline or key its points. Click <b>Add Point</b>, then click directly on a curve segment. Ctrl+click on a segment does the same thing.</div><div class="db-row"><label>Curve</label><select data-db-curve-select>'+options+'</select></div><div class="db-row"><label>Points</label><span>'+points.length+'</span></div><div class="db-grid3"><button class="db-btn'+(state.curvePointAddMode?' primary':'')+'" data-db-add-curve-point>'+(state.curvePointAddMode?'Click Curve…':'Add Point')+'</button><button class="db-btn" data-db-subdivide-curve>Subdivide All</button><button class="db-btn danger" data-db-delete-source-point>Delete Point</button></div><div class="db-point-list">'+rows+'</div><div class="db-row" style="margin-top:8px"><label>Easing</label><select data-db-point-easing><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="ease-in-out">Ease In/Out</option><option value="hold">Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-point-key>Set Curve Key</button><button class="db-btn danger" data-db-delete-point-key>Delete Curve Key</button></div>':'<div class="db-empty">Build or load a part containing editable curves.</div>')+'</div></div>';}
+  function curvesPage(){var rig=state.activeRig,objs=rig?rigObjects(rig):[],o=findObjectById(state.selectedCurveId)||objs[0];if(o&&!state.selectedCurveId)state.selectedCurveId=o.id;var options=objs.map(function(x,i){return'<option value="'+esc(x.id)+'"'+(o&&o.id===x.id?' selected':'')+'>Curve '+(i+1)+'</option>';}).join('');var points=o&&o.points||[];var rows=points.map(function(p,i){return'<div class="db-point-row'+(i===state.selectedPointIndex?' active':'')+'" data-db-point-index="'+i+'"><span>'+i+'</span><input type="number" step="0.1" value="'+round3(p.x)+'" data-db-point-x="'+i+'"><input type="number" step="0.1" value="'+round3(p.y)+'" data-db-point-y="'+i+'"></div>';}).join('');var bone=selectedBone();return '<div class="db-page active"><div class="db-section"><h3>Curves</h3>'+(o?'<div class="db-note">Edit the source outline or key its points. Click <b>Add Point</b>, then click directly on a curve segment. Ctrl+click on a segment does the same thing. Shapes bound to a rig are fully bone-driven - dragging one on stage with Select/Edit will not move it; use <b>Center On Selected Bone</b> below to reposition a shape that landed in the wrong place.</div><div class="db-row"><label>Curve</label><select data-db-curve-select>'+options+'</select></div><div class="db-row"><label>Points</label><span>'+points.length+'</span></div><div class="db-grid3"><button class="db-btn'+(state.curvePointAddMode?' primary':'')+'" data-db-add-curve-point>'+(state.curvePointAddMode?'Click Curve…':'Add Point')+'</button><button class="db-btn" data-db-subdivide-curve>Subdivide All</button><button class="db-btn danger" data-db-delete-source-point>Delete Point</button></div><button class="db-btn" style="width:100%;margin-top:7px" data-db-center-on-bone title="Move this shape\'s points so it sits centred on the selected bone (or the rig\'s centre if no bone is selected)">Center On '+(bone?('Bone \u201c'+esc(bone.name||'Bone')+'\u201d'):'Rig Centre')+'</button><div class="db-point-list">'+rows+'</div><div class="db-row" style="margin-top:8px"><label>Easing</label><select data-db-point-easing><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="ease-in-out">Ease In/Out</option><option value="hold">Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-point-key>Set Curve Key</button><button class="db-btn danger" data-db-delete-point-key>Delete Curve Key</button></div>':'<div class="db-empty">Build or load a part containing editable curves.</div>')+'</div></div>';}
 
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
@@ -4284,7 +4381,7 @@
     bindPair('[data-db-bone-head-x]','[data-db-bone-head-x-num]');bindPair('[data-db-bone-head-y]','[data-db-bone-head-y-num]');bindPair('[data-db-bone-tail-x]','[data-db-bone-tail-x-num]');bindPair('[data-db-bone-tail-y]','[data-db-bone-tail-y-num]');bindPair('[data-db-bone-env-start]','[data-db-bone-env-start-num]',previewSelectedBoneEnvelope);bindPair('[data-db-bone-env-end]','[data-db-bone-env-end-num]',previewSelectedBoneEnvelope);bindPair('[data-db-bone-strength]','[data-db-bone-strength-num]',previewSelectedBoneEnvelope);
     p.querySelectorAll('[data-db-show-envelopes]').forEach(function(input){input.onchange=function(){state.showEnvelopes=!!input.checked;API.refreshUI();};});
     bindPair('[data-db-pose-dx]','[data-db-pose-dx-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-dy]','[data-db-pose-dy-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-rotation]','[data-db-pose-rotation-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-scale]','[data-db-pose-scale-num]',previewBonePoseFromInputs);p.querySelectorAll('[data-db-set-bone-key]').forEach(function(b){b.onclick=setBoneKey;});p.querySelectorAll('[data-db-delete-bone-key]').forEach(function(b){b.onclick=deleteBoneKey;});
-    var curveSel=p.querySelector('[data-db-curve-select]');if(curveSel)curveSel.onchange=function(){state.selectedCurveId=curveSel.value;state.selectedPointIndex=0;state.curvePointAddMode=false;renderAll();};p.querySelectorAll('[data-db-point-row]').forEach(function(row){row.onclick=function(e){if(e.target.tagName==='INPUT')return;state.selectedPointIndex=n(row.getAttribute('data-db-point-index'),0);renderAll();};});p.querySelectorAll('[data-db-point-x],[data-db-point-y]').forEach(function(inp){inp.onchange=function(){var o=findObjectById(state.selectedCurveId),i=n(inp.getAttribute('data-db-point-x')||inp.getAttribute('data-db-point-y'),0);if(!o||!o.points||!o.points[i])return;API.pushUndo();var x=o.points[i].x,y=o.points[i].y;if(inp.hasAttribute('data-db-point-x'))x=n(inp.value,x);else y=n(inp.value,y);setCurvePointSourcePosition(o,i,x,y);renderAll();};});p.querySelectorAll('[data-db-add-curve-point]').forEach(function(b){b.onclick=function(){state.curvePointAddMode=!state.curvePointAddMode;state.mode=state.curvePointAddMode?'add-curve-point':'select';renderAll();notify(state.curvePointAddMode?'Click a curve segment to insert a point. Ctrl+click also works.':'Add Point cancelled.',false);};});p.querySelectorAll('[data-db-subdivide-curve]').forEach(function(b){b.onclick=subdivideSelectedCurve;});p.querySelectorAll('[data-db-delete-source-point]').forEach(function(b){b.onclick=deleteSelectedCurvePoint;});p.querySelectorAll('[data-db-set-point-key]').forEach(function(b){b.onclick=setCurvePointKey;});p.querySelectorAll('[data-db-delete-point-key]').forEach(function(b){b.onclick=deleteCurvePointKey;});
+    var curveSel=p.querySelector('[data-db-curve-select]');if(curveSel)curveSel.onchange=function(){state.selectedCurveId=curveSel.value;state.selectedPointIndex=0;state.curvePointAddMode=false;renderAll();};p.querySelectorAll('[data-db-point-row]').forEach(function(row){row.onclick=function(e){if(e.target.tagName==='INPUT')return;state.selectedPointIndex=n(row.getAttribute('data-db-point-index'),0);renderAll();};});p.querySelectorAll('[data-db-point-x],[data-db-point-y]').forEach(function(inp){inp.onchange=function(){var o=findObjectById(state.selectedCurveId),i=n(inp.getAttribute('data-db-point-x')||inp.getAttribute('data-db-point-y'),0);if(!o||!o.points||!o.points[i])return;API.pushUndo();var x=o.points[i].x,y=o.points[i].y;if(inp.hasAttribute('data-db-point-x'))x=n(inp.value,x);else y=n(inp.value,y);setCurvePointSourcePosition(o,i,x,y);renderAll();};});p.querySelectorAll('[data-db-add-curve-point]').forEach(function(b){b.onclick=function(){state.curvePointAddMode=!state.curvePointAddMode;state.mode=state.curvePointAddMode?'add-curve-point':'select';renderAll();notify(state.curvePointAddMode?'Click a curve segment to insert a point. Ctrl+click also works.':'Add Point cancelled.',false);};});p.querySelectorAll('[data-db-subdivide-curve]').forEach(function(b){b.onclick=subdivideSelectedCurve;});p.querySelectorAll('[data-db-center-on-bone]').forEach(function(b){b.onclick=centerSelectedCurveOnBone;});p.querySelectorAll('[data-db-delete-source-point]').forEach(function(b){b.onclick=deleteSelectedCurvePoint;});p.querySelectorAll('[data-db-set-point-key]').forEach(function(b){b.onclick=setCurvePointKey;});p.querySelectorAll('[data-db-delete-point-key]').forEach(function(b){b.onclick=deleteCurvePointKey;});
     p.querySelectorAll('[data-db-expression-type]').forEach(function(b){b.onclick=function(){state.expressionType=b.getAttribute('data-db-expression-type');renderAll();};});var esn=p.querySelector('[data-db-expression-slot-name]');if(esn)esn.oninput=function(){state.expressionSlot=esn.value||'Default';};var ess=p.querySelector('[data-db-expression-slot]');if(ess)ess.onchange=function(){state.expressionSlot=ess.value||state.expressionSlot;};p.querySelectorAll('[data-db-import-expression]').forEach(function(b){b.onclick=function(){state.expressionSlot=(p.querySelector('[data-db-expression-slot-name]').value||'Default').trim();state.fileInputs.expression.click();};});p.querySelectorAll('[data-db-set-expression-key]').forEach(function(b){b.onclick=function(){setExpressionKey(state.expressionType,state.expressionSlot);};});p.querySelectorAll('[data-db-clear-expression-key]').forEach(function(b){b.onclick=function(){clearExpressionKey(state.expressionType);};});
   }
 
