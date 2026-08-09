@@ -1,25 +1,29 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v13.0
+/* Luke Animate Dem Bones + MyCharacter GPT v14.0
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
 
-   v13 fixes Character/rig movement caused by DemBones UI interaction.
-   The panel is now read-only with respect to stage geometry:
-   - renderAll()/renderBody() never reconcile or rewrite Character transforms;
-   - the object evaluator no longer writes unpinned Clip transforms back into
-     Character data while Luke Animate is rendering;
-   - normal Build Character view does not draw the stale Build Parts rig overlay;
-   - Character child Clip instances are installed once as real native objects;
-   - returning to/selecting a Character part no longer rebuilds the root contents;
-   - explicit native stage movement is synced only after actual selection/mouse-up,
-     save, pin or other deliberate Character actions;
-   - only a real active pin is allowed to override a part transform at render time.
+   v14 fixes the live selection origin / bounding-box problem for boned shapes.
+   The visible DemBones deformation was being drawn from the evaluator, but the
+   selected object's own geometry could remain at an older pose. That left the
+   origin point, dashed bounds and transform handles behind while the visible
+   SVG had moved.
+
+   v14 adds live display-geometry syncing:
+   - the current posed curve points and Bezier handles are computed once in a
+     shared helper;
+   - the evaluator still renders from that posed geometry;
+   - the real selected object's points / handles are also updated to the same
+     posed geometry so the origin point and bounding box follow the whole
+     boned shape;
+   - this runs after rig edits, panel refreshes and frame changes;
+   - Character stability fixes from v13 are retained.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "13.0";
+  var TOOL_VERSION = "14.0";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1389,35 +1393,14 @@
     }).filter(Boolean);
   }
 
-  function evaluator(object,time,effective){
-    if(object&&object.__dbPartId){
-      var part=partById(object.__dbPartId);
-      if(!part)return effective;
+  function deformedObjectGeometry(object,time){
+    if(!object||!object.demBones||!object.demBones.rig)return null;
 
-      /*
-        v13: an unpinned Character part is entirely owned by Luke Animate's
-        native Clip transform. Rendering is strictly read-only.
-      */
-      if(!part.pin){
-        return effective;
-      }
+    var data=object.demBones;
+    var rig=data.rig;
 
-      var solved=resolvedPartTransform(part,time,{});
-      var result=Object.assign({},effective);
+    if(!Array.isArray(data.restPoints)||!data.restPoints.length)return null;
 
-      result.x=solved.x;
-      result.y=solved.y;
-      result.scale=solved.scale;
-      result.scaleX=solved.scaleX;
-      result.scaleY=solved.scaleY;
-      result.rotation=solved.rotation;
-      result.opacity=solved.opacity;
-
-      return result;
-    }
-    if(object&&object.demBonesExpression&&object.demBonesExpression.rig){var ex=object.demBonesExpression,slot=activeExpressionSlot(ex.rig,ex.type,time),r=Object.assign({},effective);r.opacity=slot===ex.slot?n(ex.baseOpacity,1):0;return r;}
-    if(!object||!object.demBones||!object.demBones.rig)return effective;
-    var data=object.demBones,rig=data.rig;if(!Array.isArray(data.restPoints)||!data.restPoints.length)return effective;
     normaliseRigBones(rig);
 
     if(
@@ -1442,29 +1425,88 @@
     var rest=restTransformMap(rig);
     var posed=posedTransformMap(rig,time);
     var base=interpolatePointKey(rig,object.id,time,data.restPoints);
-    var pts=base.map(function(p,i){
-      return deformPoint(
-        p,
-        data.weights[i],
-        rest,
-        posed
-      );
+
+    var points=base.map(function(point,index){
+      return deformPoint(point,data.weights[index],rest,posed);
     });
 
+    var handles=deformBezierHandles(base,points,data,rest,posed);
+
+    return{
+      points:points,
+      closedPath:!!data.closedPath,
+      bezierHandles:handles
+    };
+  }
+
+  function syncRigDisplayGeometry(rig,time){
+    if(!rig)return false;
+
+    var changed=false;
+
+    rigObjects(rig).forEach(function(object){
+      var geometry=deformedObjectGeometry(object,time);
+      if(!geometry)return;
+
+      object.points=geometry.points.map(function(point){
+        return{x:n(point.x,0),y:n(point.y,0)};
+      });
+
+      object.closedPath=!!geometry.closedPath;
+
+      if(geometry.bezierHandles){
+        object.bezierHandles=copySkinBezierHandles(
+          geometry.bezierHandles,
+          geometry.bezierHandles.length
+        );
+      }
+
+      changed=true;
+    });
+
+    return changed;
+  }
+
+  function evaluator(object,time,effective){
+    if(object&&object.__dbPartId){
+      var part=partById(object.__dbPartId);
+      if(!part)return effective;
+
+      if(!part.pin){
+        return effective;
+      }
+
+      var solved=resolvedPartTransform(part,time,{});
+      var result=Object.assign({},effective);
+
+      result.x=solved.x;
+      result.y=solved.y;
+      result.scale=solved.scale;
+      result.scaleX=solved.scaleX;
+      result.scaleY=solved.scaleY;
+      result.rotation=solved.rotation;
+      result.opacity=solved.opacity;
+
+      return result;
+    }
+
+    if(object&&object.demBonesExpression&&object.demBonesExpression.rig){
+      var ex=object.demBonesExpression;
+      var slot=activeExpressionSlot(ex.rig,ex.type,time);
+      var r=Object.assign({},effective);
+      r.opacity=slot===ex.slot?n(ex.baseOpacity,1):0;
+      return r;
+    }
+
+    var geometry=deformedObjectGeometry(object,time);
+    if(!geometry)return effective;
+
     var out=Object.assign({},effective);
-    out.points=pts;
-    out.closedPath=!!data.closedPath;
+    out.points=geometry.points;
+    out.closedPath=!!geometry.closedPath;
 
-    var deformedHandles=deformBezierHandles(
-      base,
-      pts,
-      data,
-      rest,
-      posed
-    );
-
-    if(deformedHandles){
-      out.bezierHandles=deformedHandles;
+    if(geometry.bezierHandles){
+      out.bezierHandles=geometry.bezierHandles;
     }
 
     return out;
@@ -3050,6 +3092,9 @@
     state.drag=null;
     state.addPreview=null;
     state.mode=state.tab==="bones"?"add-bone":"select";
+    if(state.activeRig){
+      syncRigDisplayGeometry(state.activeRig,currentTime());
+    }
     renderAll();
   }
 
@@ -3400,7 +3445,16 @@
   function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. SVG files loaded by DemBones are automatically centred using the actual artwork bounds. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character keeps the part where it is on stage. Select / Move uses Luke Animate’s native Select/Edit tool. Adjust opens rest-bone/envelope editing. Animate opens bone animation. To pin, press 📌 on the child part and click a visible target bone; the current placement is preserved.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():state.tab==='commit'?commitPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
-  function renderAll(){if(!state.panel)return;state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});renderBody();}
+  function renderAll(){
+    if(state.activeRig){
+      syncRigDisplayGeometry(state.activeRig,currentTime());
+    }
+    if(!state.panel)return;
+    state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){
+      btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);
+    });
+    renderBody();
+  }
 
   function bindPair(rangeSel,numSel,callback){var r=state.panel.querySelector(rangeSel),m=state.panel.querySelector(numSel);if(!r||!m)return;r.addEventListener('input',function(){m.value=r.value;callback&&callback(r.value);});m.addEventListener('input',function(){r.value=m.value;callback&&callback(m.value);});}
 
@@ -3431,7 +3485,7 @@
   function createPanel(){ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){var nextTab=b.getAttribute('data-db-tab');if(state.tab==='character'&&nextTab!=='character'&&state.character.rootClipId&&API.getEditingClipId()===state.character.rootClipId){state.activeRig=null;state.selectedBoneId='';state.selectedCurveId='';}state.tab=nextTab;state.curvePointAddMode=false;state.mode=state.tab==='bones'?'add-bone':'select';if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}renderAll();};});state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();}
   function makeDraggable(panel,handle){handle.addEventListener('pointerdown',function(e){if(e.target.closest('button'))return;e.preventDefault();API.bringFloatingPanelToFront(panel);var r=panel.getBoundingClientRect(),ox=e.clientX-r.left,oy=e.clientY-r.top;function mv(ev){panel.style.left=(ev.clientX-ox)+'px';panel.style.top=(ev.clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto';}function up(){window.removeEventListener('pointermove',mv,true);window.removeEventListener('pointerup',up,true);API.clampFloatingPanelToViewport(panel);}window.addEventListener('pointermove',mv,true);window.addEventListener('pointerup',up,true);});}
 
-  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);}
+  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.activeRig){syncRigDisplayGeometry(state.activeRig,currentTime());}if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);}
 
   function open(){
     /* Capture the stage selection before changing focus or suppressing the fixed
