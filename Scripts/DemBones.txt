@@ -1,22 +1,29 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v10.0
+/* Luke Animate Dem Bones + MyCharacter GPT v11.0
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
-   Rebuilds the supplied DemBones/MyCharacter workflow for Luke Animate:
-   Build Character, Build Parts, Bones, Edit Bone, Animate, Curves,
-   Expression, Commit and Help.
-   v8 introduced smooth envelope skinning and visible envelopes.
-   v9 removed influence-point dots and made unwanted bones easy to delete.
-   v10 centres every normal SVG loaded by DemBones on the current Luke Animate
-   stage/editing context. Placement is based on the combined bounds of the
-   actual imported artwork, not the SVG page/viewBox, so excess SVG whitespace
-   does not offset the part.
+
+   v11 rebuilds Build Character around the LukeTools/MyCharacter workflow:
+   - adding a part preserves its stage position instead of snapping to 0,0;
+   - the Character root Clip uses the stage centre as its pivot/instance position;
+   - character part Clip instances are persistent native Luke Animate objects;
+   - unpinned parts are directly movable/scalable/rotatable with Luke Animate's
+     normal Select/Edit tool while inside the Character Clip;
+   - each part card has Select / Move, Adjust and Animate actions;
+   - Adjust enters the part Clip with its rig active for rest-bone/envelope work;
+   - Animate enters the part Clip with its rig active for animation;
+   - pinning is no longer dropdown based: press the pin button on a part, then
+     click a visible bone head/tail/line on another part;
+   - pinning preserves the child's current position, rotation and scale by
+     storing a bone-local offset instead of snapping the child onto the bone;
+   - pinned parts inherit the parent part transform and animated target bone;
+   - Unpin preserves the current resolved stage transform.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "10.0";
+  var TOOL_VERSION = "11.0";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -66,6 +73,7 @@
       rootInstanceId:"",
       nextPartId:1,
       selectedPartId:null,
+      pinPickSourceId:null,
       parts:[]
     },
     editingPartId:null,
@@ -1136,14 +1144,262 @@
 
   function activeExpressionSlot(rig,type,time){var bucket=rig&&rig.expressions&&rig.expressions[type];if(!bucket)return"";var keys=(bucket.keys||[]).slice().sort(function(a,b){return a.time-b.time;}),slot="";keys.forEach(function(k){if(k.time<=time+.0001)slot=k.slot;});return slot;}
 
-  function partById(id){return state.character.parts.filter(function(p){return p.id===Number(id);})[0]||null;}
-  function partInstance(part){if(!part||!state.character.rootClipId)return null;var root=clips()[state.character.rootClipId];if(!root)return null;return(root.drawObjects||[]).filter(function(o){return o&&o.__dbPartId===part.id;})[0]||null;}
+  function partById(id){
+    return state.character.parts.filter(function(p){
+      return p.id===Number(id);
+    })[0]||null;
+  }
+
+  function characterRootInstance(){
+    return state.character.rootInstanceId
+      ?findObjectById(state.character.rootInstanceId)
+      :null;
+  }
+
+  function characterRootObjectList(root){
+    if(
+      root&&
+      Array.isArray(root.sceneFrames)&&
+      root.sceneFrames.length&&
+      Array.isArray(root.sceneFrames[0].objects)
+    ){
+      root.drawObjects=root.sceneFrames[0].objects;
+      return root.drawObjects;
+    }
+
+    if(root&&!Array.isArray(root.drawObjects)){
+      root.drawObjects=[];
+    }
+
+    return root?root.drawObjects:[];
+  }
+
+  function partInstance(part){
+    if(!part||!state.character.rootClipId)return null;
+
+    var root=clips()[state.character.rootClipId];
+    if(!root)return null;
+
+    return characterRootObjectList(root).filter(function(o){
+      return o&&Number(o.__dbPartId)===Number(part.id);
+    })[0]||null;
+  }
+
+  function normalisePartTransform(value){
+    value=value||{};
+    return{
+      x:n(value.x,0),
+      y:n(value.y,0),
+      scale:Math.max(.01,n(value.scale,1)),
+      scaleX:Math.max(.01,n(value.scaleX,1)),
+      scaleY:Math.max(.01,n(value.scaleY,1)),
+      rotation:n(value.rotation,0),
+      opacity:clamp(n(value.opacity,1),0,1)
+    };
+  }
+
+  function transformFromPartInstance(instance,fallback){
+    var base=normalisePartTransform(fallback);
+    if(!instance)return base;
+
+    return{
+      x:n(instance.x,base.x),
+      y:n(instance.y,base.y),
+      scale:Math.max(.01,n(instance.scale,base.scale)),
+      scaleX:Math.max(.01,n(instance.scaleX,base.scaleX)),
+      scaleY:Math.max(.01,n(instance.scaleY,base.scaleY)),
+      rotation:n(instance.rotation,base.rotation),
+      opacity:clamp(n(instance.opacity,base.opacity),0,1)
+    };
+  }
+
+  function syncPartTransformFromInstance(part){
+    if(!part||part.pin)return false;
+    var instance=partInstance(part);
+    if(!instance)return false;
+
+    part.transform=transformFromPartInstance(instance,part.transform);
+    return true;
+  }
+
+  function syncPartTransformFromEffective(part,effective){
+    if(!part||part.pin||!effective)return;
+
+    part.transform=normalisePartTransform({
+      x:effective.x,
+      y:effective.y,
+      scale:effective.scale,
+      scaleX:effective.scaleX,
+      scaleY:effective.scaleY,
+      rotation:effective.rotation,
+      opacity:effective.opacity
+    });
+  }
+
+  function syncAllUnpinnedCharacterTransforms(){
+    state.character.parts.forEach(function(part){
+      syncPartTransformFromInstance(part);
+    });
+  }
+
+  function partLocalPointToCharacterScene(partTransform,point){
+    var transform=normalisePartTransform(partTransform);
+    var scaled={
+      x:n(point&&point.x,0)*transform.scale*transform.scaleX,
+      y:n(point&&point.y,0)*transform.scale*transform.scaleY
+    };
+
+    var rotated=rotateVector(
+      scaled.x,
+      scaled.y,
+      transform.rotation*Math.PI/180
+    );
+
+    return{
+      x:transform.x+rotated.x,
+      y:transform.y+rotated.y
+    };
+  }
+
+  function resolvedPartTransform(part,time,visited){
+    if(!part)return normalisePartTransform(null);
+
+    visited=visited||{};
+
+    if(visited[part.id]){
+      return normalisePartTransform(part.transform);
+    }
+
+    visited[part.id]=true;
+
+    var instance=partInstance(part);
+    var base=part.pin
+      ?normalisePartTransform(part.transform)
+      :transformFromPartInstance(instance,part.transform);
+
+    if(!part.pin||!part.pin.targetPartId||!part.pin.boneId){
+      delete visited[part.id];
+      return base;
+    }
+
+    var parent=partById(part.pin.targetPartId);
+    if(!parent||!parent.rig){
+      delete visited[part.id];
+      return base;
+    }
+
+    var parentTransform=resolvedPartTransform(parent,time,visited);
+    var poseMap=posedTransformMap(parent.rig,time);
+    var bonePose=poseMap[part.pin.boneId];
+
+    if(!bonePose){
+      delete visited[part.id];
+      return base;
+    }
+
+    var headWorld=partLocalPointToCharacterScene(parentTransform,bonePose.head);
+    var tailWorld=partLocalPointToCharacterScene(parentTransform,bonePose.tail);
+
+    var attachPoint=part.pin.attachPoint==="head"?"head":"tail";
+    var anchor=attachPoint==="head"?headWorld:tailWorld;
+
+    var targetAngle=Math.atan2(
+      tailWorld.y-headWorld.y,
+      tailWorld.x-headWorld.x
+    )*180/Math.PI;
+
+    var localOffset=part.pin.offsetLocal||{
+      x:n(part.pin.offsetX,0),
+      y:n(part.pin.offsetY,0)
+    };
+
+    var parentScaleNow=Math.max(.0001,n(parentTransform.scale,1));
+
+    var rotatedOffset=rotateVector(
+      n(localOffset.x,0)*parentScaleNow,
+      n(localOffset.y,0)*parentScaleNow,
+      targetAngle*Math.PI/180
+    );
+
+    var parentScaleAtPin=Math.max(
+      .0001,
+      n(part.pin.parentScaleAtPin,parentScaleNow)
+    );
+
+    var childScaleAtPin=Math.max(
+      .0001,
+      n(part.pin.childScaleAtPin,base.scale)
+    );
+
+    var scaleRatio=parentScaleNow/parentScaleAtPin;
+
+    var solved={
+      x:anchor.x+rotatedOffset.x,
+      y:anchor.y+rotatedOffset.y,
+      scale:childScaleAtPin*scaleRatio,
+      scaleX:Math.max(.01,n(part.pin.childScaleXAtPin,base.scaleX)),
+      scaleY:Math.max(.01,n(part.pin.childScaleYAtPin,base.scaleY)),
+      rotation:part.pin.inheritRotation===false
+        ?n(part.pin.fixedRotation,base.rotation)
+        :targetAngle+n(part.pin.rotationOffset,0),
+      opacity:base.opacity
+    };
+
+    delete visited[part.id];
+    return normalisePartTransform(solved);
+  }
+
+  function characterPartBoneWorldRecords(part,time){
+    if(!part||!part.rig)return[];
+
+    var transform=resolvedPartTransform(part,time,{});
+    var map=posedTransformMap(part.rig,time);
+
+    return(part.rig.bones||[]).map(function(bone){
+      var pose=map[bone.id];
+      if(!pose)return null;
+
+      var head=partLocalPointToCharacterScene(transform,pose.head);
+      var tail=partLocalPointToCharacterScene(transform,pose.tail);
+
+      return{
+        part:part,
+        bone:bone,
+        head:head,
+        tail:tail,
+        angle:Math.atan2(
+          tail.y-head.y,
+          tail.x-head.x
+        )*180/Math.PI
+      };
+    }).filter(Boolean);
+  }
 
   function evaluator(object,time,effective){
     if(object&&object.__dbPartId){
-      var part=partById(object.__dbPartId);if(!part)return effective;var result=Object.assign({},effective),base=part.transform||{};result.x=n(base.x,0);result.y=n(base.y,0);result.scale=Math.max(.01,n(base.scale,1));result.rotation=n(base.rotation,0);result.opacity=n(base.opacity,1);
-      if(part.pin&&part.pin.targetPartId&&part.pin.boneId){var target=partById(part.pin.targetPartId),ti=partInstance(target);if(target&&ti&&target.rig){var map=posedTransformMap(target.rig,time),bone=map[part.pin.boneId];if(bone){var tx=n(target.transform.x,0),ty=n(target.transform.y,0),ts=Math.max(.01,n(target.transform.scale,1)),tr=n(target.transform.rotation,0)*Math.PI/180;var loc=rotateVector(bone.tail.x*ts,bone.tail.y*ts,tr);result.x=tx+loc.x+n(part.pin.offsetX,0);result.y=ty+loc.y+n(part.pin.offsetY,0);if(part.pin.inheritRotation)result.rotation=n(target.transform.rotation,0)+bone.angle*180/Math.PI+n(part.pin.rotationOffset,0);}}
+      var part=partById(object.__dbPartId);
+      if(!part)return effective;
+
+      /*
+        Unpinned character parts use the real native Clip instance transform.
+        This makes Luke Animate's normal Select/Edit handles authoritative.
+      */
+      if(!part.pin){
+        syncPartTransformFromEffective(part,effective);
+        return effective;
       }
+
+      var solved=resolvedPartTransform(part,time,{});
+      var result=Object.assign({},effective);
+
+      result.x=solved.x;
+      result.y=solved.y;
+      result.scale=solved.scale;
+      result.scaleX=solved.scaleX;
+      result.scaleY=solved.scaleY;
+      result.rotation=solved.rotation;
+      result.opacity=solved.opacity;
+
       return result;
     }
     if(object&&object.demBonesExpression&&object.demBonesExpression.rig){var ex=object.demBonesExpression,slot=activeExpressionSlot(ex.rig,ex.type,time),r=Object.assign({},effective);r.opacity=slot===ex.slot?n(ex.baseOpacity,1):0;return r;}
@@ -1223,90 +1479,966 @@
   }
 
   function shiftRig(rig,dx,dy){
-    (rig.bones||[]).forEach(function(b){b.restHead.x+=dx;b.restHead.y+=dy;b.restTail.x+=dx;b.restTail.y+=dy;});
+    (rig.bones||[]).forEach(function(b){
+      b.restHead.x+=dx;
+      b.restHead.y+=dy;
+      b.restTail.x+=dx;
+      b.restTail.y+=dy;
+    });
+    return rig;
+  }
+
+  function shiftRigPointKeys(rig,dx,dy){
+    if(!rig||!rig.pointKeys)return rig;
+
+    Object.keys(rig.pointKeys).forEach(function(id){
+      (rig.pointKeys[id]||[]).forEach(function(key){
+        key.points=(key.points||[]).map(function(point){
+          return{x:n(point.x,0)+dx,y:n(point.y,0)+dy};
+        });
+      });
+    });
+
     return rig;
   }
 
   function ensureCharacterRoot(){
     var map=clips();
-    if(state.character.rootClipId&&map[state.character.rootClipId])return map[state.character.rootClipId];
-    var id=uid("db-character-clip"),root={id:id,name:state.character.name||"MyCharacter",points:[],closed:false,targetPoints:[],layers:[],drawObjects:[],pivotX:0,pivotY:0,timelineDuration:Math.max(3,n(API.getTimelineDuration(),6)),loopTimeline:true,__demBonesCharacter:true};map[id]=root;state.character.rootClipId=id;state.character.id=state.character.id||uid("character");
-    var instance={type:"clipinstance",clipId:id,name:root.name,x:0,y:0,scale:1,rotation:0,timeOffset:0,opacity:1,keyframes:[],id:uid("db-character-instance"),__demBonesCharacterInstance:true,__dbCharacterId:state.character.id};API.addDrawObject(instance,"animate");state.character.rootInstanceId=instance.id;return root;
+    var root=state.character.rootClipId
+      ?map[state.character.rootClipId]
+      :null;
+    var centre=currentStageCentreScene();
+
+    if(root){
+      if(root.__dbCharacterPlacementVersion!==2){
+        root.pivotX=centre.x;
+        root.pivotY=centre.y;
+
+        var rootInstance=characterRootInstance();
+        if(rootInstance){
+          rootInstance.x=centre.x;
+          rootInstance.y=centre.y;
+        }
+
+        root.__dbCharacterPlacementVersion=2;
+      }
+      return root;
+    }
+
+    var id=uid("db-character-clip");
+
+    root={
+      id:id,
+      name:state.character.name||"MyCharacter",
+      points:[],
+      closed:false,
+      targetPoints:[],
+      layers:[],
+      drawObjects:[],
+      pivotX:centre.x,
+      pivotY:centre.y,
+      timelineDuration:Math.max(3,n(API.getTimelineDuration(),6)),
+      loopTimeline:true,
+      __demBonesCharacter:true,
+      __dbCharacterPlacementVersion:2
+    };
+
+    map[id]=root;
+    state.character.rootClipId=id;
+    state.character.id=state.character.id||uid("character");
+
+    var instance={
+      type:"clipinstance",
+      clipId:id,
+      name:root.name,
+      x:centre.x,
+      y:centre.y,
+      scale:1,
+      scaleX:1,
+      scaleY:1,
+      rotation:0,
+      timeOffset:0,
+      opacity:1,
+      keyframes:[],
+      id:uid("db-character-instance"),
+      __demBonesCharacterInstance:true,
+      __dbCharacterId:state.character.id
+    };
+
+    API.addDrawObject(instance,"animate");
+    state.character.rootInstanceId=instance.id;
+
+    return root;
   }
 
   function createPartClip(part,build){
-    var map=clips(),b=combinedBounds(build.objects),cx=b.cx,cy=b.cy,rig=clone(build.rig);rig.id=uid("db-part-rig");shiftRig(rig,-cx,-cy);
-    var idMap={};var objects=build.objects.map(function(raw){var o=clone(raw),old=o.id;o.id=uid("db-child-object");idMap[old]=o.id;shiftObject(o,-cx,-cy);if(o.demBones){o.demBones.rigId=rig.id;o.demBones.rig=rig;o.demBones.restPoints=(o.demBones.restPoints||[]).map(function(p){return{x:p.x-cx,y:p.y-cy};});}return o;});
-    rig.targetIds=(rig.targetIds||[]).map(function(id){return idMap[id]||id;});if(rig.pointKeys){var pk={};Object.keys(rig.pointKeys).forEach(function(id){var arr=clone(rig.pointKeys[id]);arr.forEach(function(k){k.points=(k.points||[]).map(function(p){return{x:p.x-cx,y:p.y-cy};});});pk[idMap[id]||id]=arr;});rig.pointKeys=pk;}
-    var expressionObjects=(build.expressionObjects||[]).map(function(raw){var o=clone(raw);o.id=uid("db-child-expression");shiftObject(o,-cx,-cy);if(o.demBonesExpression){o.demBonesExpression.rigId=rig.id;o.demBonesExpression.rig=rig;}return o;});
-    var clipId=uid("db-part-clip"),clip={id:clipId,name:part.name,points:[],closed:false,targetPoints:[],layers:[],drawObjects:objects.concat(expressionObjects),pivotX:0,pivotY:0,timelineDuration:Math.max(3,n(API.getTimelineDuration(),6)),loopTimeline:true,__demBonesPart:true,__dbPartId:part.id};map[clipId]=clip;part.clipId=clipId;part.rig=rig;part.source=clone(build);part.transform=part.transform||{x:cx,y:cy,scale:1,rotation:0,opacity:1};part.transform.x=n(part.transform.x,cx);part.transform.y=n(part.transform.y,cy);return clip;
+    var map=clips();
+    var bounds=combinedBounds(build.objects);
+    var cx=bounds.cx;
+    var cy=bounds.cy;
+    var rig=clone(build.rig);
+
+    rig.id=uid("db-part-rig");
+    shiftRig(rig,-cx,-cy);
+    shiftRigPointKeys(rig,-cx,-cy);
+
+    var idMap={};
+
+    var objects=build.objects.map(function(raw){
+      var o=clone(raw);
+      var old=o.id;
+
+      o.id=uid("db-child-object");
+      idMap[old]=o.id;
+
+      shiftObject(o,-cx,-cy);
+
+      if(o.demBones){
+        o.demBones.rigId=rig.id;
+        o.demBones.rig=rig;
+        o.demBones.restPoints=(o.demBones.restPoints||[]).map(function(p){
+          return{x:p.x-cx,y:p.y-cy};
+        });
+      }
+
+      return o;
+    });
+
+    rig.targetIds=(rig.targetIds||[]).map(function(id){
+      return idMap[id]||id;
+    });
+
+    if(rig.pointKeys){
+      var remapped={};
+      Object.keys(rig.pointKeys).forEach(function(id){
+        remapped[idMap[id]||id]=rig.pointKeys[id];
+      });
+      rig.pointKeys=remapped;
+    }
+
+    var expressionObjects=(build.expressionObjects||[]).map(function(raw){
+      var o=clone(raw);
+      o.id=uid("db-child-expression");
+      shiftObject(o,-cx,-cy);
+
+      if(o.demBonesExpression){
+        o.demBonesExpression.rigId=rig.id;
+        o.demBonesExpression.rig=rig;
+      }
+
+      return o;
+    });
+
+    var clipId=uid("db-part-clip");
+
+    var clip={
+      id:clipId,
+      name:part.name,
+      points:[],
+      closed:false,
+      targetPoints:[],
+      layers:[],
+      drawObjects:objects.concat(expressionObjects),
+      pivotX:0,
+      pivotY:0,
+      timelineDuration:Math.max(3,n(API.getTimelineDuration(),6)),
+      loopTimeline:true,
+      __demBonesPart:true,
+      __dbPartId:part.id
+    };
+
+    map[clipId]=clip;
+
+    part.clipId=clipId;
+    part.rig=rig;
+    part.source=clone(build);
+    part.localOrigin={x:cx,y:cy};
+
+    if(!part.transform){
+      part.transform={
+        x:cx,
+        y:cy,
+        scale:1,
+        scaleX:1,
+        scaleY:1,
+        rotation:0,
+        opacity:1
+      };
+    }else{
+      part.transform=normalisePartTransform(part.transform);
+    }
+
+    return clip;
   }
 
   function updateCharacterInstances(){
-    var root=ensureCharacterRoot();root.name=state.character.name||"MyCharacter";root.drawObjects=[];
-    state.character.parts.forEach(function(part){if(!clips()[part.clipId]&&part.source)createPartClip(part,part.source);var inst={type:"clipinstance",clipId:part.clipId,name:part.name,x:n(part.transform&&part.transform.x,0),y:n(part.transform&&part.transform.y,0),scale:Math.max(.01,n(part.transform&&part.transform.scale,1)),rotation:n(part.transform&&part.transform.rotation,0),timeOffset:0,opacity:n(part.transform&&part.transform.opacity,1),keyframes:[],id:uid("db-part-instance"),__dbPartId:part.id,__dbCharacterId:state.character.id};root.drawObjects.push(inst);});API.refreshUI();
+    var root=ensureCharacterRoot();
+    root.name=state.character.name||"MyCharacter";
+
+    var list=characterRootObjectList(root);
+    var existing={};
+
+    list.forEach(function(object){
+      if(object&&object.__dbPartId!==undefined){
+        existing[String(object.__dbPartId)]=object;
+      }
+    });
+
+    var ordered=[];
+
+    state.character.parts.forEach(function(part){
+      if(!clips()[part.clipId]&&part.source){
+        createPartClip(part,part.source);
+      }
+
+      var instance=existing[String(part.id)];
+
+      if(!instance){
+        var transform=normalisePartTransform(part.transform);
+
+        instance={
+          type:"clipinstance",
+          clipId:part.clipId,
+          name:part.name,
+          x:transform.x,
+          y:transform.y,
+          scale:transform.scale,
+          scaleX:transform.scaleX,
+          scaleY:transform.scaleY,
+          rotation:transform.rotation,
+          timeOffset:0,
+          opacity:transform.opacity,
+          keyframes:[],
+          id:uid("db-part-instance"),
+          __dbPartId:part.id,
+          __dbCharacterId:state.character.id
+        };
+      }else if(!part.pin){
+        part.transform=transformFromPartInstance(instance,part.transform);
+      }
+
+      instance.clipId=part.clipId;
+      instance.name=part.name;
+      instance.__dbPartId=part.id;
+      instance.__dbCharacterId=state.character.id;
+
+      if(!Array.isArray(instance.keyframes)){
+        instance.keyframes=[];
+      }
+
+      ordered.push(instance);
+    });
+
+    /*
+      Keep the same native object-array reference so selection, keyframes and
+      Luke Animate layer ownership do not disappear on every panel refresh.
+    */
+    list.splice.apply(list,[0,list.length].concat(ordered));
+    root.drawObjects=list;
+
+    if(Array.isArray(root.sceneFrames)&&root.sceneFrames.length){
+      root.sceneFrames[0].objects=list;
+    }
+
+    API.refreshUI();
+  }
+
+  function returnToCharacterRoot(){
+    if(!state.character.parts.length)return false;
+
+    var root=ensureCharacterRoot();
+    var guard=0;
+    var editing=typeof API.getEditingClipId==="function"
+      ?API.getEditingClipId()
+      :null;
+
+    while(editing&&editing!==root.id&&guard<12){
+      if(!API.exitClip())break;
+      editing=API.getEditingClipId();
+      guard++;
+    }
+
+    if(editing!==root.id){
+      API.enterClip(root.id);
+    }
+
+    updateCharacterInstances();
+
+    return API.getEditingClipId()===root.id;
+  }
+
+  function selectCharacterPartOnStage(part){
+    if(!part)return false;
+
+    state.character.selectedPartId=part.id;
+
+    if(!returnToCharacterRoot())return false;
+
+    var instance=sceneObjects().filter(function(object){
+      return object&&Number(object.__dbPartId)===Number(part.id);
+    })[0]||partInstance(part);
+
+    if(!instance)return false;
+
+    API.selectDrawObject(instance);
+    API.refreshUI();
+
+    return true;
+  }
+
+  function syncCharacterSelectionFromStage(){
+    if(
+      !state.open||
+      state.tab!=="character"||
+      !state.character.rootClipId||
+      API.getEditingClipId()!==state.character.rootClipId
+    ){
+      return false;
+    }
+
+    var selected=[];
+
+    try{
+      selected=API.getSelectedDrawObjects()||[];
+    }catch(ignore){}
+
+    var instance=selected.filter(function(object){
+      return object&&object.__dbPartId!==undefined;
+    })[0];
+
+    if(!instance)return false;
+
+    var part=partById(instance.__dbPartId);
+    if(!part)return false;
+
+    var changed=Number(state.character.selectedPartId)!==Number(part.id);
+    state.character.selectedPartId=part.id;
+
+    if(!part.pin){
+      part.transform=transformFromPartInstance(instance,part.transform);
+    }
+
+    return changed;
+  }
+
+  function activateCharacterPartMode(part,mode){
+    if(!part||!part.clipId||!clips()[part.clipId]){
+      notify("This character part has no editable Clip.",true);
+      return;
+    }
+
+    selectCharacterPartOnStage(part);
+    API.enterClip(part.clipId);
+
+    state.character.selectedPartId=part.id;
+    state.activeRig=part.rig;
+
+    if(state.activeRig){
+      syncRigRefs(state.activeRig);
+      state.selectedBoneId=
+        state.activeRig.bones&&state.activeRig.bones.length
+          ?state.activeRig.bones[0].id
+          :"";
+    }
+
+    state.tab=mode==="animate"?"animate":"editbone";
+    state.mode="select";
+    state.showEnvelopes=mode!=="animate";
+
+    API.refreshUI();
+    renderAll();
+
+    notify(
+      mode==="animate"
+        ?'Animating "'+part.name+'".'
+        :'Adjusting "'+part.name+'". Move bone heads/tails and edit envelopes directly.',
+      false
+    );
   }
 
   function addBuildToCharacter(options){
     options=options&&options.__dbInternalOptions?options:{};
+
     var build=serializeBuildPart();
+
     if(!build){
       if(!options.silent)notify("Build or import a part first.",true);
       return null;
     }
-    var part=state.editingPartId?partById(state.editingPartId):null;
+
+    var part=state.editingPartId
+      ?partById(state.editingPartId)
+      :null;
+
     if(!part){
       var nextId=state.character.nextPartId++;
-      part={id:nextId,name:(state.activeRig&&state.activeRig.name)||("Part "+nextId),clipId:"",source:null,rig:null,transform:null,pin:null,collapsed:false};
+
+      part={
+        id:nextId,
+        name:(state.activeRig&&state.activeRig.name)||("Part "+nextId),
+        clipId:"",
+        source:null,
+        rig:null,
+        transform:null,
+        pin:null,
+        localOrigin:null,
+        collapsed:false
+      };
+
       state.character.parts.push(part);
     }else if(part.clipId&&clips()[part.clipId]){
       delete clips()[part.clipId];
     }
+
     createPartClip(part,build);
     state.character.selectedPartId=part.id;
     state.editingPartId=null;
+
     ensureCharacterRoot();
     updateCharacterInstances();
+
     if(!options.keepTab)state.tab="character";
+
     renderAll();
-    if(!options.silent)notify('Added "'+part.name+'" to MyCharacter.',false);
+
+    if(!options.skipStageSelect){
+      selectCharacterPartOnStage(part);
+    }
+
+    if(!options.silent){
+      notify(
+        'Added "'+part.name+'" to MyCharacter at its current stage position. Use Select / Move, Adjust or Animate.',
+        false
+      );
+    }
+
     return part;
   }
 
-  function editCharacterPart(part){
-    if(!part||!part.source)return;state.editingPartId=part.id;loadBuildPart(part.source,true);state.tab="source";renderAll();notify('Editing "'+part.name+'" in Build Parts. Add To Character updates this part.',false);
+  function captureCharacterPartRuntime(part){
+    if(!part||!part.rig||!part.clipId)return;
+
+    var clip=clips()[part.clipId];
+    if(!clip)return;
+
+    var origin=part.localOrigin||{
+      x:n(part.transform&&part.transform.x,0),
+      y:n(part.transform&&part.transform.y,0)
+    };
+
+    var rig=clone(part.rig);
+
+    shiftRig(rig,origin.x,origin.y);
+    shiftRigPointKeys(rig,origin.x,origin.y);
+
+    var objects=[];
+    var expressionObjects=[];
+
+    (clip.drawObjects||[]).forEach(function(raw){
+      var object=clone(raw);
+      shiftObject(object,origin.x,origin.y);
+
+      if(object.demBones){
+        if(Array.isArray(object.demBones.restPoints)){
+          object.demBones.restPoints=object.demBones.restPoints.map(function(point){
+            return{x:n(point.x,0)+origin.x,y:n(point.y,0)+origin.y};
+          });
+        }
+        delete object.demBones.rig;
+      }
+
+      if(object.demBonesExpression){
+        delete object.demBonesExpression.rig;
+        expressionObjects.push(object);
+      }else{
+        objects.push(object);
+      }
+    });
+
+    part.source={
+      app:"LukeAnimateDemBonesPart",
+      version:3,
+      name:part.name,
+      rig:rig,
+      objects:objects,
+      expressionObjects:expressionObjects
+    };
   }
 
-  function deleteCharacterPart(part){if(!part)return;if(part.clipId&&clips()[part.clipId])delete clips()[part.clipId];state.character.parts=state.character.parts.filter(function(p){return p.id!==part.id;});if(state.character.selectedPartId===part.id)state.character.selectedPartId=state.character.parts[0]?state.character.parts[0].id:null;updateCharacterInstances();renderAll();}
-  function movePart(part,dir){var i=state.character.parts.indexOf(part),j=i+dir;if(i<0||j<0||j>=state.character.parts.length)return;var t=state.character.parts[i];state.character.parts[i]=state.character.parts[j];state.character.parts[j]=t;updateCharacterInstances();renderAll();}
+  function editCharacterPart(part){
+    if(!part||!part.source)return;
+
+    captureCharacterPartRuntime(part);
+
+    state.editingPartId=part.id;
+    loadBuildPart(part.source,true);
+    state.tab="source";
+    renderAll();
+
+    notify(
+      'Editing "'+part.name+'" in Build Parts. Add To Character updates this part.',
+      false
+    );
+  }
+
+  function deleteCharacterPart(part){
+    if(!part)return;
+
+    if(part.clipId&&clips()[part.clipId]){
+      delete clips()[part.clipId];
+    }
+
+    state.character.parts.forEach(function(candidate){
+      if(
+        candidate!==part&&
+        candidate.pin&&
+        Number(candidate.pin.targetPartId)===Number(part.id)
+      ){
+        clearPartPin(candidate,true);
+      }
+    });
+
+    state.character.parts=state.character.parts.filter(function(candidate){
+      return candidate.id!==part.id;
+    });
+
+    if(state.character.selectedPartId===part.id){
+      state.character.selectedPartId=state.character.parts[0]
+        ?state.character.parts[0].id
+        :null;
+    }
+
+    if(Number(state.character.pinPickSourceId)===Number(part.id)){
+      state.character.pinPickSourceId=null;
+    }
+
+    updateCharacterInstances();
+    renderAll();
+  }
+
+  function movePart(part,dir){
+    var i=state.character.parts.indexOf(part);
+    var j=i+dir;
+
+    if(i<0||j<0||j>=state.character.parts.length)return;
+
+    var temp=state.character.parts[i];
+    state.character.parts[i]=state.character.parts[j];
+    state.character.parts[j]=temp;
+
+    updateCharacterInstances();
+    renderAll();
+  }
 
   function saveCharacter(){
-    var data={app:"LukeAnimateMyCharacter",version:2,savedAt:new Date().toISOString(),character:{name:state.character.name,id:state.character.id,nextPartId:state.character.nextPartId,selectedPartId:state.character.selectedPartId,parts:state.character.parts.map(function(p){return{id:p.id,name:p.name,source:p.source,transform:p.transform,pin:p.pin,collapsed:p.collapsed};})}};downloadText((state.character.name||"MyCharacter")+".mycharacter.json",JSON.stringify(data,null,2),"application/json");notify("Saved MyCharacter.",false);
+    syncAllUnpinnedCharacterTransforms();
+
+    state.character.parts.forEach(function(part){
+      captureCharacterPartRuntime(part);
+    });
+
+    var data={
+      app:"LukeAnimateMyCharacter",
+      version:3,
+      savedAt:new Date().toISOString(),
+      character:{
+        name:state.character.name,
+        id:state.character.id,
+        nextPartId:state.character.nextPartId,
+        selectedPartId:state.character.selectedPartId,
+        parts:state.character.parts.map(function(part){
+          return{
+            id:part.id,
+            name:part.name,
+            source:part.source,
+            transform:part.transform,
+            pin:part.pin,
+            localOrigin:part.localOrigin,
+            collapsed:part.collapsed
+          };
+        })
+      }
+    };
+
+    downloadText(
+      (state.character.name||"MyCharacter")+".mycharacter.json",
+      JSON.stringify(data,null,2),
+      "application/json"
+    );
+
+    notify("Saved MyCharacter.",false);
   }
 
   function loadCharacterData(data){
-    if(!data||data.app!=="LukeAnimateMyCharacter"||!data.character||!Array.isArray(data.character.parts))throw new Error("Not a Luke Animate MyCharacter file.");
-    if(state.character.rootClipId&&clips()[state.character.rootClipId])delete clips()[state.character.rootClipId];state.character={version:2,name:data.character.name||"MyCharacter",id:data.character.id||uid("character"),rootClipId:"",rootInstanceId:"",nextPartId:n(data.character.nextPartId,1),selectedPartId:data.character.selectedPartId||null,parts:data.character.parts.map(function(raw){return{id:n(raw.id,0),name:raw.name||"Part",source:raw.source,rig:null,clipId:"",transform:raw.transform||{x:0,y:0,scale:1,rotation:0,opacity:1},pin:raw.pin||null,collapsed:!!raw.collapsed};})};ensureCharacterRoot();state.character.parts.forEach(function(p){if(p.source)createPartClip(p,p.source);});updateCharacterInstances();renderAll();notify("Loaded MyCharacter.",false);
+    if(
+      !data||
+      data.app!=="LukeAnimateMyCharacter"||
+      !data.character||
+      !Array.isArray(data.character.parts)
+    ){
+      throw new Error("Not a Luke Animate MyCharacter file.");
+    }
+
+    if(state.character.rootClipId&&clips()[state.character.rootClipId]){
+      delete clips()[state.character.rootClipId];
+    }
+
+    state.character={
+      version:3,
+      name:data.character.name||"MyCharacter",
+      id:data.character.id||uid("character"),
+      rootClipId:"",
+      rootInstanceId:"",
+      nextPartId:n(data.character.nextPartId,1),
+      selectedPartId:data.character.selectedPartId||null,
+      pinPickSourceId:null,
+      parts:data.character.parts.map(function(raw){
+        return{
+          id:n(raw.id,0),
+          name:raw.name||"Part",
+          source:raw.source,
+          rig:null,
+          clipId:"",
+          transform:normalisePartTransform(raw.transform),
+          pin:raw.pin||null,
+          localOrigin:raw.localOrigin||null,
+          collapsed:!!raw.collapsed
+        };
+      })
+    };
+
+    ensureCharacterRoot();
+
+    state.character.parts.forEach(function(part){
+      if(part.source)createPartClip(part,part.source);
+    });
+
+    updateCharacterInstances();
+    renderAll();
+
+    if(state.character.selectedPartId){
+      selectCharacterPartOnStage(
+        partById(state.character.selectedPartId)
+      );
+    }
+
+    notify("Loaded MyCharacter.",false);
   }
 
   function commitCharacter(){
     if(!state.character.parts.length){
-      var created=addBuildToCharacter({__dbInternalOptions:true,keepTab:true,silent:true});
+      var created=addBuildToCharacter({
+        __dbInternalOptions:true,
+        keepTab:true,
+        silent:true,
+        skipStageSelect:true
+      });
+
       if(!created){
-        notify("There is no finished Build Parts rig to commit. Import or build a part first.",true);
+        notify(
+          "There is no finished Build Parts rig to commit. Import or build a part first.",
+          true
+        );
         return;
       }
     }
+
+    syncAllUnpinnedCharacterTransforms();
     ensureCharacterRoot();
     updateCharacterInstances();
+
     var root=clips()[state.character.rootClipId];
     root.name=state.character.name||"MyCharacter";
-    notify('Created / updated character Clip "'+root.name+'" with '+state.character.parts.length+' part'+(state.character.parts.length===1?'':'s')+'.',false);
+
+    notify(
+      'Created / updated character Clip "'+
+      root.name+
+      '" with '+
+      state.character.parts.length+
+      ' part'+
+      (state.character.parts.length===1?'':'s')+
+      '.',
+      false
+    );
+
     API.refreshUI();
   }
 
-  function setPartPin(part,targetPartId,boneId,inheritRotation){
-    if(!part)return;if(!targetPartId||!boneId){part.pin=null;updateCharacterInstances();renderAll();return;}var target=partById(targetPartId),bone=target&&target.rig&&(target.rig.bones||[]).filter(function(b){return b.id===boneId;})[0];if(!target||!bone){notify("Choose a valid target part and bone.",true);return;}part.pin={targetPartId:target.id,boneId:bone.id,offsetX:0,offsetY:0,inheritRotation:!!inheritRotation,rotationOffset:0};updateCharacterInstances();renderAll();notify(part.name+" pinned to "+target.name+" / "+bone.name+".",false);
+  function pinStatusText(part){
+    if(!part||!part.pin)return"Not pinned";
+
+    var target=partById(part.pin.targetPartId);
+    if(!target)return"Pinned parent missing";
+
+    var bone=target.rig
+      ?(target.rig.bones||[]).filter(function(candidate){
+          return String(candidate.id)===String(part.pin.boneId);
+        })[0]
+      :null;
+
+    return"✅ Pinned to "+
+      target.name+
+      (bone?" / "+bone.name:"")+
+      " / "+
+      (part.pin.attachPoint==="head"?"head":"tail");
+  }
+
+  function clearPartPin(part,silent){
+    if(!part||!part.pin)return;
+
+    var solved=resolvedPartTransform(part,currentTime(),{});
+
+    part.pin=null;
+    part.transform=normalisePartTransform(solved);
+
+    var instance=partInstance(part);
+
+    if(instance){
+      instance.x=solved.x;
+      instance.y=solved.y;
+      instance.scale=solved.scale;
+      instance.scaleX=solved.scaleX;
+      instance.scaleY=solved.scaleY;
+      instance.rotation=solved.rotation;
+      instance.opacity=solved.opacity;
+    }
+
+    updateCharacterInstances();
+
+    if(!silent){
+      notify(
+        part.name+" unpinned. Current position preserved.",
+        false
+      );
+    }
+  }
+
+  function startPartPinPick(part){
+    if(!part)return;
+
+    syncAllUnpinnedCharacterTransforms();
+    selectCharacterPartOnStage(part);
+
+    state.character.pinPickSourceId=part.id;
+    state.character.selectedPartId=part.id;
+
+    renderAll();
+    API.refreshUI();
+
+    notify(
+      'Pin "'+
+      part.name+
+      '": click a green/yellow bone node or yellow bone line on another visible character part. The part will stay where it is.',
+      false
+    );
+  }
+
+  function completePartPin(source,target,bone,attachPoint){
+    if(
+      !source||
+      !target||
+      !bone||
+      Number(source.id)===Number(target.id)
+    ){
+      return false;
+    }
+
+    syncAllUnpinnedCharacterTransforms();
+
+    var childTransform=transformFromPartInstance(
+      partInstance(source),
+      source.transform
+    );
+
+    var parentTransform=resolvedPartTransform(
+      target,
+      currentTime(),
+      {}
+    );
+
+    var boneMap=posedTransformMap(
+      target.rig,
+      currentTime()
+    );
+
+    var pose=boneMap[bone.id];
+    if(!pose)return false;
+
+    var headWorld=partLocalPointToCharacterScene(parentTransform,pose.head);
+    var tailWorld=partLocalPointToCharacterScene(parentTransform,pose.tail);
+
+    attachPoint=attachPoint==="head"?"head":"tail";
+    var anchor=attachPoint==="head"?headWorld:tailWorld;
+
+    var boneAngle=Math.atan2(
+      tailWorld.y-headWorld.y,
+      tailWorld.x-headWorld.x
+    )*180/Math.PI;
+
+    var stageOffset={
+      x:childTransform.x-anchor.x,
+      y:childTransform.y-anchor.y
+    };
+
+    var unrotated=rotateVector(
+      stageOffset.x,
+      stageOffset.y,
+      -boneAngle*Math.PI/180
+    );
+
+    var parentScale=Math.max(.0001,n(parentTransform.scale,1));
+
+    source.transform=normalisePartTransform(childTransform);
+
+    source.pin={
+      version:2,
+      targetPartId:target.id,
+      boneId:bone.id,
+      attachPoint:attachPoint,
+      offsetLocal:{
+        x:unrotated.x/parentScale,
+        y:unrotated.y/parentScale
+      },
+      rotationOffset:childTransform.rotation-boneAngle,
+      parentScaleAtPin:parentScale,
+      childScaleAtPin:childTransform.scale,
+      childScaleXAtPin:childTransform.scaleX,
+      childScaleYAtPin:childTransform.scaleY,
+      inheritRotation:true
+    };
+
+    state.character.pinPickSourceId=null;
+    state.character.selectedPartId=source.id;
+
+    updateCharacterInstances();
+    renderAll();
+    API.refreshUI();
+
+    notify(
+      source.name+
+      " pinned to "+
+      target.name+
+      " / "+
+      bone.name+
+      " without changing its current position.",
+      false
+    );
+
+    return true;
+  }
+
+  function characterPinHit(event){
+    var source=partById(state.character.pinPickSourceId);
+    if(!source)return null;
+
+    var point=selectedScenePoint(event);
+    var nodeThreshold=scenePixels(14);
+    var lineThreshold=scenePixels(9);
+    var best=null;
+
+    state.character.parts.forEach(function(target){
+      if(Number(target.id)===Number(source.id)||!target.rig)return;
+
+      characterPartBoneWorldRecords(target,currentTime()).forEach(function(record){
+        [["head",record.head],["tail",record.tail]].forEach(function(pair){
+          var distance=Math.hypot(
+            point.x-pair[1].x,
+            point.y-pair[1].y
+          );
+
+          if(
+            distance<=nodeThreshold&&
+            (!best||distance<best.distance)
+          ){
+            best={
+              target:target,
+              bone:record.bone,
+              attachPoint:pair[0],
+              distance:distance
+            };
+          }
+        });
+
+        var lineDistance=distancePointToSegment(
+          point,
+          record.head,
+          record.tail
+        );
+
+        if(
+          lineDistance<=lineThreshold&&
+          (!best||lineDistance<best.distance)
+        ){
+          var headDistance=Math.hypot(
+            point.x-record.head.x,
+            point.y-record.head.y
+          );
+
+          var tailDistance=Math.hypot(
+            point.x-record.tail.x,
+            point.y-record.tail.y
+          );
+
+          best={
+            target:target,
+            bone:record.bone,
+            attachPoint:headDistance<tailDistance?"head":"tail",
+            distance:lineDistance
+          };
+        }
+      });
+    });
+
+    return best;
+  }
+
+  function drawCharacterPinTargets(ctx){
+    var source=partById(state.character.pinPickSourceId);
+    if(!source)return;
+
+    ctx.save();
+
+    state.character.parts.forEach(function(target){
+      if(Number(target.id)===Number(source.id)||!target.rig)return;
+
+      characterPartBoneWorldRecords(target,currentTime()).forEach(function(record){
+        var head=stagePointFromScene(record.head);
+        var tail=stagePointFromScene(record.tail);
+
+        ctx.lineWidth=4;
+        ctx.strokeStyle="#e7b72f";
+
+        ctx.beginPath();
+        ctx.moveTo(head.x,head.y);
+        ctx.lineTo(tail.x,tail.y);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(head.x,head.y,7,0,Math.PI*2);
+        ctx.fillStyle="#34b887";
+        ctx.fill();
+        ctx.strokeStyle="#153f34";
+        ctx.lineWidth=2;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(tail.x,tail.y,7,0,Math.PI*2);
+        ctx.fillStyle="#f2c84b";
+        ctx.fill();
+        ctx.strokeStyle="#5f4a09";
+        ctx.stroke();
+
+        ctx.fillStyle="#26303b";
+        ctx.font="10px Arial";
+        ctx.fillText(
+          target.name+" / "+record.bone.name,
+          (head.x+tail.x)/2+7,
+          (head.y+tail.y)/2-7
+        );
+      });
+    });
+
+    ctx.restore();
   }
 
   function exactBoneKey(bone,time){return(bone.keys||[]).filter(function(k){return Math.abs(k.time-time)<.0005;})[0]||null;}
@@ -1556,8 +2688,37 @@
   }
 
   function onPointerDown(event){
-    if(!state.open||!["bones","editbone","animate","curves","expression"].includes(state.tab))return;
+    if(!state.open||!["character","bones","editbone","animate","curves","expression"].includes(state.tab))return;
     if(event.target&&event.target.closest&&event.target.closest(".la-dembones-full"))return;
+
+    if(state.tab==="character"){
+      /*
+        Normal Character mode stays out of the way of Luke Animate Select/Edit.
+        Only explicit pin-pick mode captures a stage click.
+      */
+      if(state.character.pinPickSourceId){
+        var pinHit=characterPinHit(event);
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        if(pinHit){
+          completePartPin(
+            partById(state.character.pinPickSourceId),
+            pinHit.target,
+            pinHit.bone,
+            pinHit.attachPoint
+          );
+        }else{
+          notify(
+            "Click directly on a visible green/yellow bone node or yellow bone line.",
+            true
+          );
+        }
+      }
+      return;
+    }
+
     var point=selectedScenePoint(event);
 
     if(state.tab==="curves"){
@@ -1702,7 +2863,16 @@
   }
 
   function onPointerUp(event){
-    if(!state.drag)return;
+    if(!state.drag){
+      if(state.open&&state.tab==="character"){
+        setTimeout(function(){
+          syncCharacterSelectionFromStage();
+          syncAllUnpinnedCharacterTransforms();
+          renderBody();
+        },0);
+      }
+      return;
+    }
     if(state.drag.pointerId!==undefined&&event.pointerId!==state.drag.pointerId)return;
     event.preventDefault();event.stopImmediatePropagation();
     var finished=state.drag;
@@ -1857,7 +3027,17 @@
   }
 
   function overlayRenderer(ctx){
-    if(!state.open||!state.activeRig)return;
+    if(!state.open)return;
+
+    if(
+      state.tab==="character"&&
+      state.character.pinPickSourceId
+    ){
+      drawCharacterPinTargets(ctx);
+      return;
+    }
+
+    if(!state.activeRig)return;
 
     var map=posedTransformMap(
       state.activeRig,
@@ -1950,7 +3130,7 @@
       ".la-dembones-full{position:fixed;left:28px;top:18px;width:470px;max-width:calc(100vw - 16px);height:min(760px,calc(100vh - 36px));display:none;flex-direction:column;background:#f1f3f6;border:1px solid #bfc6cf;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden;color:#27313d;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;z-index:10000}",
       ".la-dembones-full.open{display:flex}.db-head{display:flex;align-items:center;gap:9px;padding:8px 10px;background:#fff;border-bottom:1px solid #d3d8df;cursor:move;user-select:none}.db-head img{width:27px;height:27px;filter:grayscale(1) brightness(.72)}.db-title{flex:1}.db-title strong{display:block;font-size:14px;color:#29434a}.db-title span{font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:#7b8491}.db-frame{border:1px solid #bbc3cd;border-radius:999px;padding:5px 9px;background:#fff;font-size:10px}.db-frame b{color:#0e9c86}.db-close{width:32px;height:32px;border:1px solid #bbc3cd;border-radius:8px;background:#fff;font-size:20px;color:#566270;cursor:pointer}",
       ".db-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;padding:7px;background:#e4e7eb;border-bottom:1px solid #cbd1d8}.db-tab{height:31px;border:1px solid #aeb7c2;border-radius:7px;background:#626a74;color:#fff;font-size:10px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.db-tab.active{background:#3fae9b;border-color:#0e9c86;font-weight:700}",
-      ".db-body{flex:1;min-height:0;overflow:auto;padding:10px 10px 76px}.db-page{display:none}.db-page.active{display:block}.db-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:10px;margin-bottom:9px}.db-section h3{margin:0 0 8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#66717e}.db-help{font-size:11px;line-height:1.45;color:#6b7582;margin:0 0 8px}.db-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.db-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.db-btn{border:1px solid #b8c0ca;border-radius:8px;background:#eceff2;color:#4b5766;padding:8px 6px;font-size:11px;cursor:pointer}.db-btn:hover{border-color:#0e9c86}.db-btn.primary,.db-btn.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}.db-btn.danger{color:#ad4d4d;border-color:#ddbcbc}.db-btn:disabled{opacity:.45}.db-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:7px;align-items:center;margin-bottom:7px}.db-row.three{grid-template-columns:92px minmax(0,1fr) 70px}.db-row label{font-size:11px;color:#63707e}.db-row input,.db-row select,.db-row textarea{width:100%;min-width:0;border:1px solid #c7ced7;border-radius:7px;background:#f4f5f7;color:#27313d;padding:7px;font-size:11px}.db-row input[type=range]{padding:0;accent-color:#0e9c86}.db-check{display:flex;align-items:center;gap:7px;font-size:11px;color:#63707e}.db-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto}.db-card{border:1px solid #ccd2da;border-radius:9px;background:#f7f8fa;padding:8px}.db-card.active{border-color:#0e9c86;background:#e8f6f3}.db-card-head{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;gap:6px;align-items:center}.db-card-head input{width:100%;min-width:0;border:1px solid #c6cdd6;border-radius:6px;padding:6px}.db-mini{width:28px;height:28px;border:1px solid #b9c1cb;border-radius:6px;background:#fff;cursor:pointer}.db-card-body{margin-top:7px}.db-bone-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:6px;align-items:center;border:1px solid #cfd5dc;border-radius:7px;padding:7px;background:#f5f6f8;cursor:pointer}.db-bone-row.active{border-color:#0e9c86;background:#e5f6f2}.db-dot{width:11px;height:11px;border-radius:50%;background:#6f7781}.db-bone-row.active .db-dot{background:#0e9c86}.db-status{position:absolute;left:10px;right:10px;bottom:10px;min-height:38px;max-height:58px;overflow:auto;border:1px solid #cbd2da;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596573}.db-status.good{border-color:#0e9c86;color:#117d6d}.db-status.bad{border-color:#c66a6a;color:#a33d3d}.db-hidden{display:none}.db-pill{display:inline-block;border:1px solid #c7ced7;border-radius:999px;padding:3px 7px;font-size:9px;color:#64707e;background:#fff}.db-empty{border:1px dashed #bbc3cd;border-radius:9px;padding:14px;text-align:center;color:#78828e;font-size:11px}.db-point-list{max-height:190px;overflow:auto;border:1px solid #d0d6dd;border-radius:8px;background:#fafbfc}.db-point-row{display:grid;grid-template-columns:34px 1fr 1fr;gap:6px;padding:5px;border-bottom:1px solid #e1e4e8}.db-point-row:last-child{border-bottom:0}.db-point-row.active{background:#e4f5f1}.db-point-row input{width:100%;min-width:0;border:1px solid #c9d0d8;border-radius:5px;padding:5px}.db-subtabs{display:flex;gap:6px;margin-bottom:8px}.db-subtab{flex:1;border:1px solid #b9c1cb;border-radius:7px;background:#e9ecef;padding:7px;font-size:10px}.db-subtab.active{background:#3fae9b;color:#fff;border-color:#0e9c86}",
+      ".db-body{flex:1;min-height:0;overflow:auto;padding:10px 10px 76px}.db-page{display:none}.db-page.active{display:block}.db-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:10px;margin-bottom:9px}.db-section h3{margin:0 0 8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#66717e}.db-help{font-size:11px;line-height:1.45;color:#6b7582;margin:0 0 8px}.db-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.db-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.db-btn{border:1px solid #b8c0ca;border-radius:8px;background:#eceff2;color:#4b5766;padding:8px 6px;font-size:11px;cursor:pointer}.db-btn:hover{border-color:#0e9c86}.db-btn.primary,.db-btn.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}.db-btn.danger{color:#ad4d4d;border-color:#ddbcbc}.db-btn:disabled{opacity:.45}.db-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:7px;align-items:center;margin-bottom:7px}.db-row.three{grid-template-columns:92px minmax(0,1fr) 70px}.db-row label{font-size:11px;color:#63707e}.db-row input,.db-row select,.db-row textarea{width:100%;min-width:0;border:1px solid #c7ced7;border-radius:7px;background:#f4f5f7;color:#27313d;padding:7px;font-size:11px}.db-row input[type=range]{padding:0;accent-color:#0e9c86}.db-check{display:flex;align-items:center;gap:7px;font-size:11px;color:#63707e}.db-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto}.db-card{border:1px solid #ccd2da;border-radius:9px;background:#f7f8fa;padding:8px}.db-card.active{border-color:#0e9c86;background:#e8f6f3}.db-card-head{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;gap:6px;align-items:center}.db-character-card .db-card-head{grid-template-columns:28px 28px minmax(0,1fr) 28px}.db-pin-mini{font-size:14px;line-height:1}.db-pin-mini.active{background:#0e9c86;border-color:#0e9c86;color:#fff}.db-part-summary{margin-top:7px;padding:6px 7px;border:1px solid #d7dce2;border-radius:7px;background:#fff;color:#66717e;font-size:10px;line-height:1.35}.db-pin-status{margin-top:7px;padding:7px;border:1px solid #d2d8df;border-radius:7px;background:#f3f5f7;font-size:10px;color:#626e7b}.db-pin-status.pinned{border-color:#9bcfc5;background:#eaf7f4;color:#237768}.db-card-head input{width:100%;min-width:0;border:1px solid #c6cdd6;border-radius:6px;padding:6px}.db-mini{width:28px;height:28px;border:1px solid #b9c1cb;border-radius:6px;background:#fff;cursor:pointer}.db-card-body{margin-top:7px}.db-bone-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:6px;align-items:center;border:1px solid #cfd5dc;border-radius:7px;padding:7px;background:#f5f6f8;cursor:pointer}.db-bone-row.active{border-color:#0e9c86;background:#e5f6f2}.db-dot{width:11px;height:11px;border-radius:50%;background:#6f7781}.db-bone-row.active .db-dot{background:#0e9c86}.db-status{position:absolute;left:10px;right:10px;bottom:10px;min-height:38px;max-height:58px;overflow:auto;border:1px solid #cbd2da;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596573}.db-status.good{border-color:#0e9c86;color:#117d6d}.db-status.bad{border-color:#c66a6a;color:#a33d3d}.db-hidden{display:none}.db-pill{display:inline-block;border:1px solid #c7ced7;border-radius:999px;padding:3px 7px;font-size:9px;color:#64707e;background:#fff}.db-empty{border:1px dashed #bbc3cd;border-radius:9px;padding:14px;text-align:center;color:#78828e;font-size:11px}.db-point-list{max-height:190px;overflow:auto;border:1px solid #d0d6dd;border-radius:8px;background:#fafbfc}.db-point-row{display:grid;grid-template-columns:34px 1fr 1fr;gap:6px;padding:5px;border-bottom:1px solid #e1e4e8}.db-point-row:last-child{border-bottom:0}.db-point-row.active{background:#e4f5f1}.db-point-row input{width:100%;min-width:0;border:1px solid #c9d0d8;border-radius:5px;padding:5px}.db-subtabs{display:flex;gap:6px;margin-bottom:8px}.db-subtab{flex:1;border:1px solid #b9c1cb;border-radius:7px;background:#e9ecef;padding:7px;font-size:10px}.db-subtab.active{background:#3fae9b;color:#fff;border-color:#0e9c86}",
       "@media(max-width:560px){.la-dembones-full{left:8px;top:8px;width:calc(100vw - 16px);height:calc(100vh - 16px)}.db-row,.db-row.three{grid-template-columns:78px minmax(0,1fr)}.db-row.three>*:last-child{grid-column:2}.db-grid3{grid-template-columns:repeat(2,minmax(0,1fr))}}"
     ].join("\n");document.head.appendChild(s);
   }
@@ -1969,13 +3149,56 @@
   }
 
   function characterPage(){
-    var cards=state.character.parts.length?state.character.parts.map(function(p){
-      var active=state.character.selectedPartId===p.id,targets=state.character.parts.filter(function(t){return t.id!==p.id;});
-      var targetOptions='<option value="">Not pinned</option>'+targets.map(function(t){return'<option value="'+t.id+'"'+(p.pin&&p.pin.targetPartId===t.id?' selected':'')+'>'+esc(t.name)+'</option>';}).join('');
-      var target= p.pin?partById(p.pin.targetPartId):null;var boneOptions='<option value="">Choose bone</option>'+((target&&target.rig&&target.rig.bones)||[]).map(function(b){return'<option value="'+esc(b.id)+'"'+(p.pin&&p.pin.boneId===b.id?' selected':'')+'>'+esc(b.name)+'</option>';}).join('');
-      return '<div class="db-card'+(active?' active':'')+'" data-db-part-card="'+p.id+'"><div class="db-card-head"><button class="db-mini" data-db-part-toggle="'+p.id+'">'+(p.collapsed?'▸':'▾')+'</button><input value="'+esc(p.name)+'" data-db-part-name="'+p.id+'"><button class="db-mini" data-db-part-delete="'+p.id+'">×</button></div>'+(!p.collapsed?'<div class="db-card-body"><div class="db-grid3"><button class="db-btn" data-db-part-edit="'+p.id+'">Edit Part</button><button class="db-btn" data-db-part-up="'+p.id+'">Move Up</button><button class="db-btn" data-db-part-down="'+p.id+'">Move Down</button></div><div class="db-row three"><label>Position X</label><input type="range" min="-2000" max="2000" step="1" value="'+n(p.transform&&p.transform.x,0)+'" data-db-part-field="x" data-db-part-id="'+p.id+'"><input type="number" value="'+n(p.transform&&p.transform.x,0)+'" data-db-part-number="x" data-db-part-id="'+p.id+'"></div><div class="db-row three"><label>Position Y</label><input type="range" min="-2000" max="2000" step="1" value="'+n(p.transform&&p.transform.y,0)+'" data-db-part-field="y" data-db-part-id="'+p.id+'"><input type="number" value="'+n(p.transform&&p.transform.y,0)+'" data-db-part-number="y" data-db-part-id="'+p.id+'"></div><div class="db-row three"><label>Scale</label><input type="range" min="0.05" max="5" step="0.01" value="'+n(p.transform&&p.transform.scale,1)+'" data-db-part-field="scale" data-db-part-id="'+p.id+'"><input type="number" step="0.01" value="'+n(p.transform&&p.transform.scale,1)+'" data-db-part-number="scale" data-db-part-id="'+p.id+'"></div><div class="db-row three"><label>Rotation</label><input type="range" min="-360" max="360" step="1" value="'+n(p.transform&&p.transform.rotation,0)+'" data-db-part-field="rotation" data-db-part-id="'+p.id+'"><input type="number" value="'+n(p.transform&&p.transform.rotation,0)+'" data-db-part-number="rotation" data-db-part-id="'+p.id+'"></div><div class="db-row"><label>Pin to part</label><select data-db-pin-target="'+p.id+'">'+targetOptions+'</select></div><div class="db-row"><label>Target bone</label><select data-db-pin-bone="'+p.id+'">'+boneOptions+'</select></div><label class="db-check"><input type="checkbox" data-db-pin-rotation="'+p.id+'"'+(p.pin&&p.pin.inheritRotation?' checked':'')+'> Inherit target bone rotation</label><div class="db-grid2" style="margin-top:7px"><button class="db-btn primary" data-db-apply-pin="'+p.id+'">Apply Pin</button><button class="db-btn" data-db-clear-pin="'+p.id+'">Unpin</button></div></div>':'')+'</div>';
-    }).join(''):'<div class="db-empty">No character parts yet. Build a part, then choose Add To Character.</div>';
-    return '<div class="db-page active"><div class="db-section"><h3>MyCharacter</h3><div class="db-row"><label>Name</label><input value="'+esc(state.character.name)+'" data-db-character-name></div><div class="db-grid3"><button class="db-btn primary" data-db-character-add>Add Current Part</button><button class="db-btn" data-db-character-save>Save</button><button class="db-btn" data-db-character-load>Load</button></div></div><div class="db-section"><h3>Parts</h3><div class="db-list">'+cards+'</div></div><div class="db-section"><button class="db-btn primary" style="width:100%" data-db-character-commit>Create / Update Character Clip</button></div></div>';
+    syncAllUnpinnedCharacterTransforms();
+
+    var cards=state.character.parts.length
+      ?state.character.parts.map(function(part){
+          var active=Number(state.character.selectedPartId)===Number(part.id);
+          var pinPicking=Number(state.character.pinPickSourceId)===Number(part.id);
+          var transform=normalisePartTransform(part.transform);
+
+          return '<div class="db-card db-character-card'+
+            (active?' active':'')+
+            '" data-db-part-card="'+part.id+'">'+
+              '<div class="db-card-head">'+
+                '<button class="db-mini" data-db-part-toggle="'+part.id+'" title="Open or close this part">'+(part.collapsed?'▸':'▾')+'</button>'+
+                '<button class="db-mini db-pin-mini'+(pinPicking?' active':'')+'" data-db-part-pin="'+part.id+'" title="Pin this part: then click a visible bone on another part">📌</button>'+
+                '<input value="'+esc(part.name)+'" data-db-part-name="'+part.id+'">'+
+                '<button class="db-mini" data-db-part-delete="'+part.id+'" title="Delete this part">×</button>'+
+              '</div>'+
+              (!part.collapsed
+                ?'<div class="db-card-body">'+
+                  '<div class="db-grid3">'+
+                    '<button class="db-btn'+(active?' active':'')+'" data-db-part-select="'+part.id+'">Select / Move</button>'+
+                    '<button class="db-btn" data-db-part-adjust="'+part.id+'">Adjust</button>'+
+                    '<button class="db-btn" data-db-part-animate="'+part.id+'">Animate</button>'+
+                  '</div>'+
+                  '<div class="db-grid2" style="margin-top:7px">'+
+                    '<button class="db-btn" data-db-part-up="'+part.id+'">Move Up</button>'+
+                    '<button class="db-btn" data-db-part-down="'+part.id+'">Move Down</button>'+
+                  '</div>'+
+                  '<div class="db-part-summary">X '+round3(transform.x)+' · Y '+round3(transform.y)+' · Scale '+round3(transform.scale)+' · Rotation '+round3(transform.rotation)+'°<br><b>Select / Move</b> uses Luke Animate’s normal stage handles. <b>Adjust</b> edits rest bones/envelopes. <b>Animate</b> edits bone animation.</div>'+
+                  '<div class="db-pin-status'+(part.pin?' pinned':'')+'">'+esc(pinStatusText(part))+
+                    (part.pin
+                      ?'<div style="margin-top:6px"><button class="db-btn" style="width:100%" data-db-clear-pin="'+part.id+'">Unpin — keep current position</button></div>'
+                      :'<div style="margin-top:4px">Press 📌, then click the target bone on another visible part. Pinning will not move this part when the pin is created.</div>')+
+                  '</div>'+
+                '</div>'
+                :'')+
+            '</div>';
+        }).join('')
+      :'<div class="db-empty">No character parts yet. Build a part, then choose Add To Character.</div>';
+
+    return '<div class="db-page active">'+
+      '<div class="db-section">'+
+        '<h3>MyCharacter</h3>'+
+        '<div class="db-row"><label>Name</label><input value="'+esc(state.character.name)+'" data-db-character-name></div>'+
+        '<div class="db-grid3"><button class="db-btn primary" data-db-character-add>Add Current Part</button><button class="db-btn" data-db-character-save>Save</button><button class="db-btn" data-db-character-load>Load</button></div>'+
+        '<p class="db-help" style="margin-top:8px">Character parts are real Luke Animate Clip instances. Click a part card or Select / Move, then use the normal Select/Edit tool on stage. 📌 follows the LukeTools pin workflow: choose the child first, then click a visible bone on another part.</p>'+
+      '</div>'+
+      '<div class="db-section"><h3>Parts</h3><div class="db-list">'+cards+'</div></div>'+
+      '<div class="db-section"><button class="db-btn primary" style="width:100%" data-db-character-commit>Create / Update Character Clip</button></div>'+
+    '</div>';
   }
 
   function sourcePage(){
@@ -2014,7 +3237,7 @@
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. The child Clips remain editable, and Dem Bones animation remains driven by this external tool script.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div><div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. SVG files loaded by DemBones are automatically centred using the actual artwork bounds. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character stores an independent copy of the part rig. Parts can be reordered, transformed and pinned to a bone in another part.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. SVG files loaded by DemBones are automatically centred using the actual artwork bounds. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character keeps the part where it is on stage. Select / Move uses Luke Animate’s native Select/Edit tool. Adjust opens rest-bone/envelope editing. Animate opens bone animation. To pin, press 📌 on the child part and click a visible target bone; the current placement is preserved.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():state.tab==='commit'?commitPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   function renderAll(){if(!state.panel)return;state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});renderBody();}
@@ -2025,9 +3248,17 @@
     p.querySelectorAll('[data-db-use-selection]').forEach(function(b){b.onclick=useStageSelection;});p.querySelectorAll('[data-db-point-mode]').forEach(function(input){input.onchange=function(){if(input.checked){state.pointMode=input.value||'selected';renderAll();notify('Ingest mode set to '+(state.pointMode==='limb'?'Limb':(state.pointMode==='uniform'?'Uniform':'Selected points'))+'.',false);}};});p.querySelectorAll('[data-db-load-svg]').forEach(function(b){b.onclick=function(){state.fileInputs.svg.click();};});p.querySelectorAll('[data-db-add-dummy]').forEach(function(b){b.onclick=addDummy;});p.querySelectorAll('[data-db-export-svg]').forEach(function(b){b.onclick=function(){var o=selectedObjects().filter(supportedObject);if(!o.length&&state.activeRig)o=rigObjects(state.activeRig);if(!o.length){notify('Select shapes or build a part first.',true);return;}downloadText('LukeAnimate_Selection.svg',objectsToSvg(o),'image/svg+xml');};});
     var rem=p.querySelector('[data-db-remove-originals]');if(rem)rem.onchange=function(){state.removeOriginals=!!rem.checked;};p.querySelectorAll('[data-db-add-character],[data-db-character-add]').forEach(function(b){b.onclick=addBuildToCharacter;});p.querySelectorAll('[data-db-release-stage]').forEach(function(b){b.onclick=releaseRigToStage;});p.querySelectorAll('[data-db-cancel-edit]').forEach(function(b){b.onclick=function(){state.editingPartId=null;notify('Part edit cancelled.',false);};});p.querySelectorAll('[data-db-save-part]').forEach(function(b){b.onclick=savePart;});p.querySelectorAll('[data-db-load-part]').forEach(function(b){b.onclick=function(){state.fileInputs.part.click();};});
     var cn=p.querySelector('[data-db-character-name]');if(cn)cn.oninput=function(){state.character.name=cn.value||'MyCharacter';};p.querySelectorAll('[data-db-character-save]').forEach(function(b){b.onclick=saveCharacter;});p.querySelectorAll('[data-db-character-load]').forEach(function(b){b.onclick=function(){state.fileInputs.character.click();};});p.querySelectorAll('[data-db-character-commit],[data-db-commit-character]').forEach(function(b){b.onclick=commitCharacter;});var commitName=p.querySelector('[data-db-commit-name]');if(commitName)commitName.oninput=function(){state.character.name=commitName.value||'MyCharacter';};
-    p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(e){if(e.target.closest('button,input,select'))return;state.character.selectedPartId=n(card.getAttribute('data-db-part-card'),0);renderAll();};});p.querySelectorAll('[data-db-part-toggle]').forEach(function(b){b.onclick=function(){var part=partById(b.getAttribute('data-db-part-toggle'));if(part){part.collapsed=!part.collapsed;renderAll();}};});p.querySelectorAll('[data-db-part-delete]').forEach(function(b){b.onclick=function(){deleteCharacterPart(partById(b.getAttribute('data-db-part-delete')));};});p.querySelectorAll('[data-db-part-edit]').forEach(function(b){b.onclick=function(){editCharacterPart(partById(b.getAttribute('data-db-part-edit')));};});p.querySelectorAll('[data-db-part-up]').forEach(function(b){b.onclick=function(){movePart(partById(b.getAttribute('data-db-part-up')),-1);};});p.querySelectorAll('[data-db-part-down]').forEach(function(b){b.onclick=function(){movePart(partById(b.getAttribute('data-db-part-down')),1);};});p.querySelectorAll('[data-db-part-name]').forEach(function(inp){inp.onchange=function(){var part=partById(inp.getAttribute('data-db-part-name'));if(part){part.name=inp.value||part.name;if(clips()[part.clipId])clips()[part.clipId].name=part.name;updateCharacterInstances();renderAll();}};});
-    function partFieldChange(inp){var part=partById(inp.getAttribute('data-db-part-id')),field=inp.getAttribute('data-db-part-field')||inp.getAttribute('data-db-part-number');if(!part||!field)return;part.transform=part.transform||{x:0,y:0,scale:1,rotation:0,opacity:1};part.transform[field]=field==='scale'?Math.max(.01,n(inp.value,1)):n(inp.value,0);updateCharacterInstances();var pair=field==='x'||field==='y'||field==='scale'||field==='rotation'?p.querySelector((inp.hasAttribute('data-db-part-field')?'[data-db-part-number="'+field+'"]':'[data-db-part-field="'+field+'"]')+'[data-db-part-id="'+part.id+'"]'):null;if(pair)pair.value=inp.value;}
-    p.querySelectorAll('[data-db-part-field],[data-db-part-number]').forEach(function(inp){inp.oninput=function(){partFieldChange(inp);};});p.querySelectorAll('[data-db-apply-pin]').forEach(function(b){b.onclick=function(){var id=n(b.getAttribute('data-db-apply-pin'),0),target=p.querySelector('[data-db-pin-target="'+id+'"]'),bone=p.querySelector('[data-db-pin-bone="'+id+'"]'),rot=p.querySelector('[data-db-pin-rotation="'+id+'"]');setPartPin(partById(id),n(target&&target.value,0),bone&&bone.value,rot&&rot.checked);};});p.querySelectorAll('[data-db-clear-pin]').forEach(function(b){b.onclick=function(){setPartPin(partById(b.getAttribute('data-db-clear-pin')),0,'',false);};});p.querySelectorAll('[data-db-pin-target]').forEach(function(sel){sel.onchange=function(){var part=partById(sel.getAttribute('data-db-pin-target'));if(part){part.pin=sel.value?{targetPartId:n(sel.value,0),boneId:'',offsetX:0,offsetY:0,inheritRotation:false,rotationOffset:0}:null;renderAll();}};});
+    p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(event){if(event&&event.target&&event.target.closest('button,input,select,textarea'))return;var part=partById(card.getAttribute('data-db-part-card'));if(part){selectCharacterPartOnStage(part);renderAll();}};});
+    p.querySelectorAll('[data-db-part-toggle]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var part=partById(button.getAttribute('data-db-part-toggle'));if(part){part.collapsed=!part.collapsed;renderAll();}};});
+    p.querySelectorAll('[data-db-part-name]').forEach(function(input){input.onchange=function(){var part=partById(input.getAttribute('data-db-part-name'));if(part){part.name=input.value||part.name;if(part.clipId&&clips()[part.clipId])clips()[part.clipId].name=part.name;var instance=partInstance(part);if(instance)instance.name=part.name;renderAll();API.refreshUI();}};});
+    p.querySelectorAll('[data-db-part-delete]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}deleteCharacterPart(partById(button.getAttribute('data-db-part-delete')));};});
+    p.querySelectorAll('[data-db-part-select]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var part=partById(button.getAttribute('data-db-part-select'));selectCharacterPartOnStage(part);renderAll();notify('Selected '+(part?part.name:'part')+'. Use Luke Animate Select/Edit handles to move, scale or rotate it.',false);};});
+    p.querySelectorAll('[data-db-part-adjust]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}activateCharacterPartMode(partById(button.getAttribute('data-db-part-adjust')),'adjust');};});
+    p.querySelectorAll('[data-db-part-animate]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}activateCharacterPartMode(partById(button.getAttribute('data-db-part-animate')),'animate');};});
+    p.querySelectorAll('[data-db-part-pin]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}startPartPinPick(partById(button.getAttribute('data-db-part-pin')));};});
+    p.querySelectorAll('[data-db-clear-pin]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}clearPartPin(partById(button.getAttribute('data-db-clear-pin')),false);renderAll();};});
+    p.querySelectorAll('[data-db-part-up]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}movePart(partById(button.getAttribute('data-db-part-up')),-1);};});
+    p.querySelectorAll('[data-db-part-down]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}movePart(partById(button.getAttribute('data-db-part-down')),1);};});
     p.querySelectorAll('[data-db-bone-id]').forEach(function(row){row.onclick=function(event){if(event&&event.target&&event.target.closest('[data-db-delete-bone-id]'))return;state.selectedBoneId=row.getAttribute('data-db-bone-id');if(state.tab==='bones')state.mode='add-bone';renderAll();};});p.querySelectorAll('[data-db-delete-bone-id]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}deleteBoneById(button.getAttribute('data-db-delete-bone-id'));};});p.querySelectorAll('[data-db-add-bone]').forEach(function(b){b.onclick=function(){if(!state.activeRig){notify('Build or load a part first.',true);return;}state.mode='add-bone';renderAll();notify('Drag on the stage to create a bone. Keep dragging again to extend the chain.',false);};});p.querySelectorAll('[data-db-bind-rig]').forEach(function(b){b.onclick=bindRig;});p.querySelectorAll('[data-db-clear-bones]').forEach(function(b){b.onclick=clearBones;});p.querySelectorAll('[data-db-delete-bone]').forEach(function(b){b.onclick=deleteBone;});
     var applyBone=p.querySelector('[data-db-apply-bone-edit]');if(applyBone)applyBone.onclick=function(){var b=selectedBone();if(!b)return;b.name=p.querySelector('[data-db-edit-bone-name]').value||b.name;b.type=p.querySelector('[data-db-edit-bone-type]').value;b.parentId=p.querySelector('[data-db-edit-bone-parent]').value;b.restHead.x=n(p.querySelector('[data-db-bone-head-x-num]').value,b.restHead.x);b.restHead.y=n(p.querySelector('[data-db-bone-head-y-num]').value,b.restHead.y);b.restTail.x=n(p.querySelector('[data-db-bone-tail-x-num]').value,b.restTail.x);b.restTail.y=n(p.querySelector('[data-db-bone-tail-y-num]').value,b.restTail.y);b.envStart=Math.max(2,n(p.querySelector('[data-db-bone-env-start-num]').value,b.envStart));b.envEnd=Math.max(2,n(p.querySelector('[data-db-bone-env-end-num]').value,b.envEnd));b.strength=Math.max(.05,n(p.querySelector('[data-db-bone-strength-num]').value,b.strength));b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));b.restAngle=angleOf(b.restHead,b.restTail);normaliseRigBones(state.activeRig);enforceRestChains();bindRig();renderAll();};
     bindPair('[data-db-bone-head-x]','[data-db-bone-head-x-num]');bindPair('[data-db-bone-head-y]','[data-db-bone-head-y-num]');bindPair('[data-db-bone-tail-x]','[data-db-bone-tail-x-num]');bindPair('[data-db-bone-tail-y]','[data-db-bone-tail-y-num]');bindPair('[data-db-bone-env-start]','[data-db-bone-env-start-num]',previewSelectedBoneEnvelope);bindPair('[data-db-bone-env-end]','[data-db-bone-env-end-num]',previewSelectedBoneEnvelope);bindPair('[data-db-bone-strength]','[data-db-bone-strength-num]',previewSelectedBoneEnvelope);
@@ -2037,10 +3268,10 @@
     p.querySelectorAll('[data-db-expression-type]').forEach(function(b){b.onclick=function(){state.expressionType=b.getAttribute('data-db-expression-type');renderAll();};});var esn=p.querySelector('[data-db-expression-slot-name]');if(esn)esn.oninput=function(){state.expressionSlot=esn.value||'Default';};var ess=p.querySelector('[data-db-expression-slot]');if(ess)ess.onchange=function(){state.expressionSlot=ess.value||state.expressionSlot;};p.querySelectorAll('[data-db-import-expression]').forEach(function(b){b.onclick=function(){state.expressionSlot=(p.querySelector('[data-db-expression-slot-name]').value||'Default').trim();state.fileInputs.expression.click();};});p.querySelectorAll('[data-db-set-expression-key]').forEach(function(b){b.onclick=function(){setExpressionKey(state.expressionType,state.expressionSlot);};});p.querySelectorAll('[data-db-clear-expression-key]').forEach(function(b){b.onclick=function(){clearExpressionKey(state.expressionType);};});
   }
 
-  function createPanel(){ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){state.tab=b.getAttribute('data-db-tab');state.curvePointAddMode=false;state.mode=state.tab==='bones'?'add-bone':'select';renderAll();};});state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();}
+  function createPanel(){ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){state.tab=b.getAttribute('data-db-tab');state.curvePointAddMode=false;state.mode=state.tab==='bones'?'add-bone':'select';if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}renderAll();};});state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();}
   function makeDraggable(panel,handle){handle.addEventListener('pointerdown',function(e){if(e.target.closest('button'))return;e.preventDefault();API.bringFloatingPanelToFront(panel);var r=panel.getBoundingClientRect(),ox=e.clientX-r.left,oy=e.clientY-r.top;function mv(ev){panel.style.left=(ev.clientX-ox)+'px';panel.style.top=(ev.clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto';}function up(){window.removeEventListener('pointermove',mv,true);window.removeEventListener('pointerup',up,true);API.clampFloatingPanelToViewport(panel);}window.addEventListener('pointermove',mv,true);window.addEventListener('pointerup',up,true);});}
 
-  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}}},160);}
+  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);}
 
   function open(){
     /* Capture the stage selection before changing focus or suppressing the fixed
