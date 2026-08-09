@@ -1,6 +1,37 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v15.1
+/* Luke Animate Dem Bones + MyCharacter GPT v15.3
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
+
+   v15.3 removes the separate "Commit" tab/step, which was a leftover from an
+   older version of this tool where finalising MyCharacter had to be done as
+   its own explicit action:
+   - Add To Character now calls the same finalising logic automatically the
+     moment a part is added, so MyCharacter's Clip and the main stage are
+     kept in a finished, up-to-date state (including clearing that part's own
+     Build Parts artwork) as a normal part of the workflow, not a separate
+     gate the person has to remember;
+   - the Build Character tab absorbed the old Commit tab's Vector Exchange
+     (SVG export/import) and housekeeping tools. The old "Create / Update
+     Character Clip" action is still available there as "Force Sync Now",
+     grouped under Maintenance alongside Resync Bones and Clean Up Stray
+     Artwork, for the rare case something needs to be forced by hand;
+   - the workflow step strip is now 3 steps (Build Parts -> Bones -> Add To
+     Character) instead of 4, since Commit is no longer a distinct step.
+
+   v15.2 adds two housekeeping tools, in response to stray duplicated
+   artwork/bones being left behind by abandoned or interrupted Build Parts
+   sessions:
+   - Clean Up Stray Artwork (Build Character tab and Commit tab) scans every
+     clip plus Main Scene for DemBones-tagged shapes whose rig is not the one
+     currently open in Build Parts and not a rig actually inside a real
+     MyCharacter part, then removes them. It never touches the part you are
+     currently building or any committed part;
+   - Resync Bones / Placement (Build Character tab) re-reads every unpinned
+     part's cached transform from its real on-stage Clip instance without
+     moving or deleting anything, for cases where a part's bone overlay has
+     drifted from its artwork;
+   - the Commit tab now reports how many stray shapes it currently sees, and
+     opening the panel warns up front if any exist.
 
    v15.1 is a usability pass over v15.0. No rig, deformation or character
    logic changed - only the panel UI:
@@ -41,7 +72,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "15.1";
+  var TOOL_VERSION = "15.3";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -2388,6 +2419,19 @@
 
     var installedInstance=installCharacterPartInstance(part);
 
+    /*
+      Finalising used to be a separate manual "Commit" step. It now runs
+      automatically the moment a part is added, so MyCharacter's Clip and
+      the main stage are always left in a finished, up-to-date state -
+      including clearing this part's own Build Parts artwork - without
+      the person needing to remember an extra action. The part's own
+      instance is re-selected afterwards so Select / Move still works
+      immediately, even though finalising re-selects the Character root
+      by default.
+    */
+    finaliseCharacterOnStage(true);
+    installedInstance=partInstance(part)||installedInstance;
+
     renderAll();
 
     if(!options.skipStageSelect&&installedInstance){
@@ -2749,6 +2793,111 @@
     }
   }
 
+  function liveKeptRigIds(){
+    var keep={};
+    if(state.activeRig&&state.activeRig.id)keep[String(state.activeRig.id)]=true;
+    state.character.parts.forEach(function(part){
+      if(part.rig&&part.rig.id)keep[String(part.rig.id)]=true;
+    });
+    return keep;
+  }
+
+  function findOrphanDemBonesObjects(){
+    var keep=liveKeptRigIds();
+    var found=[];
+    var seen={};
+    allObjectArrays().forEach(function(list){
+      list.forEach(function(o){
+        if(!o||seen[o.id])return;
+        var rigId=(o.demBones&&o.demBones.rigId)||(o.demBonesExpression&&o.demBonesExpression.rigId);
+        if(rigId&&!keep[String(rigId)]){
+          seen[o.id]=true;
+          found.push(o);
+        }
+      });
+    });
+    return found;
+  }
+
+  /*
+    A part's Build Parts source shapes normally get removed the moment the
+    part is added to MyCharacter and the Character is next finalised. If a
+    part was abandoned mid-build, built while a different clip context was
+    active, or the panel was closed before finalising, those source shapes
+    (and any bones drawn for them) are left behind as stray duplicates
+    anywhere in the project. This sweeps every clip plus Main Scene for any
+    DemBones-tagged object whose rig is not the one currently being built and
+    not the rig actually living inside a real MyCharacter part, and removes
+    it. It never touches the rig currently open in Build Parts or any rig
+    that is part of a real, committed MyCharacter part.
+  */
+  function cleanUpLooseArtwork(silent){
+    var orphans=findOrphanDemBonesObjects();
+    if(!orphans.length){
+      if(!silent)notify("No stray Build Parts artwork found.",false);
+      return 0;
+    }
+    if(!silent&&!window.confirm("Remove "+orphans.length+" stray shape(s) left over from earlier Build Parts sessions? This will not touch MyCharacter or the part you are currently building. This can be undone with Ctrl+Z.")){
+      return 0;
+    }
+    API.pushUndo();
+    var ids={};
+    orphans.forEach(function(o){ids[String(o.id)]=true;});
+    var wasEditing=typeof API.getEditingClipId==="function"?API.getEditingClipId():null;
+    exitToMainScene();
+    removeObjectsAndLayersFromActiveContext(function(o){return !!(o&&ids[String(o.id)]);});
+    Object.keys(clips()).forEach(function(clipId){
+      var c=clips()[clipId];
+      if(!c)return;
+      if(Array.isArray(c.drawObjects))c.drawObjects=c.drawObjects.filter(function(o){return !(o&&ids[String(o.id)]);});
+      if(Array.isArray(c.sceneFrames)){
+        c.sceneFrames.forEach(function(frame){
+          if(frame&&Array.isArray(frame.objects))frame.objects=frame.objects.filter(function(o){return !(o&&ids[String(o.id)]);});
+        });
+      }
+      if(Array.isArray(c.drawingLayers)){
+        c.drawingLayers=c.drawingLayers.filter(function(layer){
+          return !(layer.frames||[]).some(function(frame){return frame&&frame.object&&ids[String(frame.object.id)];});
+        });
+      }
+    });
+    if(wasEditing&&typeof API.enterClip==="function"){
+      try{API.enterClip(wasEditing);}catch(eReenter){}
+    }
+    API.refreshUI();
+    renderAll();
+    if(!silent)notify("Removed "+orphans.length+" stray shape(s).",false);
+    return orphans.length;
+  }
+
+  /*
+    Character bone overlays are recomputed live every frame from the current
+    part transforms and the Character root instance's own position/scale, so
+    they never go stale on their own. What can drift is part.transform - the
+    cached record DemBones uses as the base for pinning and for the Adjust/
+    Animate views. If a part was moved on stage while its instance briefly
+    fell out of registration (a dropped selection mid-drag, an undo that
+    skipped a step, etc.) that cache can lag behind where the shape actually
+    is, which reads as bones hanging away from the artwork. This forces every
+    unpinned part's cached transform back from its real on-stage instance and
+    prunes anything in the Character root that is not a genuine part
+    instance, without moving or deleting any artwork.
+  */
+  function resyncCharacterPlacement(){
+    if(!state.character.parts.length){
+      notify("No character parts to resync yet.",false);
+      return;
+    }
+    API.pushUndo();
+    syncAllUnpinnedCharacterTransforms();
+    ensureCharacterRoot();
+    updateCharacterInstances();
+    pruneCharacterRootToPartInstances();
+    renderAll();
+    API.refreshUI();
+    notify("Character part placements resynced from the stage.",false);
+  }
+
   function cleanupLooseBuildPartsFromMainScene(){
     var ids={};
     var rigIds={};
@@ -2920,7 +3069,7 @@
 
       if(!created){
         notify(
-          "There is no finished Build Parts rig to commit. Import or build a part first.",
+          "There is no finished Build Parts rig to add yet. Import or build a part first.",
           true
         );
         return;
@@ -3956,7 +4105,7 @@
     if(document.getElementById("la-dembones-full-style"))return;var s=document.createElement("style");s.id="la-dembones-full-style";s.textContent=[
       ".la-dembones-full{position:fixed;left:28px;top:18px;width:496px;max-width:calc(100vw - 16px);height:min(760px,calc(100vh - 36px));display:none;flex-direction:column;background:#f1f3f6;border:1px solid #bfc6cf;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden;color:#27313d;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;z-index:10000}",
       ".la-dembones-full.open{display:flex}.db-head{display:flex;align-items:center;gap:9px;padding:8px 10px;background:#fff;border-bottom:1px solid #d3d8df;cursor:move;user-select:none}.db-head img{width:27px;height:27px;filter:grayscale(1) brightness(.72)}.db-title{flex:1}.db-title strong{display:block;font-size:14px;color:#29434a}.db-title span{font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:#7b8491}.db-frame{border:1px solid #bbc3cd;border-radius:999px;padding:5px 9px;background:#fff;font-size:10px}.db-frame b{color:#0e9c86}.db-close{width:32px;height:32px;border:1px solid #bbc3cd;border-radius:8px;background:#fff;font-size:20px;color:#566270;cursor:pointer}",
-      ".db-tabs{padding:8px 7px 5px;background:#e4e7eb;border-bottom:1px solid #cbd1d8}.db-tab-group{margin-bottom:6px}.db-tab-group:last-child{margin-bottom:0}.db-tab-group-label{display:block;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#828d99;margin:0 0 4px 2px}.db-tabs-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.db-tab{height:32px;border:1px solid #aeb7c2;border-radius:7px;background:#626a74;color:#fff;font-size:10.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}.db-tab.active{background:#0e9c86;border-color:#0b8574;font-weight:700}.db-tab:hover{border-color:#0e9c86}",
+      ".db-tabs{padding:8px 7px 5px;background:#e4e7eb;border-bottom:1px solid #cbd1d8}.db-tab-group{margin-bottom:6px}.db-tab-group:last-child{margin-bottom:0}.db-tab-group-label{display:block;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#828d99;margin:0 0 4px 2px}.db-tabs-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.db-tabs-row.two{grid-template-columns:repeat(2,minmax(0,1fr))}.db-tab{height:32px;border:1px solid #aeb7c2;border-radius:7px;background:#626a74;color:#fff;font-size:10.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}.db-tab.active{background:#0e9c86;border-color:#0b8574;font-weight:700}.db-tab:hover{border-color:#0e9c86}",
       ".db-steps{display:flex;align-items:center;padding:9px 12px;background:#eef1f4;border-bottom:1px solid #cbd1d8;font-size:9.5px;color:#7b8491}.db-step{display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer}.db-step:hover .db-step-label{text-decoration:underline}.db-step-dot{width:16px;height:16px;border-radius:50%;background:#c7cdd4;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0}.db-step.done .db-step-dot{background:#0e9c86}.db-step.current .db-step-dot{background:#0e9c86;box-shadow:0 0 0 3px rgba(14,156,134,.25)}.db-step.current .db-step-label{color:#0e9c86;font-weight:700}.db-step-sep{flex:1;height:1px;background:#cbd1d8;margin:0 6px;min-width:8px}",
       ".db-body{flex:1;min-height:0;overflow:auto;padding:10px 10px 76px}.db-page{display:none}.db-page.active{display:block}.db-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:10px;margin-bottom:9px}.db-section h3{margin:0 0 8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#66717e}.db-help{font-size:11px;line-height:1.45;color:#6b7582;margin:0 0 8px}.db-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.db-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.db-btn{border:1px solid #b8c0ca;border-radius:8px;background:#eceff2;color:#4b5766;padding:8px 6px;font-size:11px;cursor:pointer}.db-btn:hover{border-color:#0e9c86}.db-btn.primary,.db-btn.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}.db-btn.danger{color:#ad4d4d;border-color:#ddbcbc}.db-btn:disabled{opacity:.45}.db-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:7px;align-items:center;margin-bottom:7px}.db-row.three{grid-template-columns:92px minmax(0,1fr) 70px}.db-row label{font-size:11px;color:#63707e}.db-row input,.db-row select,.db-row textarea{width:100%;min-width:0;border:1px solid #c7ced7;border-radius:7px;background:#f4f5f7;color:#27313d;padding:7px;font-size:11px}.db-row input[type=range]{padding:0;accent-color:#0e9c86}.db-check{display:flex;align-items:center;gap:7px;font-size:11px;color:#63707e}.db-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto}.db-card{border:1px solid #ccd2da;border-radius:9px;background:#f7f8fa;padding:8px}.db-card.active{border-color:#0e9c86;background:#e8f6f3}.db-card-head{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;gap:6px;align-items:center}.db-character-card .db-card-head{grid-template-columns:28px 28px minmax(0,1fr) 28px}.db-pin-mini{font-size:14px;line-height:1}.db-pin-mini.active{background:#0e9c86;border-color:#0e9c86;color:#fff}.db-part-summary{margin-top:7px;padding:6px 7px;border:1px solid #d7dce2;border-radius:7px;background:#fff;color:#66717e;font-size:10px;line-height:1.35}.db-pin-status{margin-top:7px;padding:7px;border:1px solid #d2d8df;border-radius:7px;background:#f3f5f7;font-size:10px;color:#626e7b}.db-pin-status.pinned{border-color:#9bcfc5;background:#eaf7f4;color:#237768}.db-card-head input{width:100%;min-width:0;border:1px solid #c6cdd6;border-radius:6px;padding:6px}.db-mini{width:28px;height:28px;border:1px solid #b9c1cb;border-radius:6px;background:#fff;cursor:pointer}.db-card-body{margin-top:7px}.db-bone-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:6px;align-items:center;border:1px solid #cfd5dc;border-radius:7px;padding:7px;background:#f5f6f8;cursor:pointer}.db-bone-row.active{border-color:#0e9c86;background:#e5f6f2}.db-dot{width:11px;height:11px;border-radius:50%;background:#6f7781}.db-bone-row.active .db-dot{background:#0e9c86}.db-status{position:absolute;left:10px;right:10px;bottom:10px;min-height:38px;max-height:58px;overflow:auto;border:1px solid #cbd2da;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596573}.db-status.good{border-color:#0e9c86;color:#117d6d}.db-status.bad{border-color:#c66a6a;color:#a33d3d}.db-hidden{display:none}.db-pill{display:inline-block;border:1px solid #c7ced7;border-radius:999px;padding:3px 7px;font-size:9px;color:#64707e;background:#fff}.db-empty{border:1px dashed #bbc3cd;border-radius:9px;padding:14px;text-align:center;color:#78828e;font-size:11px}.db-point-list{max-height:190px;overflow:auto;border:1px solid #d0d6dd;border-radius:8px;background:#fafbfc}.db-point-row{display:grid;grid-template-columns:34px 1fr 1fr;gap:6px;padding:5px;border-bottom:1px solid #e1e4e8}.db-point-row:last-child{border-bottom:0}.db-point-row.active{background:#e4f5f1}.db-point-row input{width:100%;min-width:0;border:1px solid #c9d0d8;border-radius:5px;padding:5px}.db-subtabs{display:flex;gap:6px;margin-bottom:8px}.db-subtab{flex:1;border:1px solid #b9c1cb;border-radius:7px;background:#e9ecef;padding:7px;font-size:10px}.db-subtab.active{background:#3fae9b;color:#fff;border-color:#0e9c86}",
       "@media(max-width:560px){.la-dembones-full{left:8px;top:8px;width:calc(100vw - 16px);height:calc(100vh - 16px)}.db-row,.db-row.three{grid-template-columns:78px minmax(0,1fr)}.db-row.three>*:last-child{grid-column:2}.db-grid3{grid-template-columns:repeat(2,minmax(0,1fr))}}"
@@ -3970,12 +4119,10 @@
     var hasShapes=!!(rig&&rigObjects(rig).length);
     var hasBones=!!(rig&&rig.bones&&rig.bones.length);
     var inCharacter=state.character.parts.length>0;
-    var committed=!!state.character.committed;
     var steps=[
       {label:'Build Parts',done:hasShapes,tab:'source'},
       {label:'Bones',done:hasBones,tab:'bones'},
-      {label:'Add To Character',done:inCharacter,tab:'character'},
-      {label:'Commit',done:committed,tab:'commit'}
+      {label:'Add To Character',done:inCharacter,tab:'character'}
     ];
     var currentIndex=0;
     for(var i=0;i<steps.length;i++){ if(steps[i].done) currentIndex=i+1; }
@@ -3991,7 +4138,7 @@
   function panelHtml(){
     return '<div class="db-head" data-db-drag><img src="'+esc(ICON_URL)+'" alt=""><div class="db-title"><strong>Dem Bones</strong><span>MyCharacter · Build Parts · Bone Animation</span></div><div class="db-frame">Frame <b data-db-frame>'+currentFrame()+'</b></div><button class="db-close" data-db-close type="button">×</button></div>'+ 
       '<div class="db-tabs">'+'<div class="db-tab-group"><span class="db-tab-group-label">1 Rig a part</span><div class="db-tabs-row">'+tabButton('source','Build Parts')+tabButton('bones','Bones')+tabButton('editbone','Edit Bone')+tabButton('animate','Animate')+tabButton('curves','Curves')+tabButton('expression','Expression')+'</div></div>'+
-      '<div class="db-tab-group"><span class="db-tab-group-label">2 Assemble &amp; finish</span><div class="db-tabs-row">'+tabButton('character','Build Character')+tabButton('commit','Commit')+tabButton('help','Help')+'</div></div>'+ 
+      '<div class="db-tab-group"><span class="db-tab-group-label">2 Build the character</span><div class="db-tabs-row two">'+tabButton('character','Build Character')+tabButton('help','Help')+'</div></div>'+ 
       '</div>'+
       '<div data-db-steps>'+workflowStepsHtml()+'</div>'+
       '<div class="db-body" data-db-body></div>'+ 
@@ -4004,6 +4151,7 @@
 
   function characterPage(){
     /* PANEL RENDER IS READ-ONLY: never rewrite stage geometry here. */
+    var orphanCount=findOrphanDemBonesObjects().length;
     var cards=state.character.parts.length
       ?state.character.parts.map(function(part){
           var active=Number(state.character.selectedPartId)===Number(part.id);
@@ -4047,10 +4195,11 @@
         '<h3>Step 3 · Build Character</h3>'+
         '<div class="db-row"><label>Name</label><input value="'+esc(state.character.name)+'" data-db-character-name></div>'+
         '<div class="db-grid3"><button class="db-btn primary" data-db-character-add>Add Current Part</button><button class="db-btn" data-db-character-save>Save</button><button class="db-btn" data-db-character-load>Load</button></div>'+
-        '<p class="db-help" style="margin-top:8px">Character parts are real Luke Animate Clip instances. Click a part card or Select / Move, then use the normal Select/Edit tool on stage. 📌 follows the LukeTools pin workflow. When the Character is created or DemBones is closed, loose Build Parts artwork is removed and MyCharacter remains as the single stage object with its animation bones visible.</p>'+
+        '<p class="db-help" style="margin-top:8px">Character parts are real Luke Animate Clip instances. Click a part card or Select / Move, then use the normal Select/Edit tool on stage. 📌 follows the LukeTools pin workflow. Adding a part to MyCharacter automatically keeps the Character Clip up to date and clears its own Build Parts artwork off the stage - there is no separate step to remember.</p>'+
       '</div>'+
       '<div class="db-section"><h3>Parts</h3><div class="db-list">'+cards+'</div></div>'+
-      '<div class="db-section"><button class="db-btn primary" style="width:100%" data-db-character-commit>Create / Update Character Clip</button></div>'+
+      '<div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div>'+
+      '<div class="db-section"><h3>Maintenance</h3><p class="db-help">These do not need to be used in normal course - MyCharacter keeps itself in sync automatically. Use them only if something looks wrong.</p><div class="db-grid3"><button class="db-btn" data-db-character-resync title="If a part\'s bones look offset from its artwork, this re-reads every part\'s real on-stage position without moving anything">Resync Bones</button><button class="db-btn'+(orphanCount?' primary':'')+'" data-db-character-cleanup title="Removes any leftover Build Parts shapes and bones from abandoned or already-added parts, anywhere in the project">Clean Up Stray Artwork'+(orphanCount?' ('+orphanCount+')':'')+'</button><button class="db-btn" data-db-character-commit title="Force MyCharacter to rebuild itself right now">Force Sync Now</button></div></div>'+
     '</div>';
   }
 
@@ -4089,8 +4238,7 @@
 
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
-  function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Step 4 · Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts SVG/rig artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div><div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. SVG files loaded by DemBones are automatically centred using the actual artwork bounds. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character keeps the part where it is on stage. Select / Move uses Luke Animate’s native Select/Edit tool. Adjust opens rest-bone/envelope editing. Animate opens bone animation. To pin, press 📌 on the child part and click a visible target bone; the current placement is preserved.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. SVG files loaded by DemBones are automatically centred using the actual artwork bounds. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character keeps the part where it is on stage and automatically keeps the Character Clip finished and up to date - there is no separate Commit step. Select / Move uses Luke Animate’s native Select/Edit tool. Adjust opens rest-bone/envelope editing. Animate opens bone animation. To pin, press 📌 on the child part and click a visible target bone; the current placement is preserved.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
 
   function goToTab(nextTab){
     if(!nextTab)return;
@@ -4102,7 +4250,7 @@
     renderAll();
   }
 
-  function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():state.tab==='commit'?commitPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();setStatus(state.status,state.statusType);}
+  function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();setStatus(state.status,state.statusType);}
   function renderAll(){
     if(state.activeRig){
       syncRigDisplayGeometry(state.activeRig,currentTime());
@@ -4119,7 +4267,7 @@
   function bindBodyEvents(){var p=state.panel;if(!p)return;
     p.querySelectorAll('[data-db-use-selection]').forEach(function(b){b.onclick=useStageSelection;});p.querySelectorAll('[data-db-point-mode]').forEach(function(input){input.onchange=function(){if(input.checked){state.pointMode=input.value||'selected';renderAll();notify('Ingest mode set to '+(state.pointMode==='limb'?'Limb':(state.pointMode==='uniform'?'Uniform':'Selected points'))+'.',false);}};});p.querySelectorAll('[data-db-load-svg]').forEach(function(b){b.onclick=function(){state.fileInputs.svg.click();};});p.querySelectorAll('[data-db-add-dummy]').forEach(function(b){b.onclick=addDummy;});p.querySelectorAll('[data-db-export-svg]').forEach(function(b){b.onclick=function(){var o=selectedObjects().filter(supportedObject);if(!o.length&&state.activeRig)o=rigObjects(state.activeRig);if(!o.length){notify('Select shapes or build a part first.',true);return;}downloadText('LukeAnimate_Selection.svg',objectsToSvg(o),'image/svg+xml');};});
     var rem=p.querySelector('[data-db-remove-originals]');if(rem)rem.onchange=function(){state.removeOriginals=!!rem.checked;};p.querySelectorAll('[data-db-add-character],[data-db-character-add]').forEach(function(b){b.onclick=addBuildToCharacter;});p.querySelectorAll('[data-db-release-stage]').forEach(function(b){b.onclick=releaseRigToStage;});p.querySelectorAll('[data-db-cancel-edit]').forEach(function(b){b.onclick=function(){state.editingPartId=null;notify('Part edit cancelled.',false);};});p.querySelectorAll('[data-db-save-part]').forEach(function(b){b.onclick=savePart;});p.querySelectorAll('[data-db-load-part]').forEach(function(b){b.onclick=function(){state.fileInputs.part.click();};});
-    var cn=p.querySelector('[data-db-character-name]');if(cn)cn.oninput=function(){state.character.name=cn.value||'MyCharacter';};p.querySelectorAll('[data-db-character-save]').forEach(function(b){b.onclick=saveCharacter;});p.querySelectorAll('[data-db-character-load]').forEach(function(b){b.onclick=function(){state.fileInputs.character.click();};});p.querySelectorAll('[data-db-character-commit],[data-db-commit-character]').forEach(function(b){b.onclick=commitCharacter;});var commitName=p.querySelector('[data-db-commit-name]');if(commitName)commitName.oninput=function(){state.character.name=commitName.value||'MyCharacter';};
+    var cn=p.querySelector('[data-db-character-name]');if(cn)cn.oninput=function(){state.character.name=cn.value||'MyCharacter';};p.querySelectorAll('[data-db-character-save]').forEach(function(b){b.onclick=saveCharacter;});p.querySelectorAll('[data-db-character-load]').forEach(function(b){b.onclick=function(){state.fileInputs.character.click();};});p.querySelectorAll('[data-db-character-resync]').forEach(function(b){b.onclick=resyncCharacterPlacement;});p.querySelectorAll('[data-db-character-cleanup]').forEach(function(b){b.onclick=function(){cleanUpLooseArtwork(false);};});p.querySelectorAll('[data-db-character-commit],[data-db-commit-character]').forEach(function(b){b.onclick=commitCharacter;});
     p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(event){if(event&&event.target&&event.target.closest('button,input,select,textarea'))return;var part=partById(card.getAttribute('data-db-part-card'));if(part){selectCharacterPartOnStage(part);renderAll();}};});
     p.querySelectorAll('[data-db-part-toggle]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var part=partById(button.getAttribute('data-db-part-toggle'));if(part){part.collapsed=!part.collapsed;renderAll();}};});
     p.querySelectorAll('[data-db-part-name]').forEach(function(input){input.onchange=function(){var part=partById(input.getAttribute('data-db-part-name'));if(part){part.name=input.value||part.name;if(part.clipId&&clips()[part.clipId])clips()[part.clipId].name=part.name;var instance=partInstance(part);if(instance)instance.name=part.name;renderAll();API.refreshUI();}};});
@@ -4155,7 +4303,13 @@
     API.setSelectionInspectorSuppressed(TOOL_ID,true);
     API.setConfiguredToolActive(GROUP_ID,ITEM_ID,true);
     API.bringFloatingPanelToFront(state.panel);API.clampFloatingPanelToViewport(state.panel);
-    renderAll();notify('Welcome to Dem Bones. Step 1: select some vector shapes on stage, then click Use Stage Selection below to start a part.',false);
+    renderAll();
+    var orphanCount=findOrphanDemBonesObjects().length;
+    if(orphanCount){
+      notify('Found '+orphanCount+' stray shape(s) left over from an earlier session (Build Character tab > Clean Up Stray Artwork removes them). Step 1: select some vector shapes on stage, then click Use Stage Selection below to start a part.',true);
+    }else{
+      notify('Welcome to Dem Bones. Step 1: select some vector shapes on stage, then click Use Stage Selection below to start a part.',false);
+    }
   }
   function close(){
     /*
