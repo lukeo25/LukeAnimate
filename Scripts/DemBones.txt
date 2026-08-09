@@ -1,6 +1,18 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v15.6
+/* Luke Animate Dem Bones + MyCharacter GPT v15.7
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
+
+   v15.7 adds mode-specific cursors, purely cosmetic/UX - no rig or placement
+   logic touched:
+   - the stage cursor becomes the LukeAnimate Bone.svg icon, recoloured
+     green, while actively dragging out a new bone on the Bones tab, and the
+     same icon recoloured blue while on the Edit Bone tab;
+   - the stage cursor resets to the normal pointer everywhere else on stage,
+     including whenever the panel is closed;
+   - inside the DemBones panel itself, every button (including tabs, part
+     cards, curve point rows and the right-click context menu) shows a
+     pointer/finger cursor; everything else in the panel (labels, inputs,
+     the panel background) uses the standard cursor.
 
    v15.6 fixes a real detection gap found by re-examining the original
    "stray artwork" screenshot properly: allObjectArrays() - the function
@@ -129,7 +141,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "15.6";
+  var TOOL_VERSION = "15.7";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -4461,7 +4473,7 @@
 
   function ensureStyle(){
     if(document.getElementById("la-dembones-full-style"))return;var s=document.createElement("style");s.id="la-dembones-full-style";s.textContent=[
-      ".la-dembones-full{position:fixed;left:28px;top:18px;width:496px;max-width:calc(100vw - 16px);height:min(760px,calc(100vh - 36px));display:none;flex-direction:column;background:#f1f3f6;border:1px solid #bfc6cf;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden;color:#27313d;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;z-index:10000}",
+      ".la-dembones-full{position:fixed;left:28px;top:18px;width:496px;max-width:calc(100vw - 16px);height:min(760px,calc(100vh - 36px));display:none;flex-direction:column;background:#f1f3f6;border:1px solid #bfc6cf;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden;color:#27313d;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;z-index:10000;cursor:default}.la-dembones-full button,.la-dembones-full [data-db-part-card],.la-dembones-full [data-db-point-index],.la-dembones-full label.db-check,.la-dembones-ctx button{cursor:pointer}",
       ".la-dembones-full.open{display:flex}.db-head{display:flex;align-items:center;gap:9px;padding:8px 10px;background:#fff;border-bottom:1px solid #d3d8df;cursor:move;user-select:none}.db-head img{width:27px;height:27px;filter:grayscale(1) brightness(.72)}.db-title{flex:1}.db-title strong{display:block;font-size:14px;color:#29434a}.db-title span{font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:#7b8491}.db-frame{border:1px solid #bbc3cd;border-radius:999px;padding:5px 9px;background:#fff;font-size:10px}.db-frame b{color:#0e9c86}.db-close{width:32px;height:32px;border:1px solid #bbc3cd;border-radius:8px;background:#fff;font-size:20px;color:#566270;cursor:pointer}",
       ".db-tabs{padding:8px 7px 5px;background:#e4e7eb;border-bottom:1px solid #cbd1d8}.db-tab-group{margin-bottom:6px}.db-tab-group:last-child{margin-bottom:0}.db-tab-group-label{display:block;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#828d99;margin:0 0 4px 2px}.db-tabs-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.db-tabs-row.two{grid-template-columns:repeat(2,minmax(0,1fr))}.db-tab{height:32px;border:1px solid #aeb7c2;border-radius:7px;background:#626a74;color:#fff;font-size:10.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}.db-tab.active{background:#0e9c86;border-color:#0b8574;font-weight:700}.db-tab:hover{border-color:#0e9c86}",
       ".db-steps{display:flex;align-items:center;padding:9px 12px;background:#eef1f4;border-bottom:1px solid #cbd1d8;font-size:9.5px;color:#7b8491}.db-step{display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer}.db-step:hover .db-step-label{text-decoration:underline}.db-step-dot{width:16px;height:16px;border-radius:50%;background:#c7cdd4;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0}.db-step.done .db-step-dot{background:#0e9c86}.db-step.current .db-step-dot{background:#0e9c86;box-shadow:0 0 0 3px rgba(14,156,134,.25)}.db-step.current .db-step-label{color:#0e9c86;font-weight:700}.db-step-sep{flex:1;height:1px;background:#cbd1d8;margin:0 6px;min-width:8px}",
@@ -4610,10 +4622,55 @@
   }
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();setStatus(state.status,state.statusType);}
+  var BONE_CURSOR_PATH="m 90.689095,165.32534 c -3.581694,-1.16044 -6.763294,-3.93887 -8.388372,-7.3254 -0.775996,-1.61711 -0.946884,-1.79215 -2.428398,-2.48746 -2.28929,-1.07442 -4.906973,-3.76916 -6.083834,-6.26291 -3.814185,-8.08223 1.004839,-17.97566 9.659961,-19.83185 1.908807,-0.40936 6.15606,-0.1714 7.618531,0.42685 l 1.146652,0.46905 9.779395,-9.76103 c 8.53853,-8.5225 9.76346,-9.84497 9.6538,-10.4225 -0.0691,-0.3638 -0.31074,-1.37583 -0.53702,-2.24896 -1.17839,-4.54697 0.0929,-9.269876 3.45441,-12.833246 4.37371,-4.63637 10.88584,-5.79467 16.71746,-2.97352 2.12582,1.02841 5.02908,3.96836 6.11402,6.19129 0.80653,1.65249 0.96752,1.814636 2.59953,2.618066 2.08601,1.02694 5.16337,3.9782 6.21351,5.95889 2.0912,3.94428 2.04296,9.50563 -0.11573,13.34165 -1.2063,2.14361 -2.49628,3.6087 -4.29856,4.88212 -2.41228,1.7044 -4.27449,2.31064 -7.5564,2.45996 -2.50018,0.11375 -2.98705,0.0561 -4.86628,-0.5759 l -2.08816,-0.70229 -0.65109,0.60607 c -0.3581,0.33334 -4.69157,4.73352 -9.62994,9.77816 l -8.97885,9.17209 0.5806,1.67583 c 0.7926,2.28775 0.79327,6.21977 10e-4,8.70637 -1.36102,4.27426 -5.03501,7.94679 -9.254484,9.25083 -2.416041,0.74668 -6.161092,0.69819 -8.662221,-0.11216 z m 7.443426,-6.13266 c 3.680229,-1.52486 5.635029,-5.60023 4.522269,-9.42801 -0.23857,-0.82065 -0.96729,-2.20441 -1.64747,-3.12837 l -1.219668,-1.6568 12.131968,-12.15975 c 6.67258,-6.68787 12.59632,-12.50492 13.16385,-12.92679 1.35183,-1.00486 2.25796,-0.97193 4.08761,0.14856 3.54515,2.17105 7.49373,1.71384 10.20178,-1.18129 2.00651,-2.14513 2.60612,-4.37632 1.90819,-7.10059 -0.22799,-0.88993 -0.71081,-2.0874 -1.07294,-2.66105 -2.23269,-3.53681 -7.30209,-4.5105 -10.94426,-2.10209 -0.62576,0.41379 -1.22387,0.75234 -1.32913,0.75234 -0.10526,0 -1.13752,-0.95172 -2.29391,-2.11494 l -2.10254,-2.11494 0.91812,-0.79309 c 1.27876,-1.10462 3.30786,-2.23849 4.96974,-2.777126 1.36253,-0.4416 1.39163,-0.47129 0.9453,-0.96448 -0.25328,-0.27987 -1.23016,-0.88775 -2.17085,-1.35085 -4.81661,-2.37121 -10.11523,0.38679 -11.14052,5.798796 -0.41585,2.19506 0.27023,4.50978 2.04154,6.88778 0.34878,0.46825 0.59318,0.95985 0.54311,1.09244 -0.0501,0.13259 -6.00187,6.2179 -13.22622,13.52291 l -13.135188,13.28182 -1.813777,-1.20247 c -2.946646,-1.95352 -5.506547,-2.18946 -8.487518,-0.78228 -2.830862,1.33632 -4.479365,4.23593 -4.246329,7.46901 0.186308,2.58479 1.945275,5.81379 2.601809,4.77624 0.132201,-0.20892 0.24219,-0.53208 0.244418,-0.71814 0.0072,-0.6036 1.628395,-3.59993 2.585398,-4.77846 l 0.932201,-1.148 2.189952,2.17858 2.189953,2.17857 -0.881413,1.28135 c -0.824085,1.19801 -1.45579,3.17671 -1.45579,4.55999 0,1.0271 0.741191,3.15644 1.53179,4.40062 1.879104,2.95718 6.047618,4.17378 9.458525,2.76051 z";
+
+  var boneCursorCache={};
+
+  function boneCursorUrl(colorHex){
+    /*
+      https://lukeo25.github.io/LukeAnimate/SVGs/Bone.svg recoloured per mode
+      - green while actively placing/dragging a new bone, blue while
+        editing an existing bone's rest pose - instead of the raw white
+        original, since that would be invisible against a light canvas.
+    */
+    if(boneCursorCache[colorHex])return boneCursorCache[colorHex];
+    var svg='<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="72.467493 90.551252 75.277687 75.415604">'+
+      '<path fill="'+colorHex+'" stroke="#132018" stroke-width="1.6" stroke-linejoin="round" d="'+BONE_CURSOR_PATH+'"/>'+
+    '</svg>';
+    var encoded;
+    try{
+      encoded="data:image/svg+xml;base64,"+btoa(svg);
+    }catch(eEncode){
+      encoded="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg);
+    }
+    var css='url("'+encoded+'") 15 15, crosshair';
+    boneCursorCache[colorHex]=css;
+    return css;
+  }
+
+  function updateStageCursor(){
+    var surface=API.overlay||API.canvas;
+    if(!surface)return;
+
+    if(!state.open){
+      surface.style.cursor="";
+      return;
+    }
+
+    if(state.tab==="bones"&&state.mode==="add-bone"){
+      surface.style.cursor=boneCursorUrl("#22c55e");
+    }else if(state.tab==="editbone"){
+      surface.style.cursor=boneCursorUrl("#2f6fed");
+    }else{
+      surface.style.cursor="";
+    }
+  }
+
   function renderAll(){
     if(state.activeRig){
       syncRigDisplayGeometry(state.activeRig,currentTime());
     }
+    updateStageCursor();
     if(!state.panel)return;
     state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){
       btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);
@@ -4702,6 +4759,8 @@
       ITEM_ID,
       false
     );
+
+    updateStageCursor();
 
     API.refreshUI();
   }
