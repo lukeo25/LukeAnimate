@@ -1,29 +1,29 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v14.0
+/* Luke Animate Dem Bones + MyCharacter GPT v15.0
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
 
-   v14 fixes the live selection origin / bounding-box problem for boned shapes.
-   The visible DemBones deformation was being drawn from the evaluator, but the
-   selected object's own geometry could remain at an older pose. That left the
-   origin point, dashed bounds and transform handles behind while the visible
-   SVG had moved.
-
-   v14 adds live display-geometry syncing:
-   - the current posed curve points and Bezier handles are computed once in a
-     shared helper;
-   - the evaluator still renders from that posed geometry;
-   - the real selected object's points / handles are also updated to the same
-     posed geometry so the origin point and bounding box follow the whole
-     boned shape;
-   - this runs after rig edits, panel refreshes and frame changes;
-   - Character stability fixes from v13 are retained.
+   v15 defines the final Character lifecycle:
+   - Build Parts artwork is temporary construction material;
+   - MyCharacter is the one persistent stage object after finalising/closing;
+   - Create / Update Character Clip returns to Main Scene and removes loose
+     DemBones source SVG/rig objects from the main stage;
+   - closing DemBones does the same cleanup whenever a Character exists;
+   - the Character Clip itself remains on stage at its existing transform;
+   - Character bones remain visible over the finished Character even while the
+     DemBones panel is closed;
+   - clicking one of those visible bones reopens DemBones directly in Animate
+     for the correct Character part and bone;
+   - Character-root contents are pruned to real part Clip instances only, so a
+     stray construction SVG cannot remain inside MyCharacter.
+   Retains v14 live bounds/origin syncing, v13 panel stability, v12 registration,
+   v11 Select / Move, Adjust, Animate and click-a-bone pinning.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "14.0";
+  var TOOL_VERSION = "15.0";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -74,6 +74,8 @@
       nextPartId:1,
       selectedPartId:null,
       pinPickSourceId:null,
+      committed:false,
+      showBones:true,
       parts:[]
     },
     editingPartId:null,
@@ -147,6 +149,54 @@
   function removeObjectsFromCurrentScene(objects){
     var list=sceneObjects();
     objects.forEach(function(o){ var i=list.indexOf(o); if(i>=0) list.splice(i,1); });
+  }
+
+  function removeObjectsAndLayersFromActiveContext(predicate){
+    if(typeof predicate!=="function")return 0;
+
+    var removed=0;
+    var objects=sceneObjects();
+
+    for(var i=objects.length-1;i>=0;i--){
+      if(predicate(objects[i])){
+        objects.splice(i,1);
+        removed++;
+      }
+    }
+
+    if(typeof API.getDrawingLayers==="function"){
+      var drawingLayers=API.getDrawingLayers();
+
+      if(Array.isArray(drawingLayers)){
+        for(var layerIndex=drawingLayers.length-1;layerIndex>=0;layerIndex--){
+          var layer=drawingLayers[layerIndex];
+
+          var removeLayer=(layer.frames||[]).some(function(frame){
+            return !!(
+              frame&&
+              frame.object&&
+              predicate(frame.object)
+            );
+          });
+
+          if(removeLayer){
+            drawingLayers.splice(layerIndex,1);
+          }
+        }
+
+        drawingLayers.forEach(function(layer,index){
+          layer.order=index+1;
+
+          (layer.frames||[]).forEach(function(frame){
+            if(frame&&frame.object){
+              frame.object.timelineLayerOrder=layer.order;
+            }
+          });
+        });
+      }
+    }
+
+    return removed;
   }
 
   function objectBounds(o){
@@ -1367,6 +1417,233 @@
     return normalisePartTransform(solved);
   }
 
+  function characterRootPointToMainScene(point,time){
+    var root=state.character.rootClipId
+      ?clips()[state.character.rootClipId]
+      :null;
+
+    var instance=characterRootInstance();
+
+    if(!root||!instance){
+      return{
+        x:n(point&&point.x,0),
+        y:n(point&&point.y,0)
+      };
+    }
+
+    var effective=instance;
+
+    if(typeof API.getEffectiveObject==="function"){
+      try{
+        effective=API.getEffectiveObject(
+          instance,
+          time
+        )||instance;
+      }catch(ignore){}
+    }
+
+    var scale=Math.max(.0001,n(effective.scale,1));
+    var scaleX=Math.max(.0001,n(effective.scaleX,1));
+    var scaleY=Math.max(.0001,n(effective.scaleY,1));
+
+    var local={
+      x:(
+        n(point&&point.x,0)-
+        n(root.pivotX,0)
+      )*scale*scaleX,
+      y:(
+        n(point&&point.y,0)-
+        n(root.pivotY,0)
+      )*scale*scaleY
+    };
+
+    var rotated=rotateVector(
+      local.x,
+      local.y,
+      n(effective.rotation,0)*Math.PI/180
+    );
+
+    return{
+      x:n(effective.x,0)+rotated.x,
+      y:n(effective.y,0)+rotated.y
+    };
+  }
+
+  function characterBoneDisplayRecords(time){
+    if(!state.character.rootClipId||!state.character.parts.length){
+      return[];
+    }
+
+    var editing=typeof API.getEditingClipId==="function"
+      ?API.getEditingClipId()
+      :null;
+
+    /*
+      Show the complete assembled skeleton in Main Scene or while directly
+      editing MyCharacter. Inside an individual part Clip the normal active-rig
+      overlay takes over instead.
+    */
+    if(
+      editing&&
+      String(editing)!==String(state.character.rootClipId)
+    ){
+      return[];
+    }
+
+    var records=[];
+
+    state.character.parts.forEach(function(part){
+      characterPartBoneWorldRecords(
+        part,
+        time
+      ).forEach(function(record){
+        var head=record.head;
+        var tail=record.tail;
+
+        if(!editing){
+          head=characterRootPointToMainScene(
+            head,
+            time
+          );
+
+          tail=characterRootPointToMainScene(
+            tail,
+            time
+          );
+        }
+
+        records.push({
+          part:part,
+          bone:record.bone,
+          head:head,
+          tail:tail
+        });
+      });
+    });
+
+    return records;
+  }
+
+  function drawCharacterAnimationBones(ctx){
+    if(!state.character.showBones)return;
+
+    var records=characterBoneDisplayRecords(
+      currentTime()
+    );
+
+    if(!records.length)return;
+
+    ctx.save();
+
+    records.forEach(function(record){
+      var head=stagePointFromScene(record.head);
+      var tail=stagePointFromScene(record.tail);
+
+      var selected=!!(
+        state.open&&
+        state.activeRig===record.part.rig&&
+        String(state.selectedBoneId)===String(record.bone.id)
+      );
+
+      ctx.lineWidth=selected?5:3;
+      ctx.strokeStyle=selected
+        ?"#0e9c86"
+        :"rgba(14,156,134,.88)";
+
+      ctx.beginPath();
+      ctx.moveTo(head.x,head.y);
+      ctx.lineTo(tail.x,tail.y);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(
+        head.x,
+        head.y,
+        selected?7:5,
+        0,
+        Math.PI*2
+      );
+
+      ctx.fillStyle=selected
+        ?"#0e9c86"
+        :"#ffffff";
+
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(
+        tail.x,
+        tail.y,
+        selected?8:6,
+        0,
+        Math.PI*2
+      );
+
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle="#29434a";
+      ctx.font="10px Arial";
+
+      ctx.fillText(
+        record.bone.name||"Bone",
+        (head.x+tail.x)/2+6,
+        (head.y+tail.y)/2-6
+      );
+    });
+
+    ctx.restore();
+  }
+
+  function characterAnimationBoneHit(event){
+    var point=selectedScenePoint(event);
+    var nodeThreshold=scenePixels(14);
+    var lineThreshold=scenePixels(9);
+    var best=null;
+
+    characterBoneDisplayRecords(
+      currentTime()
+    ).forEach(function(record){
+      var headDistance=Math.hypot(
+        point.x-record.head.x,
+        point.y-record.head.y
+      );
+
+      var tailDistance=Math.hypot(
+        point.x-record.tail.x,
+        point.y-record.tail.y
+      );
+
+      var lineDistance=distancePointToSegment(
+        point,
+        record.head,
+        record.tail
+      );
+
+      var distance=Math.min(
+        headDistance,
+        tailDistance,
+        lineDistance
+      );
+
+      var hit=
+        headDistance<=nodeThreshold||
+        tailDistance<=nodeThreshold||
+        lineDistance<=lineThreshold;
+
+      if(hit&&(!best||distance<best.distance)){
+        best={
+          part:record.part,
+          bone:record.bone,
+          distance:distance
+        };
+      }
+    });
+
+    return best;
+  }
+
   function characterPartBoneWorldRecords(part,time){
     if(!part||!part.rig)return[];
 
@@ -2034,6 +2311,9 @@
         transform:null,
         pin:null,
         localOrigin:null,
+        buildSourceIds:[],
+        buildSourceRigId:"",
+        buildSourceContextId:"",
         collapsed:false
       };
 
@@ -2041,6 +2321,41 @@
     }else if(part.clipId&&clips()[part.clipId]){
       delete clips()[part.clipId];
     }
+
+    /*
+      Remember the temporary Build Parts objects. The Character Clip receives
+      its own independent copy, so these loose source objects can be removed
+      safely when the Character is finalised.
+    */
+    var sourceRig=state.activeRig;
+
+    part.buildSourceIds=sourceRig
+      ?sceneObjects().filter(function(object){
+          return !!(
+            object&&
+            (
+              (
+                object.demBones&&
+                String(object.demBones.rigId)===String(sourceRig.id)
+              )||
+              (
+                object.demBonesExpression&&
+                String(object.demBonesExpression.rigId)===String(sourceRig.id)
+              )
+            )
+          );
+        }).map(function(object){
+          return object.id;
+        })
+      :[];
+
+    part.buildSourceRigId=sourceRig
+      ?sourceRig.id
+      :"";
+
+    part.buildSourceContextId=typeof API.getEditingClipId==="function"
+      ?(API.getEditingClipId()||"")
+      :"";
 
     createPartClip(part,build);
     state.character.selectedPartId=part.id;
@@ -2253,6 +2568,9 @@
             transform:part.transform,
             pin:part.pin,
             localOrigin:part.localOrigin,
+            buildSourceIds:part.buildSourceIds||[],
+            buildSourceRigId:part.buildSourceRigId||"",
+            buildSourceContextId:part.buildSourceContextId||"",
             collapsed:part.collapsed
           };
         })
@@ -2291,6 +2609,8 @@
       nextPartId:n(data.character.nextPartId,1),
       selectedPartId:data.character.selectedPartId||null,
       pinPickSourceId:null,
+      committed:false,
+      showBones:true,
       parts:data.character.parts.map(function(raw){
         return{
           id:n(raw.id,0),
@@ -2301,6 +2621,9 @@
           transform:normalisePartTransform(raw.transform),
           pin:raw.pin||null,
           localOrigin:raw.localOrigin||null,
+          buildSourceIds:Array.isArray(raw.buildSourceIds)?raw.buildSourceIds:[],
+          buildSourceRigId:raw.buildSourceRigId||"",
+          buildSourceContextId:raw.buildSourceContextId||"",
           collapsed:!!raw.collapsed
         };
       })
@@ -2328,6 +2651,238 @@
     notify("Loaded MyCharacter.",false);
   }
 
+  function exitToMainScene(){
+    var guard=0;
+
+    while(
+      typeof API.getEditingClipId==="function"&&
+      API.getEditingClipId()&&
+      guard<20
+    ){
+      if(!API.exitClip())break;
+      guard++;
+    }
+
+    return !(
+      typeof API.getEditingClipId==="function"&&
+      API.getEditingClipId()
+    );
+  }
+
+  function pruneCharacterRootToPartInstances(){
+    var root=state.character.rootClipId
+      ?clips()[state.character.rootClipId]
+      :null;
+
+    if(!root)return;
+
+    function keep(object){
+      return !!(
+        object&&
+        object.type==="clipinstance"&&
+        object.__dbPartId!==undefined&&
+        object.__dbPartId!==null&&
+        partById(object.__dbPartId)
+      );
+    }
+
+    if(Array.isArray(root.drawObjects)){
+      root.drawObjects=root.drawObjects.filter(keep);
+    }
+
+    if(Array.isArray(root.sceneFrames)){
+      root.sceneFrames.forEach(function(frame){
+        if(frame&&Array.isArray(frame.objects)){
+          frame.objects=frame.objects.filter(keep);
+        }
+      });
+    }
+
+    if(Array.isArray(root.drawingLayers)){
+      root.drawingLayers=root.drawingLayers.filter(function(layer){
+        var hasRealPart=false;
+
+        (layer.frames||[]).forEach(function(frame){
+          if(frame&&frame.object&&keep(frame.object)){
+            hasRealPart=true;
+          }
+        });
+
+        return hasRealPart;
+      });
+
+      root.drawingLayers.forEach(function(layer,index){
+        layer.order=index+1;
+
+        (layer.frames||[]).forEach(function(frame){
+          if(frame&&frame.object){
+            frame.object.timelineLayerOrder=layer.order;
+          }
+        });
+      });
+    }
+  }
+
+  function cleanupLooseBuildPartsFromMainScene(){
+    var ids={};
+    var rigIds={};
+
+    state.character.parts.forEach(function(part){
+      (part.buildSourceIds||[]).forEach(function(id){
+        ids[String(id)]=true;
+      });
+
+      if(part.buildSourceRigId){
+        rigIds[String(part.buildSourceRigId)]=true;
+      }
+
+      if(
+        part.source&&
+        part.source.rig&&
+        part.source.rig.id
+      ){
+        rigIds[String(part.source.rig.id)]=true;
+      }
+    });
+
+    var removed=removeObjectsAndLayersFromActiveContext(function(object){
+      if(!object)return false;
+
+      if(ids[String(object.id)]){
+        return true;
+      }
+
+      if(
+        object.demBones&&
+        rigIds[String(object.demBones.rigId)]
+      ){
+        return true;
+      }
+
+      if(
+        object.demBonesExpression&&
+        rigIds[String(object.demBonesExpression.rigId)]
+      ){
+        return true;
+      }
+
+      return false;
+    });
+
+    return removed;
+  }
+
+  function ensureCharacterRootInstanceOnMainStage(){
+    var root=ensureCharacterRoot();
+    var instance=characterRootInstance();
+
+    if(instance)return instance;
+
+    var x=n(root.pivotX,API.width/2);
+    var y=n(root.pivotY,API.height/2);
+
+    instance=typeof API.createClipInstance==="function"
+      ?API.createClipInstance(
+          root.id,
+          {
+            name:root.name,
+            x:x,
+            y:y,
+            scale:1,
+            scaleX:1,
+            scaleY:1,
+            rotation:0,
+            opacity:1
+          }
+        )
+      :{
+          type:"clipinstance",
+          clipId:root.id,
+          name:root.name,
+          x:x,
+          y:y,
+          scale:1,
+          scaleX:1,
+          scaleY:1,
+          rotation:0,
+          opacity:1,
+          timeOffset:0,
+          keyframes:[],
+          id:uid("db-character-instance")
+        };
+
+    instance.__demBonesCharacterInstance=true;
+    instance.__dbCharacterId=state.character.id;
+
+    API.addDrawObject(
+      instance,
+      "animate"
+    );
+
+    state.character.rootInstanceId=instance.id;
+
+    return instance;
+  }
+
+  function finaliseCharacterOnStage(silent){
+    if(!state.character.parts.length){
+      return false;
+    }
+
+    syncAllUnpinnedCharacterTransforms();
+    ensureCharacterRoot();
+    updateCharacterInstances();
+
+    /*
+      The Character root is an assembly container. It should contain only its
+      child part Clips, never a loose Build Parts SVG.
+    */
+    pruneCharacterRootToPartInstances();
+
+    exitToMainScene();
+
+    /*
+      Now we are safely in Main Scene, remove the temporary construction
+      artwork/layers. The cloned vectors inside each part Clip are unaffected.
+    */
+    cleanupLooseBuildPartsFromMainScene();
+
+    var root=clips()[state.character.rootClipId];
+    var instance=ensureCharacterRootInstanceOnMainStage();
+
+    if(root){
+      root.name=state.character.name||"MyCharacter";
+    }
+
+    if(instance){
+      instance.name=state.character.name||"MyCharacter";
+      API.selectDrawObject(
+        instance
+      );
+    }
+
+    state.activeRig=null;
+    state.selectedBoneId="";
+    state.selectedCurveId="";
+    state.editingPartId=null;
+    state.character.pinPickSourceId=null;
+    state.character.committed=true;
+    state.character.showBones=true;
+    state.tab="character";
+    state.mode="select";
+
+    API.refreshUI();
+
+    if(!silent){
+      notify(
+        'MyCharacter is now the only DemBones artwork on the main stage. Its bones remain visible for animation.',
+        false
+      );
+    }
+
+    return true;
+  }
+
   function commitCharacter(){
     if(!state.character.parts.length){
       var created=addBuildToCharacter({
@@ -2346,25 +2901,9 @@
       }
     }
 
-    syncAllUnpinnedCharacterTransforms();
-    ensureCharacterRoot();
-    updateCharacterInstances();
-
-    var root=clips()[state.character.rootClipId];
-    root.name=state.character.name||"MyCharacter";
-
-    notify(
-      'Created / updated character Clip "'+
-      root.name+
-      '" with '+
-      state.character.parts.length+
-      ' part'+
-      (state.character.parts.length===1?'':'s')+
-      '.',
+    finaliseCharacterOnStage(
       false
     );
-
-    API.refreshUI();
   }
 
   function pinStatusText(part){
@@ -2891,7 +3430,40 @@
   }
 
   function onPointerDown(event){
-    if(!state.open||!["character","bones","editbone","animate","curves","expression"].includes(state.tab))return;
+    /*
+      Finished Character bones remain useful after the panel is closed.
+      Clicking one reopens the correct Character part directly in Animate.
+    */
+    if(!state.open){
+      if(
+        state.character.committed&&
+        state.character.showBones
+      ){
+        var closedBoneHit=characterAnimationBoneHit(
+          event
+        );
+
+        if(closedBoneHit){
+          event.preventDefault();
+          event.stopImmediatePropagation();
+
+          open();
+
+          activateCharacterPartMode(
+            closedBoneHit.part,
+            "animate"
+          );
+
+          state.selectedBoneId=closedBoneHit.bone.id;
+          renderAll();
+          API.refreshUI();
+        }
+      }
+
+      return;
+    }
+
+    if(!["character","bones","editbone","animate","curves","expression"].includes(state.tab))return;
     if(event.target&&event.target.closest&&event.target.closest(".la-dembones-full"))return;
 
     if(state.tab==="character"){
@@ -3233,13 +3805,36 @@
   }
 
   function overlayRenderer(ctx){
-    if(!state.open)return;
+    /*
+      v15:
+      A finalised Character keeps its skeleton visible even with the DemBones
+      panel closed. Those are Character-part bones, not the discarded Build
+      Parts rig.
+    */
+    if(!state.open){
+      if(
+        state.character.committed&&
+        state.character.showBones
+      ){
+        drawCharacterAnimationBones(
+          ctx
+        );
+      }
+
+      return;
+    }
 
     if(state.tab==="character"){
+      drawCharacterAnimationBones(
+        ctx
+      );
+
       if(state.character.pinPickSourceId){
-        drawCharacterPinTargets(ctx);
+        drawCharacterPinTargets(
+          ctx
+        );
       }
-      /* Normal Character mode never draws a stale Build Parts rig. */
+
       return;
     }
 
@@ -3399,7 +3994,7 @@
         '<h3>MyCharacter</h3>'+
         '<div class="db-row"><label>Name</label><input value="'+esc(state.character.name)+'" data-db-character-name></div>'+
         '<div class="db-grid3"><button class="db-btn primary" data-db-character-add>Add Current Part</button><button class="db-btn" data-db-character-save>Save</button><button class="db-btn" data-db-character-load>Load</button></div>'+
-        '<p class="db-help" style="margin-top:8px">Character parts are real Luke Animate Clip instances. Click a part card or Select / Move, then use the normal Select/Edit tool on stage. 📌 follows the LukeTools pin workflow: choose the child first, then click a visible bone on another part.</p>'+
+        '<p class="db-help" style="margin-top:8px">Character parts are real Luke Animate Clip instances. Click a part card or Select / Move, then use the normal Select/Edit tool on stage. 📌 follows the LukeTools pin workflow. When the Character is created or DemBones is closed, loose Build Parts artwork is removed and MyCharacter remains as the single stage object with its animation bones visible.</p>'+
       '</div>'+
       '<div class="db-section"><h3>Parts</h3><div class="db-list">'+cards+'</div></div>'+
       '<div class="db-section"><button class="db-btn primary" style="width:100%" data-db-character-commit>Create / Update Character Clip</button></div>'+
@@ -3441,7 +4036,7 @@
 
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
-  function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. The child Clips remain editable, and Dem Bones animation remains driven by this external tool script.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div><div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div></div>';}
+  function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts SVG/rig artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div><div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div></div>';}
   function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. SVG files loaded by DemBones are automatically centred using the actual artwork bounds. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character keeps the part where it is on stage. Select / Move uses Luke Animate’s native Select/Edit tool. Adjust opens rest-bone/envelope editing. Animate opens bone animation. To pin, press 📌 on the child part and click a visible target bone; the current placement is preserved.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():state.tab==='commit'?commitPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
@@ -3499,7 +4094,41 @@
     API.bringFloatingPanelToFront(state.panel);API.clampFloatingPanelToViewport(state.panel);
     renderAll();notify('Full Dem Bones / MyCharacter workspace loaded. Choose Selected points, Uniform, or Limb before Use Stage Selection.',false);
   }
-  function close(){state.open=false;state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;if(state.panel)state.panel.classList.remove('open');API.setSelectionInspectorSuppressed(TOOL_ID,false);API.setConfiguredToolActive(GROUP_ID,ITEM_ID,false);}
+  function close(){
+    /*
+      Closing DemBones after a Character exists is a final assembly handoff:
+      leave one Character on Main Scene, discard loose Build Parts artwork,
+      but keep the Character skeleton overlay available.
+    */
+    if(state.character.parts.length){
+      finaliseCharacterOnStage(
+        true
+      );
+    }
+
+    state.open=false;
+    state.mode='select';
+    state.curvePointAddMode=false;
+    state.drag=null;
+    state.addPreview=null;
+
+    if(state.panel){
+      state.panel.classList.remove('open');
+    }
+
+    API.setSelectionInspectorSuppressed(
+      TOOL_ID,
+      false
+    );
+
+    API.setConfiguredToolActive(
+      GROUP_ID,
+      ITEM_ID,
+      false
+    );
+
+    API.refreshUI();
+  }
 
   var plugin={version:TOOL_VERSION,open:open,close:close,get panel(){return state.panel;},get state(){return state;},refresh:function(){syncRigRefs(state.activeRig);renderAll();API.refreshUI();}};
   window[SINGLETON_KEY]=plugin;
