@@ -1,6 +1,39 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v15.4
+/* Luke Animate Dem Bones + MyCharacter GPT v15.6
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
+
+   v15.6 fixes a real detection gap found by re-examining the original
+   "stray artwork" screenshot properly: allObjectArrays() - the function
+   findObjectById, rigObjects and the Clean Up Stray Artwork orphan scan all
+   rely on - only ever looked inside each clip's drawObjects array. Content
+   that only lives in a clip's sceneFrames or drawingLayers instead (as the
+   rest of this file already has to account for elsewhere, in
+   characterRootPartInstances and pruneCharacterRootToPartInstances) was
+   invisible to it, so a stray object stored that way could never be found
+   or removed no matter how many times Clean Up Stray Artwork was run. It
+   now also flattens the active context's and every clip's sceneFrames/
+   drawingLayers content into the same search.
+
+   v15.5 replaces the v15.4 pivot-only guess with a real fix, and changes how
+   the panel is invoked from the stage:
+   - v15.4 tried to correct the Character root Clip's offset by only moving
+     its pivot/instance position. That assumed a specific nested-Clip pivot
+     convention that could not be confirmed against Luke Animate's own
+     rendering, and it left every part instance positioned at its own
+     unrelated absolute Build Parts coordinate. This replaces that with a
+     structural fix: every part is now stored relative to one shared origin
+     established by the first part added (root pivot fixed at 0,0, matching
+     the convention already proven correct for each part's own Clip), so the
+     result is correct regardless of exactly how pivot is interpreted.
+     Existing characters migrate automatically and silently the next time
+     MyCharacter is touched (adding a part, Force Sync Now, or loading a
+     saved character), with no visible jump on stage;
+   - left-clicking the character, including its visible bones, no longer
+     opens DemBones under any circumstance - animation and normal Select/
+     Edit now always happen directly on stage with the panel closed;
+   - DemBones now opens only via an explicit right-click on the character,
+     which shows a small "Edit Character" context menu; choosing it opens
+     the panel directly into that part's Animate view.
 
    v15.4 fixes two real coordinate-continuity bugs, not just their symptoms:
    - the Character root Clip's pivot/instance position used to be set to
@@ -96,7 +129,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "15.4";
+  var TOOL_VERSION = "15.6";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -149,6 +182,9 @@
       pinPickSourceId:null,
       committed:false,
       showBones:true,
+      originX:0,
+      originY:0,
+      originSet:false,
       parts:[]
     },
     editingPartId:null,
@@ -207,7 +243,49 @@
 
   function allObjectArrays(){
     var out=[sceneObjects()];
-    Object.keys(clips()).forEach(function(id){ var c=clips()[id]; if(c&&Array.isArray(c.drawObjects)) out.push(c.drawObjects); });
+
+    /*
+      drawObjects is not the only place a clip's real content can live -
+      characterRootPartInstances/pruneCharacterRootToPartInstances already
+      have to fall back to sceneFrames/drawingLayers elsewhere in this file.
+      Anything that only exists in one of those forms was previously
+      invisible to findObjectById and to the orphan scan used by Clean Up
+      Stray Artwork, so it could never be found or removed. Flatten those
+      forms into synthetic read-only arrays too.
+    */
+    if(typeof API.getDrawingLayers==="function"){
+      var activeLayerObjects=[];
+      (API.getDrawingLayers()||[]).forEach(function(layer){
+        (layer.frames||[]).forEach(function(frame){
+          if(frame&&frame.object)activeLayerObjects.push(frame.object);
+        });
+      });
+      if(activeLayerObjects.length)out.push(activeLayerObjects);
+    }
+
+    Object.keys(clips()).forEach(function(id){
+      var c=clips()[id];
+      if(!c)return;
+
+      if(Array.isArray(c.drawObjects))out.push(c.drawObjects);
+
+      if(Array.isArray(c.sceneFrames)){
+        c.sceneFrames.forEach(function(frame){
+          if(frame&&Array.isArray(frame.objects))out.push(frame.objects);
+        });
+      }
+
+      if(Array.isArray(c.drawingLayers)){
+        var layerObjects=[];
+        c.drawingLayers.forEach(function(layer){
+          (layer.frames||[]).forEach(function(frame){
+            if(frame&&frame.object)layerObjects.push(frame.object);
+          });
+        });
+        if(layerObjects.length)out.push(layerObjects);
+      }
+    });
+
     return out;
   }
 
@@ -1747,6 +1825,119 @@
     }).filter(Boolean);
   }
 
+  function characterPartWorldBounds(part,time){
+    if(!part||!part.rig)return null;
+
+    var localBounds=rigTargetBounds(part.rig);
+    if(!isFinite(localBounds.x1))return null;
+
+    var transform=resolvedPartTransform(part,time,{});
+    var corners=[
+      {x:localBounds.x1,y:localBounds.y1},
+      {x:localBounds.x2,y:localBounds.y1},
+      {x:localBounds.x2,y:localBounds.y2},
+      {x:localBounds.x1,y:localBounds.y2}
+    ].map(function(point){
+      return partLocalPointToCharacterScene(transform,point);
+    });
+
+    var editing=typeof API.getEditingClipId==="function"?API.getEditingClipId():null;
+    if(!editing){
+      corners=corners.map(function(point){
+        return characterRootPointToMainScene(point,time);
+      });
+    }
+
+    var xs=corners.map(function(c){return c.x;});
+    var ys=corners.map(function(c){return c.y;});
+
+    return{
+      x1:Math.min.apply(null,xs),
+      y1:Math.min.apply(null,ys),
+      x2:Math.max.apply(null,xs),
+      y2:Math.max.apply(null,ys)
+    };
+  }
+
+  /*
+    Right-click support so animation on stage stays untouched by default:
+    a normal left click/drag on the character is always plain Luke Animate
+    Select/Edit, and DemBones only opens when the person explicitly asks for
+    it via right-click > Edit Character.
+  */
+  function characterRightClickHit(event){
+    if(!state.character.committed||!state.character.parts.length)return null;
+
+    var editing=typeof API.getEditingClipId==="function"?API.getEditingClipId():null;
+    if(editing&&String(editing)!==String(state.character.rootClipId))return null;
+
+    var point=selectedScenePoint(event);
+    var time=currentTime();
+    var hit=null;
+
+    state.character.parts.forEach(function(part){
+      var bounds=characterPartWorldBounds(part,time);
+      if(!bounds)return;
+      if(point.x>=bounds.x1&&point.x<=bounds.x2&&point.y>=bounds.y1&&point.y<=bounds.y2){
+        hit=part;
+      }
+    });
+
+    return hit;
+  }
+
+  var characterContextMenuEl=null;
+
+  function closeCharacterContextMenu(){
+    if(characterContextMenuEl){
+      characterContextMenuEl.remove();
+      characterContextMenuEl=null;
+    }
+    window.removeEventListener("pointerdown",closeCharacterContextMenu,true);
+    window.removeEventListener("keydown",characterContextMenuKeydown,true);
+  }
+
+  function characterContextMenuKeydown(event){
+    if(event.key==="Escape")closeCharacterContextMenu();
+  }
+
+  function showCharacterContextMenu(clientX,clientY,part){
+    closeCharacterContextMenu();
+    ensureStyle();
+
+    var menu=document.createElement("div");
+    menu.className="la-dembones-ctx";
+    menu.dataset.lukeAnimateFloatingPanel="true";
+    menu.innerHTML='<button type="button" data-db-ctx-edit>✎ Edit Character'+(part?' — '+esc(part.name||'Part'):'')+'</button>';
+    document.body.appendChild(menu);
+
+    var rect=menu.getBoundingClientRect();
+    var left=Math.min(clientX,window.innerWidth-rect.width-8);
+    var top=Math.min(clientY,window.innerHeight-rect.height-8);
+    menu.style.left=Math.max(4,left)+"px";
+    menu.style.top=Math.max(4,top)+"px";
+
+    characterContextMenuEl=menu;
+
+    menu.querySelector("[data-db-ctx-edit]").onclick=function(){
+      closeCharacterContextMenu();
+      open();
+      if(part){
+        state.character.selectedPartId=part.id;
+        activateCharacterPartMode(part,"animate");
+      }else{
+        state.tab="character";
+        renderAll();
+      }
+      API.refreshUI();
+    };
+
+    setTimeout(function(){
+      window.addEventListener("pointerdown",closeCharacterContextMenu,true);
+      window.addEventListener("keydown",characterContextMenuKeydown,true);
+    },0);
+  }
+
   function deformedObjectGeometry(object,time){
     if(!object||!object.demBones||!object.demBones.rig)return null;
 
@@ -1930,14 +2121,17 @@
 
   function characterContentOrigin(){
     /*
-      The Character root's pivot/instance position used to be set to
-      "wherever the stage view happened to be centred" at creation time,
-      which has nothing to do with where the character's actual artwork
-      lives. That mismatch is what makes the whole Clip render offset from
-      the artwork it contains. Anchor the root to the first part's own
-      build-time centre instead, so the Character renders exactly where its
-      content already is with zero net offset.
+      This is only used to decide where the Character root Clip itself sits
+      on the main stage - it must NOT be used as the Clip's pivot (see
+      ensureCharacterRoot, which always keeps pivot at 0,0 to match the
+      already-correct part-clip convention). Prefer the shared origin
+      established when the first part was built; fall back to the first
+      part's own recorded centre, then to the current stage view as a last
+      resort for a character with no parts yet.
     */
+    if(state.character.originSet&&isFinite(Number(state.character.originX))&&isFinite(Number(state.character.originY))){
+      return {x:Number(state.character.originX),y:Number(state.character.originY)};
+    }
     var firstPart=state.character.parts&&state.character.parts[0];
     if(firstPart&&firstPart.localOrigin&&isFinite(Number(firstPart.localOrigin.x))&&isFinite(Number(firstPart.localOrigin.y))){
       return {x:Number(firstPart.localOrigin.x),y:Number(firstPart.localOrigin.y)};
@@ -1945,29 +2139,80 @@
     return currentStageCentreScene();
   }
 
+  /*
+    Characters built before this fix have each part instance positioned at
+    its own unrelated absolute Build Parts coordinate inside a root Clip
+    whose pivot was either an arbitrary stage-view point (pre-v15.4) or the
+    first part's absolute coordinate used as if it were a pivot (v15.4) -
+    neither is guaranteed to match how the engine actually resolves nested
+    Clip positions. This re-bases every part to a single shared local origin
+    (0,0 pivot, small relative offsets) - the same convention already proven
+    correct for each part's own internal Clip - without moving anything
+    visible on stage.
+  */
+  function migrateCharacterOrigin(root){
+    if(!root)return;
+
+    var parts=state.character.parts||[];
+    var origin=null;
+
+    if(state.character.originSet&&isFinite(Number(state.character.originX))&&isFinite(Number(state.character.originY))){
+      origin={x:Number(state.character.originX),y:Number(state.character.originY)};
+    }else{
+      var first=parts[0];
+      var firstTransform=first&&normalisePartTransform(first.transform);
+      if(firstTransform){
+        origin={x:firstTransform.x,y:firstTransform.y};
+      }
+    }
+
+    if(!origin){
+      origin=characterContentOrigin();
+    }
+
+    parts.forEach(function(part){
+      var transform=normalisePartTransform(part.transform);
+      var relativeX=transform.x-origin.x;
+      var relativeY=transform.y-origin.y;
+
+      part.transform=Object.assign({},transform,{x:relativeX,y:relativeY});
+
+      var instance=partInstance(part);
+      if(instance){
+        instance.x=relativeX;
+        instance.y=relativeY;
+      }
+    });
+
+    state.character.originX=origin.x;
+    state.character.originY=origin.y;
+    state.character.originSet=true;
+
+    root.pivotX=0;
+    root.pivotY=0;
+
+    var rootInstance=characterRootInstance();
+    if(rootInstance){
+      rootInstance.x=origin.x;
+      rootInstance.y=origin.y;
+    }
+  }
+
   function ensureCharacterRoot(){
     var map=clips();
     var root=state.character.rootClipId
       ?map[state.character.rootClipId]
       :null;
-    var centre=characterContentOrigin();
 
     if(root){
-      if(root.__dbCharacterPlacementVersion!==3){
-        root.pivotX=centre.x;
-        root.pivotY=centre.y;
-
-        var rootInstance=characterRootInstance();
-        if(rootInstance){
-          rootInstance.x=centre.x;
-          rootInstance.y=centre.y;
-        }
-
-        root.__dbCharacterPlacementVersion=3;
+      if(root.__dbCharacterPlacementVersion!==4){
+        migrateCharacterOrigin(root);
+        root.__dbCharacterPlacementVersion=4;
       }
       return root;
     }
 
+    var centre=characterContentOrigin();
     var id=uid("db-character-clip");
 
     root={
@@ -1978,17 +2223,23 @@
       targetPoints:[],
       layers:[],
       drawObjects:[],
-      pivotX:centre.x,
-      pivotY:centre.y,
+      pivotX:0,
+      pivotY:0,
       timelineDuration:Math.max(3,n(API.getTimelineDuration(),6)),
       loopTimeline:true,
       __demBonesCharacter:true,
-      __dbCharacterPlacementVersion:3
+      __dbCharacterPlacementVersion:4
     };
 
     map[id]=root;
     state.character.rootClipId=id;
     state.character.id=state.character.id||uid("character");
+
+    if(!state.character.originSet){
+      state.character.originX=centre.x;
+      state.character.originY=centre.y;
+      state.character.originSet=true;
+    }
 
     var instance={
       type:"clipinstance",
@@ -2100,9 +2351,25 @@
     part.localOrigin={x:cx,y:cy};
 
     if(!part.transform){
+      /*
+        Every part's Build Parts shapes are recorded at whatever absolute
+        stage position they happened to be built at (cx,cy here). Character
+        parts need a single, shared local origin so they all combine
+        correctly inside one root Clip - otherwise each part instance ends
+        up positioned using its own unrelated absolute build coordinate,
+        which is what made the Character render clipped/offset from itself.
+        The very first part establishes that shared origin; every part after
+        it (including this one, if it is not first) is stored relative to it.
+      */
+      if(!state.character.originSet){
+        state.character.originX=cx;
+        state.character.originY=cy;
+        state.character.originSet=true;
+      }
+
       part.transform={
-        x:cx,
-        y:cy,
+        x:cx-n(state.character.originX,0),
+        y:cy-n(state.character.originY,0),
         scale:1,
         scaleX:1,
         scaleY:1,
@@ -2688,6 +2955,9 @@
         id:state.character.id,
         nextPartId:state.character.nextPartId,
         selectedPartId:state.character.selectedPartId,
+        originX:state.character.originX,
+        originY:state.character.originY,
+        originSet:!!state.character.originSet,
         parts:state.character.parts.map(function(part){
           return{
             id:part.id,
@@ -2739,6 +3009,9 @@
       pinPickSourceId:null,
       committed:false,
       showBones:true,
+      originX:n(data.character.originX,0),
+      originY:n(data.character.originY,0),
+      originSet:!!data.character.originSet,
       parts:data.character.parts.map(function(raw){
         return{
           id:n(raw.id,0),
@@ -2758,6 +3031,16 @@
     };
 
     ensureCharacterRoot();
+
+    if(!data.character.originSet){
+      /*
+        Older saved characters never had a shared origin - their part
+        transforms are still whatever absolute Build Parts coordinates they
+        were recorded at. Re-base them now, the same way an in-place
+        upgrade would, before any instances are created from them.
+      */
+      migrateCharacterOrigin(clips()[state.character.rootClipId]);
+    }
 
     state.character.parts.forEach(function(part){
       if(part.source)createPartClip(part,part.source);
@@ -3703,35 +3986,13 @@
 
   function onPointerDown(event){
     /*
-      Finished Character bones remain useful after the panel is closed.
-      Clicking one reopens the correct Character part directly in Animate.
+      Left click on the character should behave like normal Luke Animate
+      Select/Edit at all times, whether or not visible bones happen to sit
+      under the pointer - it must never itself pop the DemBones panel open.
+      The only way in is an explicit right-click > Edit Character (see the
+      contextmenu listener in bindGlobal).
     */
     if(!state.open){
-      if(
-        state.character.committed&&
-        state.character.showBones
-      ){
-        var closedBoneHit=characterAnimationBoneHit(
-          event
-        );
-
-        if(closedBoneHit){
-          event.preventDefault();
-          event.stopImmediatePropagation();
-
-          open();
-
-          activateCharacterPartMode(
-            closedBoneHit.part,
-            "animate"
-          );
-
-          state.selectedBoneId=closedBoneHit.bone.id;
-          renderAll();
-          API.refreshUI();
-        }
-      }
-
       return;
     }
 
@@ -4205,6 +4466,7 @@
       ".db-tabs{padding:8px 7px 5px;background:#e4e7eb;border-bottom:1px solid #cbd1d8}.db-tab-group{margin-bottom:6px}.db-tab-group:last-child{margin-bottom:0}.db-tab-group-label{display:block;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#828d99;margin:0 0 4px 2px}.db-tabs-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.db-tabs-row.two{grid-template-columns:repeat(2,minmax(0,1fr))}.db-tab{height:32px;border:1px solid #aeb7c2;border-radius:7px;background:#626a74;color:#fff;font-size:10.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}.db-tab.active{background:#0e9c86;border-color:#0b8574;font-weight:700}.db-tab:hover{border-color:#0e9c86}",
       ".db-steps{display:flex;align-items:center;padding:9px 12px;background:#eef1f4;border-bottom:1px solid #cbd1d8;font-size:9.5px;color:#7b8491}.db-step{display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer}.db-step:hover .db-step-label{text-decoration:underline}.db-step-dot{width:16px;height:16px;border-radius:50%;background:#c7cdd4;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0}.db-step.done .db-step-dot{background:#0e9c86}.db-step.current .db-step-dot{background:#0e9c86;box-shadow:0 0 0 3px rgba(14,156,134,.25)}.db-step.current .db-step-label{color:#0e9c86;font-weight:700}.db-step-sep{flex:1;height:1px;background:#cbd1d8;margin:0 6px;min-width:8px}",
       ".db-body{flex:1;min-height:0;overflow:auto;padding:10px 10px 76px}.db-page{display:none}.db-page.active{display:block}.db-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:10px;margin-bottom:9px}.db-section h3{margin:0 0 8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#66717e}.db-help{font-size:11px;line-height:1.45;color:#6b7582;margin:0 0 8px}.db-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.db-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.db-btn{border:1px solid #b8c0ca;border-radius:8px;background:#eceff2;color:#4b5766;padding:8px 6px;font-size:11px;cursor:pointer}.db-btn:hover{border-color:#0e9c86}.db-btn.primary,.db-btn.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}.db-btn.danger{color:#ad4d4d;border-color:#ddbcbc}.db-btn:disabled{opacity:.45}.db-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:7px;align-items:center;margin-bottom:7px}.db-row.three{grid-template-columns:92px minmax(0,1fr) 70px}.db-row label{font-size:11px;color:#63707e}.db-row input,.db-row select,.db-row textarea{width:100%;min-width:0;border:1px solid #c7ced7;border-radius:7px;background:#f4f5f7;color:#27313d;padding:7px;font-size:11px}.db-row input[type=range]{padding:0;accent-color:#0e9c86}.db-check{display:flex;align-items:center;gap:7px;font-size:11px;color:#63707e}.db-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto}.db-card{border:1px solid #ccd2da;border-radius:9px;background:#f7f8fa;padding:8px}.db-card.active{border-color:#0e9c86;background:#e8f6f3}.db-card-head{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;gap:6px;align-items:center}.db-character-card .db-card-head{grid-template-columns:28px 28px minmax(0,1fr) 28px}.db-pin-mini{font-size:14px;line-height:1}.db-pin-mini.active{background:#0e9c86;border-color:#0e9c86;color:#fff}.db-part-summary{margin-top:7px;padding:6px 7px;border:1px solid #d7dce2;border-radius:7px;background:#fff;color:#66717e;font-size:10px;line-height:1.35}.db-pin-status{margin-top:7px;padding:7px;border:1px solid #d2d8df;border-radius:7px;background:#f3f5f7;font-size:10px;color:#626e7b}.db-pin-status.pinned{border-color:#9bcfc5;background:#eaf7f4;color:#237768}.db-card-head input{width:100%;min-width:0;border:1px solid #c6cdd6;border-radius:6px;padding:6px}.db-mini{width:28px;height:28px;border:1px solid #b9c1cb;border-radius:6px;background:#fff;cursor:pointer}.db-card-body{margin-top:7px}.db-bone-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:6px;align-items:center;border:1px solid #cfd5dc;border-radius:7px;padding:7px;background:#f5f6f8;cursor:pointer}.db-bone-row.active{border-color:#0e9c86;background:#e5f6f2}.db-dot{width:11px;height:11px;border-radius:50%;background:#6f7781}.db-bone-row.active .db-dot{background:#0e9c86}.db-status{position:absolute;left:10px;right:10px;bottom:10px;min-height:38px;max-height:58px;overflow:auto;border:1px solid #cbd2da;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596573}.db-status.good{border-color:#0e9c86;color:#117d6d}.db-status.bad{border-color:#c66a6a;color:#a33d3d}.db-hidden{display:none}.db-pill{display:inline-block;border:1px solid #c7ced7;border-radius:999px;padding:3px 7px;font-size:9px;color:#64707e;background:#fff}.db-empty{border:1px dashed #bbc3cd;border-radius:9px;padding:14px;text-align:center;color:#78828e;font-size:11px}.db-point-list{max-height:190px;overflow:auto;border:1px solid #d0d6dd;border-radius:8px;background:#fafbfc}.db-point-row{display:grid;grid-template-columns:34px 1fr 1fr;gap:6px;padding:5px;border-bottom:1px solid #e1e4e8}.db-point-row:last-child{border-bottom:0}.db-point-row.active{background:#e4f5f1}.db-point-row input{width:100%;min-width:0;border:1px solid #c9d0d8;border-radius:5px;padding:5px}.db-subtabs{display:flex;gap:6px;margin-bottom:8px}.db-subtab{flex:1;border:1px solid #b9c1cb;border-radius:7px;background:#e9ecef;padding:7px;font-size:10px}.db-subtab.active{background:#3fae9b;color:#fff;border-color:#0e9c86}",
+      ".la-dembones-ctx{position:fixed;z-index:10001;background:#fff;border:1px solid #bfc6cf;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:4px;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}.la-dembones-ctx button{display:block;width:100%;white-space:nowrap;text-align:left;border:0;background:none;color:#27313d;font-size:12px;padding:8px 12px;border-radius:6px;cursor:pointer}.la-dembones-ctx button:hover{background:#e8f6f3;color:#0e9c86}",
       "@media(max-width:560px){.la-dembones-full{left:8px;top:8px;width:calc(100vw - 16px);height:calc(100vh - 16px)}.db-row,.db-row.three{grid-template-columns:78px minmax(0,1fr)}.db-row.three>*:last-child{grid-column:2}.db-grid3{grid-template-columns:repeat(2,minmax(0,1fr))}}"
     ].join("\n");document.head.appendChild(s);
   }
@@ -4388,7 +4650,7 @@
   function createPanel(){ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){goToTab(b.getAttribute('data-db-tab'));};});var stepsHost=panel.querySelector('[data-db-steps]');if(stepsHost)stepsHost.addEventListener('click',function(event){var target=event.target&&event.target.closest('[data-db-step-jump]');if(!target)return;goToTab(target.getAttribute('data-db-step-jump'));});state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();}
   function makeDraggable(panel,handle){handle.addEventListener('pointerdown',function(e){if(e.target.closest('button'))return;e.preventDefault();API.bringFloatingPanelToFront(panel);var r=panel.getBoundingClientRect(),ox=e.clientX-r.left,oy=e.clientY-r.top;function mv(ev){panel.style.left=(ev.clientX-ox)+'px';panel.style.top=(ev.clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto';}function up(){window.removeEventListener('pointermove',mv,true);window.removeEventListener('pointerup',up,true);API.clampFloatingPanelToViewport(panel);}window.addEventListener('pointermove',mv,true);window.addEventListener('pointerup',up,true);});}
 
-  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.activeRig){syncRigDisplayGeometry(state.activeRig,currentTime());}if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);}
+  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);surface.addEventListener('contextmenu',function(e){var hitPart=characterRightClickHit(e);if(!hitPart)return;e.preventDefault();e.stopImmediatePropagation();showCharacterContextMenu(e.clientX,e.clientY,hitPart);},true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.activeRig){syncRigDisplayGeometry(state.activeRig,currentTime());}if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);}
 
   function open(){
     /* Capture the stage selection before changing focus or suppressing the fixed
