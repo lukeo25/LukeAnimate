@@ -1,25 +1,22 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v9.0
+/* Luke Animate Dem Bones + MyCharacter GPT v10.0
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
    Rebuilds the supplied DemBones/MyCharacter workflow for Luke Animate:
    Build Character, Build Parts, Bones, Edit Bone, Animate, Curves,
    Expression, Commit and Help.
-   v8 introduced smooth envelope skinning, Bezier-handle deformation,
-   automatic deformation density for straight spans, and visible envelopes.
-   v9 simplifies the rigging view:
-   - removes orange point-influence dots from the stage;
-   - keeps the translucent bone envelope itself visible;
-   - adds a delete button directly to every bone row;
-   - Delete/Backspace removes the selected bone while DemBones is active;
-   - deleting a bone preserves its direct children by detaching them as root
-     bones at their current rest positions instead of moving or deleting them.
+   v8 introduced smooth envelope skinning and visible envelopes.
+   v9 removed influence-point dots and made unwanted bones easy to delete.
+   v10 centres every normal SVG loaded by DemBones on the current Luke Animate
+   stage/editing context. Placement is based on the combined bounds of the
+   actual imported artwork, not the SVG page/viewBox, so excess SVG whitespace
+   does not offset the part.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "9.0";
+  var TOOL_VERSION = "10.0";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -183,6 +180,71 @@
     else if(o.type==="text"||o.type==="clipinstance"){o.x=n(o.x,0)+dx;o.y=n(o.y,0)+dy;}
     if(o.demBones && Array.isArray(o.demBones.restPoints)) o.demBones.restPoints.forEach(function(p){p.x+=dx;p.y+=dy;});
     return o;
+  }
+
+  function currentStageCentreScene(){
+    var stageCentre={
+      x:n(API.width,0)/2,
+      y:n(API.height,0)/2
+    };
+
+    /*
+      API.stageToScenePoint() is important while DemBones is being used inside
+      a nested Clip. It converts the visible stage centre back into that Clip's
+      current scene coordinate system instead of assuming the main-stage origin.
+    */
+    if(typeof API.stageToScenePoint==="function"){
+      try{
+        var sceneCentre=API.stageToScenePoint(stageCentre);
+
+        if(
+          sceneCentre&&
+          Number.isFinite(Number(sceneCentre.x))&&
+          Number.isFinite(Number(sceneCentre.y))
+        ){
+          return{
+            x:Number(sceneCentre.x),
+            y:Number(sceneCentre.y)
+          };
+        }
+      }catch(ignore){}
+    }
+
+    return stageCentre;
+  }
+
+  function centreImportedSvgObjectsOnStage(objects){
+    var list=(objects||[]).filter(Boolean);
+
+    if(!list.length){
+      return {dx:0,dy:0};
+    }
+
+    /*
+      Use the bounds of the actual imported artwork rather than the SVG's
+      width/height/viewBox. This is what prevents empty SVG document margins
+      from making an apparently centred import look offset.
+    */
+    var bounds=combinedBounds(list);
+    var centre=currentStageCentreScene();
+
+    var dx=centre.x-n(bounds.cx,0);
+    var dy=centre.y-n(bounds.cy,0);
+
+    list.forEach(function(object){
+      shiftObject(
+        object,
+        dx,
+        dy
+      );
+    });
+
+    return{
+      dx:dx,
+      dy:dy,
+      x:centre.x,
+      y:centre.y
+    };
   }
 
   function styleOfElement(el){
@@ -1382,7 +1444,79 @@
   function clearExpressionKey(type){var rig=state.activeRig;if(!rig)return;var bucket=rig.expressions[type],t=currentTime();bucket.keys=bucket.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});API.refreshUI();renderAll();}
 
   function loadSvgFile(file,asExpression){
-    if(!file)return;var reader=new FileReader();reader.onload=function(){try{if(asExpression)importExpressionSvg(reader.result,state.expressionType,state.expressionSlot||"Default");else{var objects=svgTextToObjects(reader.result);if(!objects.length)throw new Error("No supported vector shapes were found.");API.pushUndo();objects.forEach(function(o){API.addDrawObject(o,"animate");});createRigFromObjects(objects,file.name.replace(/\.[^.]+$/,"")||"SVG Part");state.tab="bones";state.mode="add-bone";renderAll();API.refreshUI();notify("SVG loaded into Build Parts.",false);}}catch(e){notify("SVG load failed: "+(e.message||e),true);}};reader.readAsText(file);
+    if(!file)return;
+
+    var reader=new FileReader();
+
+    reader.onload=function(){
+      try{
+        if(asExpression){
+          /*
+            Expression SVGs are intentionally NOT stage-centred. Their existing
+            behaviour places them at the selected Lip_Bone / Frame_Bone anchor.
+          */
+          importExpressionSvg(
+            reader.result,
+            state.expressionType,
+            state.expressionSlot||"Default"
+          );
+          return;
+        }
+
+        var objects=svgTextToObjects(
+          reader.result
+        );
+
+        if(!objects.length){
+          throw new Error(
+            "No supported vector shapes were found."
+          );
+        }
+
+        /*
+          v10:
+          Centre the actual imported artwork before the objects are registered
+          with Luke Animate and before the rig rest points are captured.
+        */
+        var placement=centreImportedSvgObjectsOnStage(
+          objects
+        );
+
+        API.pushUndo();
+
+        objects.forEach(function(o){
+          API.addDrawObject(
+            o,
+            "animate"
+          );
+        });
+
+        createRigFromObjects(
+          objects,
+          file.name.replace(/\.[^.]+$/,"")||"SVG Part"
+        );
+
+        state.tab="bones";
+        state.mode="add-bone";
+
+        renderAll();
+        API.refreshUI();
+
+        notify(
+          "SVG loaded into Build Parts and centred on the stage.",
+          false
+        );
+
+      }catch(e){
+        notify(
+          "SVG load failed: "+
+          (e.message||e),
+          true
+        );
+      }
+    };
+
+    reader.readAsText(file);
   }
 
   function savePart(){var data=serializeBuildPart();if(!data){notify("Build or load a part first.",true);return;}downloadText((data.name||"DemBonesPart")+".dembones.json",JSON.stringify(data,null,2),"application/json");notify("Saved part.",false);}
@@ -1880,7 +2014,7 @@
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. The child Clips remain editable, and Dem Bones animation remains driven by this external tool script.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div><div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character stores an independent copy of the part rig. Parts can be reordered, transformed and pinned to a bone in another part.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. SVG files loaded by DemBones are automatically centred using the actual artwork bounds. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character stores an independent copy of the part rig. Parts can be reordered, transformed and pinned to a bone in another part.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():state.tab==='commit'?commitPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   function renderAll(){if(!state.panel)return;state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});renderBody();}
