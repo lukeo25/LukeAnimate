@@ -1,29 +1,26 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v11.0
+/* Luke Animate Dem Bones + MyCharacter GPT v12.0
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
 
-   v11 rebuilds Build Character around the LukeTools/MyCharacter workflow:
-   - adding a part preserves its stage position instead of snapping to 0,0;
-   - the Character root Clip uses the stage centre as its pivot/instance position;
-   - character part Clip instances are persistent native Luke Animate objects;
-   - unpinned parts are directly movable/scalable/rotatable with Luke Animate's
-     normal Select/Edit tool while inside the Character Clip;
-   - each part card has Select / Move, Adjust and Animate actions;
-   - Adjust enters the part Clip with its rig active for rest-bone/envelope work;
-   - Animate enters the part Clip with its rig active for animation;
-   - pinning is no longer dropdown based: press the pin button on a part, then
-     click a visible bone head/tail/line on another part;
-   - pinning preserves the child's current position, rotation and scale by
-     storing a bone-local offset instead of snapping the child onto the bone;
-   - pinned parts inherit the parent part transform and animated target bone;
-   - Unpin preserves the current resolved stage transform.
+   v12 fixes the Character SVG/artwork jump introduced in v11.
+   The cause was a double coordinate conversion of demBones.restPoints:
+   shiftObject() already moves both visible vector points and DemBones rest
+   points, but v11 moved restPoints a second time when creating/capturing a
+   Character part. The bones therefore stayed correctly centred while the
+   deformed SVG artwork jumped approximately one stage-centre offset away.
+
+   v12:
+   - converts vector points, DemBones rest points and bones exactly once;
+   - keeps artwork and bone envelopes registered in the same local coordinates;
+   - fixes the reverse Character-part capture/edit path for the same issue;
+   - preserves all v11 Select / Move, Adjust, Animate and click-a-bone pinning.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "11.0";
+  var TOOL_VERSION = "12.0";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -183,10 +180,15 @@
   }
 
   function shiftObject(o,dx,dy){
+    /*
+      IMPORTANT CHARACTER COORDINATE CONTRACT:
+      shiftObject() moves the visible object geometry AND DemBones restPoints
+      together. Callers must therefore NOT shift demBones.restPoints again.
+    */
     if(o.type==="freehand" && Array.isArray(o.points)) o.points.forEach(function(p){p.x=n(p.x,0)+dx;p.y=n(p.y,0)+dy;});
     else if(o.type==="line"||o.type==="rect"||o.type==="ellipse"){o.x1=n(o.x1,0)+dx;o.y1=n(o.y1,0)+dy;o.x2=n(o.x2,0)+dx;o.y2=n(o.y2,0)+dy;}
     else if(o.type==="text"||o.type==="clipinstance"){o.x=n(o.x,0)+dx;o.y=n(o.y,0)+dy;}
-    if(o.demBones && Array.isArray(o.demBones.restPoints)) o.demBones.restPoints.forEach(function(p){p.x+=dx;p.y+=dy;});
+    if(o.demBones && Array.isArray(o.demBones.restPoints)) o.demBones.restPoints.forEach(function(p){p.x=n(p.x,0)+dx;p.y=n(p.y,0)+dy;});
     return o;
   }
 
@@ -1591,14 +1593,16 @@
       o.id=uid("db-child-object");
       idMap[old]=o.id;
 
+      /*
+        v12:
+        shiftObject() already moves BOTH o.points and o.demBones.restPoints.
+        Do not subtract cx/cy from restPoints a second time.
+      */
       shiftObject(o,-cx,-cy);
 
       if(o.demBones){
         o.demBones.rigId=rig.id;
         o.demBones.rig=rig;
-        o.demBones.restPoints=(o.demBones.restPoints||[]).map(function(p){
-          return{x:p.x-cx,y:p.y-cy};
-        });
       }
 
       return o;
@@ -1668,7 +1672,88 @@
       part.transform=normalisePartTransform(part.transform);
     }
 
+    validateCharacterPartRegistration(
+      part,
+      clip
+    );
+
     return clip;
+  }
+
+  function validateCharacterPartRegistration(part,clip){
+    if(!part||!part.rig||!clip)return true;
+
+    var vectorObjects=(clip.drawObjects||[]).filter(function(object){
+      return object&&object.demBones&&Array.isArray(object.demBones.restPoints);
+    });
+
+    if(!vectorObjects.length||!(part.rig.bones||[]).length){
+      return true;
+    }
+
+    var allRestPoints=[];
+
+    vectorObjects.forEach(function(object){
+      (object.demBones.restPoints||[]).forEach(function(point){
+        allRestPoints.push({
+          x:n(point.x,0),
+          y:n(point.y,0)
+        });
+      });
+    });
+
+    if(!allRestPoints.length){
+      return true;
+    }
+
+    var minX=Math.min.apply(null,allRestPoints.map(function(point){return point.x;}));
+    var maxX=Math.max.apply(null,allRestPoints.map(function(point){return point.x;}));
+    var minY=Math.min.apply(null,allRestPoints.map(function(point){return point.y;}));
+    var maxY=Math.max.apply(null,allRestPoints.map(function(point){return point.y;}));
+
+    var artCentre={
+      x:(minX+maxX)/2,
+      y:(minY+maxY)/2
+    };
+
+    var bonePoints=[];
+
+    (part.rig.bones||[]).forEach(function(bone){
+      bonePoints.push(bone.restHead,bone.restTail);
+    });
+
+    var boneMinX=Math.min.apply(null,bonePoints.map(function(point){return n(point.x,0);}));
+    var boneMaxX=Math.max.apply(null,bonePoints.map(function(point){return n(point.x,0);}));
+    var boneMinY=Math.min.apply(null,bonePoints.map(function(point){return n(point.y,0);}));
+    var boneMaxY=Math.max.apply(null,bonePoints.map(function(point){return n(point.y,0);}));
+
+    var boneCentre={
+      x:(boneMinX+boneMaxX)/2,
+      y:(boneMinY+boneMaxY)/2
+    };
+
+    var separation=Math.hypot(
+      artCentre.x-boneCentre.x,
+      artCentre.y-boneCentre.y
+    );
+
+    /*
+      This is diagnostic only. Irregular rigs do not have to share an exact
+      visual centre with the artwork, so only report very large divergence.
+    */
+    if(separation>Math.max(400,n(API.width,0)*.65)){
+      console.warn(
+        "DemBones Character registration looks suspicious:",
+        {
+          part:part.name,
+          artworkCentre:artCentre,
+          boneCentre:boneCentre,
+          separation:separation
+        }
+      );
+    }
+
+    return true;
   }
 
   function updateCharacterInstances(){
@@ -1936,14 +2021,16 @@
 
     (clip.drawObjects||[]).forEach(function(raw){
       var object=clone(raw);
+
+      /*
+        v12 reverse conversion:
+        shiftObject() restores visible geometry and restPoints together.
+        Adding origin to restPoints again here would corrupt the saved/re-edited
+        part by the same amount in the opposite direction.
+      */
       shiftObject(object,origin.x,origin.y);
 
       if(object.demBones){
-        if(Array.isArray(object.demBones.restPoints)){
-          object.demBones.restPoints=object.demBones.restPoints.map(function(point){
-            return{x:n(point.x,0)+origin.x,y:n(point.y,0)+origin.y};
-          });
-        }
         delete object.demBones.rig;
       }
 
