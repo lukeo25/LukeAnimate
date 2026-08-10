@@ -1,4 +1,4 @@
-
+<!-- LukeAnimate GPT v170: off-stage object proxies. Any Animate object whose transformed bounds extend beyond the stage gets an editor-only dashed proxy box with a centre cross. The proxy selects and drags the real object, uses the existing transform/keyframe system (including Auto Keyframe), follows animated transforms frame-by-frame, and is never part of the WebM canvas capture. Far-off proxies remain retrievable by clamping their visual handle into the visible stage workspace while retaining the real object coordinates. -->
 <!-- LukeAnimate GPT v169: nested Clip rulers are true editing-viewport rulers. While editing a Clip, the horizontal ruler is fixed immediately below the top toolbar from the left ruler strip to the sidebar edge, the vertical ruler is fixed against the far-left workspace edge down to the timeline, and the corner sits at their intersection. Tick values continue to follow Clip coordinates while panning/scrolling. Main-stage ruler layout remains unchanged. -->
 <!-- LukeAnimate GPT v153: native nested Clip-part animator. Selecting a parent Clip shows its child Clips as indented timeline sublayers and opens stage-styled Move, Scale and Rotate concertinas. Includes the v152 nested Clip preservation fix and all v151 Config, Scripts, SVG and Bezier fixes. -->
 <!DOCTYPE html>
@@ -132,6 +132,59 @@
     z-index:3;
   }
   #edit-overlay.locked{ cursor:default; pointer-events:none; }
+
+  /* ---------- v170 off-stage object proxies ---------- */
+  #offstage-proxy-layer{
+    position:fixed;
+    left:0;
+    top:0;
+    width:0;
+    height:0;
+    z-index:9;
+    overflow:hidden;
+    pointer-events:none;
+  }
+  .offstage-object-proxy{
+    position:absolute;
+    min-width:26px;
+    min-height:26px;
+    border:1.5px dashed rgba(14,156,134,.92);
+    background:rgba(14,156,134,.055);
+    transform-origin:50% 50%;
+    pointer-events:auto;
+    cursor:move;
+    touch-action:none;
+    box-shadow:0 0 0 1px rgba(255,255,255,.65) inset;
+  }
+  .offstage-object-proxy::before,
+  .offstage-object-proxy::after{
+    content:"";
+    position:absolute;
+    left:50%;
+    top:50%;
+    background:#111820;
+    border-radius:2px;
+    transform:translate(-50%,-50%);
+    pointer-events:none;
+    box-shadow:0 0 0 1px rgba(255,255,255,.7);
+  }
+  .offstage-object-proxy::before{width:28px;height:3px;}
+  .offstage-object-proxy::after{width:3px;height:28px;}
+  .offstage-object-proxy.selected{
+    border-style:solid;
+    border-width:2px;
+    background:rgba(14,156,134,.13);
+    box-shadow:0 0 0 2px rgba(255,255,255,.82) inset;
+  }
+  .offstage-object-proxy.remote{
+    border-style:dotted;
+  }
+  .offstage-object-proxy.partial{
+    background:rgba(14,156,134,.035);
+  }
+  .offstage-object-proxy.dragging{
+    cursor:grabbing;
+  }
   .pt{
     position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px;
     border-radius:50%; background:var(--accent); border:2px solid #0c0d0e;
@@ -2376,6 +2429,7 @@
       <div id="stage-text-editor" contenteditable="true" spellcheck="true" aria-label="Type text on stage"></div>
     </div>
   </div>
+  <div id="offstage-proxy-layer" aria-label="Off-stage object proxies"></div>
 </div>
 <div id="zoom-controls">
   <button class="btn small" id="btn-zoom-out" title="Zoom out">−</button>
@@ -3051,6 +3105,7 @@ ctx.fill();</textarea>
   const ctx = canvas.getContext('2d', { alpha: true });
   let W = canvas.width, H = canvas.height;
   const overlay = document.getElementById('edit-overlay');
+  const offstageProxyLayer = document.getElementById('offstage-proxy-layer');
   const ghostPath = document.getElementById('ghost-path');
 
   // ---------------- path state ----------------
@@ -8362,6 +8417,202 @@ ctx.fill();</textarea>
     const localY = -(lt.halfH*Math.abs(lt.scaleY)) - 28;
     const r = rotatePoint(0, localY, rad);
     return { x: lt.pivotX + r.x, y: lt.pivotY + r.y };
+  }
+
+  // ---------------- v170 off-stage object proxy controls ----------------
+  // The proxy is a DOM editor affordance only. It never owns animation data and
+  // is never drawn into fx-canvas, so WebM capture remains the exact stage crop.
+  // Dragging a proxy delegates to startObjectStageDrag(), which means the real
+  // object keeps the existing Auto Keyframe / normal transform semantics.
+  const offstageProxyElements = new Map();
+
+  function clearOffstageObjectProxies(){
+    if(!offstageProxyLayer) return;
+    offstageProxyElements.forEach(element=>element.remove());
+    offstageProxyElements.clear();
+    offstageProxyLayer.replaceChildren();
+  }
+
+  function findCurrentDrawObjectIndexById(objectId){
+    if(!objectId) return -1;
+    return drawObjects.findIndex(object=>object && String(object.id)===String(objectId));
+  }
+
+  function offstageProxyStageGeometry(obj){
+    if(!obj) return null;
+    const eff=getEffectiveObj(obj,t);
+    const lt=getLiveTransform(obj,eff);
+    const sceneCorners=getTransformedCorners(lt);
+    const stageCorners=sceneCorners.map(point=>{
+      const stage=sceneToStagePoint(point);
+      return {key:point.key,x:stage.x,y:stage.y};
+    });
+    const stagePivot=sceneToStagePoint({x:lt.pivotX,y:lt.pivotY});
+    const xs=stageCorners.map(point=>point.x);
+    const ys=stageCorners.map(point=>point.y);
+    if(!xs.length || !ys.length) return null;
+    const bounds={
+      x1:Math.min(...xs),
+      y1:Math.min(...ys),
+      x2:Math.max(...xs),
+      y2:Math.max(...ys)
+    };
+    const outside=(bounds.x1<0 || bounds.y1<0 || bounds.x2>W || bounds.y2>H);
+    if(!outside) return null;
+    const completelyOutside=(bounds.x2<0 || bounds.y2<0 || bounds.x1>W || bounds.y1>H);
+    return {eff,lt,stageCorners,stagePivot,bounds,completelyOutside};
+  }
+
+  function configureOffstageProxyElement(element,objectId){
+    element.dataset.objectId=String(objectId||'');
+    element.addEventListener('mousedown',event=>{
+      if(event.button!==0 || exportPlayback.active) return;
+      if(stageTool!=='none') return;
+
+      const objectId=element.dataset.objectId;
+      const index=findCurrentDrawObjectIndexById(objectId);
+      if(index<0) return;
+      const object=drawObjects[index];
+      if(!object || object.enabled===false || panelForDrawObject(object)!=='animate') return;
+
+      const additive=!!(event.shiftKey || event.ctrlKey || event.metaKey);
+      event.preventDefault();
+      event.stopPropagation();
+
+      selectDrawObject(index,additive,true);
+      updateInspector();
+      renderLayerList();
+      renderTimeline();
+      renderTransformHandles();
+
+      if(additive) return;
+
+      element.classList.add('dragging');
+      const startCanvas=canvasCoords(event.clientX,event.clientY);
+      startObjectStageDrag(index,startCanvas);
+
+      const finish=()=>{
+        element.classList.remove('dragging');
+        window.removeEventListener('mouseup',finish);
+        window.removeEventListener('blur',finish);
+      };
+      window.addEventListener('mouseup',finish);
+      window.addEventListener('blur',finish,{once:true});
+    });
+  }
+
+  function renderOffstageObjectProxies(){
+    if(!offstageProxyLayer) return;
+
+    if(exportPlayback.active || onionSkinRendering){
+      clearOffstageObjectProxies();
+      return;
+    }
+
+    const wrap=document.getElementById('stage-wrap');
+    if(!wrap){
+      clearOffstageObjectProxies();
+      return;
+    }
+
+    const canvasRect=canvas.getBoundingClientRect();
+    const wrapRect=wrap.getBoundingClientRect();
+    if(canvasRect.width<1 || canvasRect.height<1 || wrapRect.width<1 || wrapRect.height<1){
+      clearOffstageObjectProxies();
+      return;
+    }
+
+    // A fixed editor layer follows the visible stage-workspace viewport rather
+    // than the canvas bitmap. This is what allows its controls to exist outside
+    // the stage without becoming part of the rendered animation.
+    offstageProxyLayer.style.left=wrapRect.left+'px';
+    offstageProxyLayer.style.top=wrapRect.top+'px';
+    offstageProxyLayer.style.width=wrapRect.width+'px';
+    offstageProxyLayer.style.height=wrapRect.height+'px';
+
+    const scaleX=canvasRect.width/Math.max(1,W);
+    const scaleY=canvasRect.height/Math.max(1,H);
+    const activeIds=new Set();
+
+    drawObjects.forEach((rawObject,index)=>{
+      if(!rawObject || rawObject.enabled===false) return;
+      const object=ensureDrawObjectMetadata(rawObject);
+      if(panelForDrawObject(object)!=='animate') return;
+
+      const geometry=offstageProxyStageGeometry(object);
+      if(!geometry) return;
+
+      const objectId=String(object.id);
+      activeIds.add(objectId);
+
+      let element=offstageProxyElements.get(objectId);
+      if(!element){
+        element=document.createElement('div');
+        element.className='offstage-object-proxy';
+        configureOffstageProxyElement(element,objectId);
+        offstageProxyElements.set(objectId,element);
+        offstageProxyLayer.appendChild(element);
+      }
+
+      element.dataset.objectId=objectId;
+      element.dataset.objectIndex=String(index);
+      element.classList.toggle('selected',selectedDrawIndices.has(index));
+      element.classList.toggle('partial',!geometry.completelyOutside);
+      const proxyInteractive=(stageTool==='none' && !shapePointEditMode && !isParticlesPanelVisible());
+      element.style.pointerEvents=proxyInteractive?'auto':'none';
+      element.style.zIndex=String(100+index);
+
+      const stagePivot=geometry.stagePivot;
+      const projectedX=(canvasRect.left-wrapRect.left)+(stagePivot.x*scaleX);
+      const projectedY=(canvasRect.top-wrapRect.top)+(stagePivot.y*scaleY);
+
+      // Keep the retrieval cross reachable even when the object's true pivot is
+      // hundreds or thousands of stage units away. Nearby off-stage objects stay
+      // at their exact projected location; only unreachable handles are clamped.
+      const grabMargin=18;
+      const topbar=document.getElementById('topbar');
+      const topbarRect=topbar?topbar.getBoundingClientRect():null;
+      const maxVisualX=Math.max(grabMargin,wrapRect.width-grabMargin);
+      const maxVisualY=Math.max(grabMargin,wrapRect.height-grabMargin);
+      const topSafe=Math.min(
+        maxVisualY,
+        topbarRect
+          ?Math.max(grabMargin,topbarRect.bottom-wrapRect.top+grabMargin)
+          :grabMargin
+      );
+      const visualX=Math.max(grabMargin,Math.min(maxVisualX,projectedX));
+      const visualY=Math.max(topSafe,Math.min(maxVisualY,projectedY));
+      const remote=Math.abs(visualX-projectedX)>.5 || Math.abs(visualY-projectedY)>.5;
+      element.classList.toggle('remote',remote);
+
+      const width=Math.max(26,Math.abs(geometry.lt.halfW*2*geometry.lt.scaleX*scaleX));
+      const height=Math.max(26,Math.abs(geometry.lt.halfH*2*geometry.lt.scaleY*scaleY));
+      element.style.left=visualX+'px';
+      element.style.top=visualY+'px';
+      element.style.width=width+'px';
+      element.style.height=height+'px';
+      element.style.transform='translate(-50%,-50%) rotate('+(Number(geometry.lt.rotation)||0)+'deg)';
+
+      const effective=geometry.eff||object;
+      const px=object.type==='clipinstance'
+        ?Number(effective.x!==undefined?effective.x:object.x)||0
+        :(geometry.lt.pivotX||0);
+      const py=object.type==='clipinstance'
+        ?Number(effective.y!==undefined?effective.y:object.y)||0
+        :(geometry.lt.pivotY||0);
+      const keyText=autoKeyframe
+        ?'Drag: move real object and Auto Keyframe at current frame'
+        :'Drag: move real object · use Add Keyframe to key this position';
+      element.title=(objectLayerName(object)||drawObjectTypeLabel(object.type))+
+        ' — off stage at X '+px.toFixed(1)+', Y '+py.toFixed(1)+'\n'+keyText+
+        (remote?'\nProxy handle is clamped into view; the object keeps its true off-stage coordinates.':'');
+    });
+
+    offstageProxyElements.forEach((element,objectId)=>{
+      if(activeIds.has(objectId)) return;
+      element.remove();
+      offstageProxyElements.delete(objectId);
+    });
   }
 
   function shapeCanEditPoints(obj){
@@ -16325,6 +16576,7 @@ ctx.fill();</textarea>
     ctx.restore();
     renderClipPivotCross();
     renderRegisteredStageOverlays();
+    renderOffstageObjectProxies();
 
     // Some browsers expose manual frame requests on canvas capture tracks. Ask
     // for the just-rendered frame when available; captureStream(fps) remains the
@@ -16461,6 +16713,7 @@ ctx.fill();</textarea>
     };
 
     selectedDrawIndices.clear();
+    clearOffstageObjectProxies();
     const guideLayer=document.getElementById('guide-layer');if(guideLayer)guideLayer.style.display='none';
     selectShapesMode = false;
     shapePointEditMode = false;
@@ -16500,6 +16753,7 @@ ctx.fill();</textarea>
     renderTransformHandles();
     renderClipPivotCross();
     renderStageGuides();
+    renderOffstageObjectProxies();
   }
 
   let mediaRecorder = null;
