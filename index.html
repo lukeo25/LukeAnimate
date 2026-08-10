@@ -1,3 +1,4 @@
+
 <!-- LukeAnimate GPT v172: image/text layer timing parity. Image, video and text drawing layers now expose explicit timeline start-trim, end-trim and whole-block move controls plus fade-in/fade-out transparency handles. Layer fades multiply the object's normal/keyframed opacity during preview and WebM export, and persist with canonical Wick drawing frames. Existing object keyframes, layer exposure, rig-aware off-stage proxies and WebM stage cropping are preserved. -->
 <!-- LukeAnimate GPT v171: rig-aware off-stage proxies. DemBones curves that share one rigId now produce one combined editor-only proxy bounding box for the whole rig instead of one box per curve. StickRig parts resolve to one containing StickRig/root proxy while editing that rig Clip, while top-level StickRig roots remain one proxy each. Dragging a rig proxy moves every represented member through the existing transform/Auto-Keyframe system; manual + Keyframe writes a transform key to every represented member. Proxy boxes remain editor-only and never enter WebM capture. -->
 <!-- LukeAnimate GPT v169: nested Clip rulers are true editing-viewport rulers. While editing a Clip, the horizontal ruler is fixed immediately below the top toolbar from the left ruler strip to the sidebar edge, the vertical ruler is fixed against the far-left workspace edge down to the timeline, and the corner sits at their intersection. Tick values continue to follow Clip coordinates while panning/scrolling. Main-stage ruler layout remains unchanged. -->
@@ -14760,9 +14761,19 @@ ctx.fill();</textarea>
 
     normalizeAllDrawObjects();
     const isolatedTimelineInfo=getIsolatedGroupInfo();
-    const timelineObjectEntries=isolatedTimelineInfo
+    const timelineObjectEntries=(isolatedTimelineInfo
       ? [{obj:isolatedTimelineInfo.child,idx:isolatedTimelineInfo.rootIndex,isolated:true}]
-      : drawObjects.map((obj,idx)=>({obj,idx,isolated:false}));
+      : drawObjects.map((obj,idx)=>({obj,idx,isolated:false})))
+      /*
+        Dem Bones-rigged shapes (and expression slot shapes) are fully
+        managed through the Dem Bones panel's own Curves/Expression tools,
+        never as individual native timeline rows - a single imported
+        character could easily be a dozen-plus separate paths, which used
+        to flood this list with one row per path. The Dem Bones panel
+        already lists them by name; here they should only ever surface as
+        their one Character instance row.
+      */
+      .filter(entry=>!entry.obj||!(entry.obj.demBones||entry.obj.demBonesExpression));
     timelineObjectEntries.forEach(entry=>{
       const obj=entry.obj,idx=entry.idx;
       const row = document.createElement('div');
