@@ -1,6 +1,19 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v15.9
+/* Luke Animate Dem Bones + MyCharacter GPT v15.10
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
+
+   v15.10 closes a real ordering gap that could undermine the v15.9
+   index.html timeline filter regardless of whether that file is up to date:
+   loadSvgFile and useStageSelection both staged every shape on the native
+   timeline via addDrawObject BEFORE tagging it as a rig member, not after.
+   That left a genuine window - not just a display lag - where a freshly
+   ingested shape was completely indistinguishable from a normal, untagged
+   native object. Both now convert and tag the whole batch first, then stage
+   only what actually needs a fresh addDrawObject call (clones; reused
+   originals are already on stage). createRigFromObjects also now exposes
+   exactly which converted objects it produced via rig.__dbLastChosenObjects
+   so callers never have to guess whether convertToWarpPath returned the
+   same reference or a new one.
 
    v15.9:
    - the wall of identical "Drawing 0" rows in the native Timeline/Layers
@@ -178,7 +191,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "15.9";
+  var TOOL_VERSION = "15.10";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -851,7 +864,9 @@
       o.demBones={version:3,rigId:rig.id,rig:rig,pointMode:o.demBonesPointMode||pointMode||"selected",restPoints:(o.points||[]).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};}),weights:[],closedPath:!!o.closedPath};
     });
     if(!chosen.length){notify("The supplied vector shapes could not be ingested.",true);return null;}
-    state.activeRig=rig;state.selectedBoneId="";state.selectedCurveId=chosen[0].id;state.selectedPointIndex=0;syncRigRefs(rig);return rig;
+    state.activeRig=rig;state.selectedBoneId="";state.selectedCurveId=chosen[0].id;state.selectedPointIndex=0;syncRigRefs(rig);
+    rig.__dbLastChosenObjects=chosen;
+    return rig;
   }
 
   function useStageSelection(){
@@ -865,25 +880,36 @@
     }
     API.pushUndo();
     var working=[];
+    var toStage=[];
     chosen.forEach(function(source){
       var target=source;
       if(!state.removeOriginals){
         target=clone(source);
         target.id=uid("db-copy");
         target.keyframes=[];
-        API.addDrawObject(target,"animate");
+        toStage.push(target);
       }
       working.push(target);
     });
+    /*
+      Same fix as loadSvgFile: tag every object as a rig member before any
+      clone is staged on the native timeline, not after - convert/tag the
+      whole batch first, then stage only the clones (reused originals are
+      already staged, so they need no extra addDrawObject call).
+    */
     var rig=createRigFromObjects(working,"Stage Part",state.pointMode);
-    if(rig){
-      state.lastStageSelectionIds=working.map(function(o){return o.id;});
-      try{API.selectDrawObject(working[0]);}catch(eSelect){}
-      state.tab="bones";state.mode="add-bone";renderAll();
-      API.refreshUI();
-      var modeLabel=state.pointMode==="limb"?"Limb":(state.pointMode==="uniform"?"Uniform":"Selected points");
-      notify("Ingested "+working.length+" selected vector"+(working.length===1?"":"s")+" using "+modeLabel+". Drag to create the first bone; keep dragging to extend the chain.",false);
+    if(!rig){
+      return;
     }
+    toStage.forEach(function(o){
+      API.addDrawObject(o,"animate");
+    });
+    state.lastStageSelectionIds=working.map(function(o){return o.id;});
+    try{API.selectDrawObject(working[0]);}catch(eSelect){}
+    state.tab="bones";state.mode="add-bone";renderAll();
+    API.refreshUI();
+    var modeLabel=state.pointMode==="limb"?"Limb":(state.pointMode==="uniform"?"Uniform":"Selected points");
+    notify("Ingested "+working.length+" selected vector"+(working.length===1?"":"s")+" using "+modeLabel+". Drag to create the first bone; keep dragging to extend the chain.",false);
   }
 
   function addDummy(){
@@ -4009,17 +4035,28 @@
 
         API.pushUndo();
 
-        objects.forEach(function(o){
+        /*
+          Tag every shape as a rig member BEFORE it is ever registered with
+          the native timeline, not after. Staging first and tagging second
+          left a real window where a freshly imported shape sat on the
+          timeline completely untagged - genuinely indistinguishable from a
+          normal native object - until whatever next triggered a timeline
+          refresh caught up. Converting/tagging first removes that window
+          entirely rather than relying on refresh timing.
+        */
+        var rig=createRigFromObjects(
+          objects,
+          file.name.replace(/\.[^.]+$/,"")||"SVG Part"
+        );
+
+        var staged=(rig&&rig.__dbLastChosenObjects)||objects;
+
+        staged.forEach(function(o){
           API.addDrawObject(
             o,
             "animate"
           );
         });
-
-        createRigFromObjects(
-          objects,
-          file.name.replace(/\.[^.]+$/,"")||"SVG Part"
-        );
 
         state.tab="bones";
         state.mode="add-bone";
