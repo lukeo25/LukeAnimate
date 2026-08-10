@@ -1,6 +1,24 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v15.12
+/* Luke Animate Dem Bones + MyCharacter GPT v15.13
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
+
+   v15.13:
+   - Edit Bone gained an "Editing" bone picker at the top of the tab, so
+     every bone in the rig - root or child - is reachable and editable
+     directly from there without leaving the tab to reselect on stage or in
+     Bones. Dragging a bone's tail rotates it around its head; dragging the
+     head translates the whole bone instead - that is true for the root
+     bone exactly the same as every child, there is no special-case lock on
+     either;
+   - setting a key now keyframes the whole rig's pose at that frame, not
+     just the one bone that was dragged or edited - both from the Animate
+     tab's Set Key button and from dragging a bone directly on stage. Every
+     other bone gets a key with its current interpolated pose so nothing
+     drifts unexpectedly at that frame;
+   - the panel now only reopens from a closed state via double-clicking a
+     visible bone. A single click on a bone (or anywhere else on the
+     character) is plain native Select/Edit and never opens the panel;
+     right-click still works as the other, broader "Edit Character" way in.
 
    v15.12 hides Dem Bones-managed shape rows from the native Timeline
    entirely from inside this plugin file - no index.html change needed at
@@ -210,7 +228,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "15.12";
+  var TOOL_VERSION = "15.13";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -3878,7 +3896,27 @@
     API.refreshUI();
   }
 
-  function setBoneKey(){var b=selectedBone();if(!b){notify("Select a bone first.",true);return;}API.pushUndo();var pose=readPoseInputs(),time=currentTime(),key=exactBoneKey(b,time);if(key)Object.assign(key,pose);else b.keys.push(Object.assign({time:time},pose));b.keys.sort(function(a,b){return a.time-b.time;});API.refreshUI();renderAll();notify("Bone key set on frame "+currentFrame()+".",false);}
+  /*
+    When a pose is decided on, the whole rig's pose needs to be locked in at
+    that frame, not just whichever bone was actually dragged or edited -
+    otherwise every other bone keeps interpolating from its nearest OTHER
+    keys and can drift unexpectedly at this frame. This gives every bone
+    without an exact key at this time one, using its current interpolated
+    pose, so nothing shifts.
+  */
+  function ensureRigKeyedAtTime(rig,time,skipBoneId){
+    if(!rig)return;
+    (rig.bones||[]).forEach(function(bone){
+      if(String(bone.id)===String(skipBoneId))return;
+      if(exactBoneKey(bone,time))return;
+      var pose=interpolatePose(bone,time);
+      bone.keys=bone.keys||[];
+      bone.keys.push(Object.assign({time:time},pose));
+      bone.keys.sort(function(a,b){return a.time-b.time;});
+    });
+  }
+
+  function setBoneKey(){var b=selectedBone();if(!b){notify("Select a bone first.",true);return;}API.pushUndo();var pose=readPoseInputs(),time=currentTime(),key=exactBoneKey(b,time);if(key)Object.assign(key,pose);else b.keys.push(Object.assign({time:time},pose));b.keys.sort(function(a,b){return a.time-b.time;});ensureRigKeyedAtTime(state.activeRig,time,b.id);API.refreshUI();renderAll();notify("Whole pose keyed on frame "+currentFrame()+".",false);}
   function deleteBoneKey(){var b=selectedBone();if(!b)return;var t=currentTime(),before=b.keys.length;b.keys=b.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});API.refreshUI();renderAll();notify(before!==b.keys.length?"Bone key deleted.":"No bone key on this frame.",false);}
 
   function normaliseWeightList(list){
@@ -4151,40 +4189,14 @@
   function onPointerDown(event){
     /*
       Clicking the character's shape/silhouette is always plain Luke Animate
-      Select/Edit - it must never itself pop the panel open. Clicking
-      directly on a visible bone icon/line is a much more deliberate,
-      precise target, so - matching how this worked before the panel was
-      closed - it still reopens DemBones straight into that bone's Animate
-      view when the panel is currently closed. Right-click anywhere on the
-      character is the other, broader way in (see the contextmenu listener
-      in bindGlobal).
+      Select/Edit - it must never itself pop the panel open. A single click
+      on a visible bone no longer reopens DemBones either, so a normal click
+      on a bone can be used for plain native selection too - see the
+      dblclick listener in bindGlobal for the actual "go back into
+      DemBones" trigger, and the contextmenu listener for the other, right-
+      click way in.
     */
     if(!state.open){
-      if(
-        state.character.committed&&
-        state.character.showBones
-      ){
-        var closedBoneHit=characterAnimationBoneHit(
-          event
-        );
-
-        if(closedBoneHit){
-          event.preventDefault();
-          event.stopImmediatePropagation();
-
-          open();
-
-          activateCharacterPartMode(
-            closedBoneHit.part,
-            "animate"
-          );
-
-          state.selectedBoneId=closedBoneHit.bone.id;
-          renderAll();
-          API.refreshUI();
-        }
-      }
-
       return;
     }
 
@@ -4297,6 +4309,12 @@
         startTransform:clone(map[hit.bone.id]),
         key:ensureBoneKeyForDrag(hit.bone,currentTime())
       };
+      /*
+        Posing on stage is the same "a pose was decided on" moment as
+        clicking Set Key in the panel - the whole rig's pose needs locking
+        in at this frame, not just the bone being dragged.
+      */
+      ensureRigKeyedAtTime(state.activeRig,currentTime(),hit.bone.id);
       renderAll();
       return;
     }
@@ -4782,7 +4800,7 @@
 
   function bonesPage(){return '<div class="db-page active"><div class="db-section"><h3>Step 2 · Bone Creation</h3><p class="db-help">The Bones tab stays in Add Bone mode. Drag to create the first bone. After it is finished, the next click-and-drag creates a child from the selected bone tail. Click an existing bone without dragging to select it. Use the × on any bone row, or press Delete/Backspace, to remove a bone you do not want. Click <b>Bind</b> once bones are placed so artwork deforms with them.</p><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone">Bone</option><option value="lip">Lip_Bone</option><option value="frame">Frame_Bone</option></select></div><div class="db-grid3"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div></div>'+envelopeDisplayHtml()+'<div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div></div>';}
 
-  function editBonePage(){var b=selectedBone(),rig=state.activeRig;var parents='<option value="">No parent</option>'+((rig&&rig.bones)||[]).filter(function(x){return!b||x.id!==b.id;}).map(function(x){return'<option value="'+esc(x.id)+'"'+(b&&b.parentId===x.id?' selected':'')+'>'+esc(x.name)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Edit Bone</h3>'+(b?'<div class="db-row"><label>Name</label><input value="'+esc(b.name)+'" data-db-edit-bone-name></div><div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div><div class="db-row three"><label>Head X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.x)+'" data-db-bone-head-x><input type="number" value="'+round3(b.restHead.x)+'" data-db-bone-head-x-num></div><div class="db-row three"><label>Head Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.y)+'" data-db-bone-head-y><input type="number" value="'+round3(b.restHead.y)+'" data-db-bone-head-y-num></div><div class="db-row three"><label>Tail X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x><input type="number" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x-num></div><div class="db-row three"><label>Tail Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y><input type="number" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y-num></div><div class="db-row three"><label>Envelope Head</label><input type="range" min="2" max="300" value="'+round3(b.envStart||30)+'" data-db-bone-env-start><input type="number" min="2" max="300" value="'+round3(b.envStart||30)+'" data-db-bone-env-start-num></div><div class="db-row three"><label>Envelope Tail</label><input type="range" min="2" max="300" value="'+round3(b.envEnd||30)+'" data-db-bone-env-end><input type="number" min="2" max="300" value="'+round3(b.envEnd||30)+'" data-db-bone-env-end-num></div><div class="db-row three"><label>Strength</label><input type="range" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength><input type="number" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength-num></div><p class="db-help">Envelope Head, Tail and Strength update the stage live. The translucent tapered shape shows the deformation envelope for this bone.</p><div class="db-grid2"><button class="db-btn primary" data-db-apply-bone-edit>Apply</button><button class="db-btn danger" data-db-delete-bone>Delete Bone</button></div>':'<div class="db-empty">Select a bone in the Bones tab or on the stage.</div>')+'</div>'+envelopeDisplayHtml()+'</div>';}
+  function editBonePage(){var b=selectedBone(),rig=state.activeRig;var boneOptions=((rig&&rig.bones)||[]).map(function(x){return'<option value="'+esc(x.id)+'"'+(b&&b.id===x.id?' selected':'')+'>'+esc(x.name||'Bone')+(x.parentId?'':' (root)')+'</option>';}).join('');var parents='<option value="">No parent</option>'+((rig&&rig.bones)||[]).filter(function(x){return!b||x.id!==b.id;}).map(function(x){return'<option value="'+esc(x.id)+'"'+(b&&b.parentId===x.id?' selected':'')+'>'+esc(x.name)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Edit Bone</h3>'+((rig&&rig.bones&&rig.bones.length)?'<div class="db-row"><label>Editing</label><select data-db-edit-bone-select>'+boneOptions+'</select></div>':'')+(b?'<div class="db-row"><label>Name</label><input value="'+esc(b.name)+'" data-db-edit-bone-name></div><div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div><div class="db-row three"><label>Head X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.x)+'" data-db-bone-head-x><input type="number" value="'+round3(b.restHead.x)+'" data-db-bone-head-x-num></div><div class="db-row three"><label>Head Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.y)+'" data-db-bone-head-y><input type="number" value="'+round3(b.restHead.y)+'" data-db-bone-head-y-num></div><div class="db-row three"><label>Tail X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x><input type="number" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x-num></div><div class="db-row three"><label>Tail Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y><input type="number" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y-num></div><div class="db-row three"><label>Envelope Head</label><input type="range" min="2" max="300" value="'+round3(b.envStart||30)+'" data-db-bone-env-start><input type="number" min="2" max="300" value="'+round3(b.envStart||30)+'" data-db-bone-env-start-num></div><div class="db-row three"><label>Envelope Tail</label><input type="range" min="2" max="300" value="'+round3(b.envEnd||30)+'" data-db-bone-env-end><input type="number" min="2" max="300" value="'+round3(b.envEnd||30)+'" data-db-bone-env-end-num></div><div class="db-row three"><label>Strength</label><input type="range" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength><input type="number" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength-num></div><p class="db-help">Envelope Head, Tail and Strength update the stage live. Drag a bone\'s <b>tail</b> on stage to rotate it around its head; dragging the <b>head</b> moves/translates the whole bone instead. This applies the same way to the root bone as to every child.</p><div class="db-grid2"><button class="db-btn primary" data-db-apply-bone-edit>Apply</button><button class="db-btn danger" data-db-delete-bone>Delete Bone</button></div>':'<div class="db-empty">Select a bone in the Bones tab or on the stage.</div>')+'</div>'+envelopeDisplayHtml()+'</div>';}
 
   function animatePage(){var b=selectedBone(),p=b?interpolatePose(b,currentTime()):{dx:0,dy:0,rotation:0,scale:1,easing:'linear'};return '<div class="db-page active"><div class="db-section"><h3>Animate Selected Bone</h3>'+(b?'<p class="db-help">'+esc(b.name)+' · Frame '+currentFrame()+'</p><div class="db-row three"><label>Move X</label><input type="range" min="-1000" max="1000" value="'+round3(p.dx)+'" data-db-pose-dx><input type="number" value="'+round3(p.dx)+'" data-db-pose-dx-num></div><div class="db-row three"><label>Move Y</label><input type="range" min="-1000" max="1000" value="'+round3(p.dy)+'" data-db-pose-dy><input type="number" value="'+round3(p.dy)+'" data-db-pose-dy-num></div><div class="db-row three"><label>Rotation</label><input type="range" min="-360" max="360" value="'+round3(p.rotation)+'" data-db-pose-rotation><input type="number" value="'+round3(p.rotation)+'" data-db-pose-rotation-num></div><div class="db-row three"><label>Scale</label><input type="range" min="0.05" max="5" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale><input type="number" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale-num></div><div class="db-row"><label>Easing</label><select data-db-pose-easing><option value="linear"'+(p.easing==='linear'?' selected':'')+'>Linear</option><option value="ease-in"'+(p.easing==='ease-in'?' selected':'')+'>Ease In</option><option value="ease-out"'+(p.easing==='ease-out'?' selected':'')+'>Ease Out</option><option value="ease-in-out"'+(p.easing==='ease-in-out'?' selected':'')+'>Ease In/Out</option><option value="hold"'+(p.easing==='hold'?' selected':'')+'>Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-bone-key>Set Key</button><button class="db-btn danger" data-db-delete-bone-key>Delete Key</button></div>':'<div class="db-empty">Select a bone first.</div>')+'</div></div>';}
 
@@ -4877,6 +4895,7 @@
     p.querySelectorAll('[data-db-part-up]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}movePart(partById(button.getAttribute('data-db-part-up')),-1);};});
     p.querySelectorAll('[data-db-part-down]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}movePart(partById(button.getAttribute('data-db-part-down')),1);};});
     p.querySelectorAll('[data-db-bone-id]').forEach(function(row){row.onclick=function(event){if(event&&event.target&&event.target.closest('[data-db-delete-bone-id]'))return;state.selectedBoneId=row.getAttribute('data-db-bone-id');if(state.tab==='bones')state.mode='add-bone';renderAll();};});p.querySelectorAll('[data-db-delete-bone-id]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}deleteBoneById(button.getAttribute('data-db-delete-bone-id'));};});p.querySelectorAll('[data-db-add-bone]').forEach(function(b){b.onclick=function(){if(!state.activeRig){notify('Build or load a part first.',true);return;}state.mode='add-bone';renderAll();notify('Drag on the stage to create a bone. Keep dragging again to extend the chain.',false);};});p.querySelectorAll('[data-db-bind-rig]').forEach(function(b){b.onclick=bindRig;});p.querySelectorAll('[data-db-clear-bones]').forEach(function(b){b.onclick=clearBones;});p.querySelectorAll('[data-db-delete-bone]').forEach(function(b){b.onclick=deleteBone;});
+    var editBoneSelect=p.querySelector('[data-db-edit-bone-select]');if(editBoneSelect)editBoneSelect.onchange=function(){state.selectedBoneId=editBoneSelect.value;renderAll();};
     var applyBone=p.querySelector('[data-db-apply-bone-edit]');if(applyBone)applyBone.onclick=function(){var b=selectedBone();if(!b)return;b.name=p.querySelector('[data-db-edit-bone-name]').value||b.name;b.type=p.querySelector('[data-db-edit-bone-type]').value;b.parentId=p.querySelector('[data-db-edit-bone-parent]').value;b.restHead.x=n(p.querySelector('[data-db-bone-head-x-num]').value,b.restHead.x);b.restHead.y=n(p.querySelector('[data-db-bone-head-y-num]').value,b.restHead.y);b.restTail.x=n(p.querySelector('[data-db-bone-tail-x-num]').value,b.restTail.x);b.restTail.y=n(p.querySelector('[data-db-bone-tail-y-num]').value,b.restTail.y);b.envStart=Math.max(2,n(p.querySelector('[data-db-bone-env-start-num]').value,b.envStart));b.envEnd=Math.max(2,n(p.querySelector('[data-db-bone-env-end-num]').value,b.envEnd));b.strength=Math.max(.05,n(p.querySelector('[data-db-bone-strength-num]').value,b.strength));b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));b.restAngle=angleOf(b.restHead,b.restTail);normaliseRigBones(state.activeRig);enforceRestChains();bindRig();renderAll();};
     bindPair('[data-db-bone-head-x]','[data-db-bone-head-x-num]');bindPair('[data-db-bone-head-y]','[data-db-bone-head-y-num]');bindPair('[data-db-bone-tail-x]','[data-db-bone-tail-x-num]');bindPair('[data-db-bone-tail-y]','[data-db-bone-tail-y-num]');bindPair('[data-db-bone-env-start]','[data-db-bone-env-start-num]',previewSelectedBoneEnvelope);bindPair('[data-db-bone-env-end]','[data-db-bone-env-end-num]',previewSelectedBoneEnvelope);bindPair('[data-db-bone-strength]','[data-db-bone-strength-num]',previewSelectedBoneEnvelope);
     p.querySelectorAll('[data-db-show-envelopes]').forEach(function(input){input.onchange=function(){state.showEnvelopes=!!input.checked;API.refreshUI();};});
@@ -4919,7 +4938,7 @@
     });
   }
 
-  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);surface.addEventListener('contextmenu',function(e){var hitPart=characterRightClickHit(e);if(!hitPart)return;e.preventDefault();e.stopImmediatePropagation();showCharacterContextMenu(e.clientX,e.clientY,hitPart);},true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.activeRig){syncRigDisplayGeometry(state.activeRig,currentTime());}hideDemBonesTimelineRows();if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);}
+  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);surface.addEventListener('contextmenu',function(e){var hitPart=characterRightClickHit(e);if(!hitPart)return;e.preventDefault();e.stopImmediatePropagation();showCharacterContextMenu(e.clientX,e.clientY,hitPart);},true);surface.addEventListener('dblclick',function(e){if(state.open)return;if(!(state.character.committed&&state.character.showBones))return;var hit=characterAnimationBoneHit(e);if(!hit)return;e.preventDefault();e.stopImmediatePropagation();open();activateCharacterPartMode(hit.part,'animate');state.selectedBoneId=hit.bone.id;renderAll();API.refreshUI();},true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.activeRig){syncRigDisplayGeometry(state.activeRig,currentTime());}hideDemBonesTimelineRows();if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);}
 
   function open(){
     /* Capture the stage selection before changing focus or suppressing the fixed
