@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v170: off-stage object proxies. Any Animate object whose transformed bounds extend beyond the stage gets an editor-only dashed proxy box with a centre cross. The proxy selects and drags the real object, uses the existing transform/keyframe system (including Auto Keyframe), follows animated transforms frame-by-frame, and is never part of the WebM canvas capture. Far-off proxies remain retrievable by clamping their visual handle into the visible stage workspace while retaining the real object coordinates. -->
+<!-- LukeAnimate GPT v171: rig-aware off-stage proxies. DemBones curves that share one rigId now produce one combined editor-only proxy bounding box for the whole rig instead of one box per curve. StickRig parts resolve to one containing StickRig/root proxy while editing that rig Clip, while top-level StickRig roots remain one proxy each. Dragging a rig proxy moves every represented member through the existing transform/Auto-Keyframe system; manual + Keyframe writes a transform key to every represented member. Proxy boxes remain editor-only and never enter WebM capture. -->
 <!-- LukeAnimate GPT v169: nested Clip rulers are true editing-viewport rulers. While editing a Clip, the horizontal ruler is fixed immediately below the top toolbar from the left ruler strip to the sidebar edge, the vertical ruler is fixed against the far-left workspace edge down to the timeline, and the corner sits at their intersection. Tick values continue to follow Clip coordinates while panning/scrolling. Main-stage ruler layout remains unchanged. -->
 <!-- LukeAnimate GPT v153: native nested Clip-part animator. Selecting a parent Clip shows its child Clips as indented timeline sublayers and opens stage-styled Move, Scale and Rotate concertinas. Includes the v152 nested Clip preservation fix and all v151 Config, Scripts, SVG and Bezier fixes. -->
 <!DOCTYPE html>
@@ -8419,17 +8419,29 @@ ctx.fill();</textarea>
     return { x: lt.pivotX + r.x, y: lt.pivotY + r.y };
   }
 
-  // ---------------- v170 off-stage object proxy controls ----------------
-  // The proxy is a DOM editor affordance only. It never owns animation data and
-  // is never drawn into fx-canvas, so WebM capture remains the exact stage crop.
-  // Dragging a proxy delegates to startObjectStageDrag(), which means the real
-  // object keeps the existing Auto Keyframe / normal transform semantics.
+  // ---------------- v171 rig-aware off-stage object proxy controls ----------------
+  // Proxies are DOM-only editor affordances. They never own drawing data and are
+  // never rendered into fx-canvas, so WebM capture remains the exact stage crop.
+  //
+  // DemBones: every curve with the same demBones.rigId collapses into ONE proxy.
+  // StickRig: while editing a StickRig Clip, its animated nested parts collapse
+  // into ONE proxy owned by the containing StickRig/root instance. On the main
+  // stage a StickRig root Clip is already one object, so it keeps one proxy.
+  //
+  // A rig proxy uses one representative object for normal LukeAnimate selection
+  // so the Inspector/+Keyframe controls stay available. Dragging/keying the proxy,
+  // however, is applied to every represented member.
   const offstageProxyElements = new Map();
+  const offstageProxyTargets = new Map();
+  let activeOffstageProxyGroupKey = '';
+  let offstageProxySelectionInProgress = false;
 
-  function clearOffstageObjectProxies(){
+  function clearOffstageObjectProxies(resetGroupSelection=true){
     if(!offstageProxyLayer) return;
     offstageProxyElements.forEach(element=>element.remove());
     offstageProxyElements.clear();
+    offstageProxyTargets.clear();
+    if(resetGroupSelection) activeOffstageProxyGroupKey='';
     offstageProxyLayer.replaceChildren();
   }
 
@@ -8438,16 +8450,166 @@ ctx.fill();</textarea>
     return drawObjects.findIndex(object=>object && String(object.id)===String(objectId));
   }
 
-  function offstageProxyStageGeometry(obj){
+  function demBonesProxyRigId(obj){
+    if(!obj || !obj.demBones) return '';
+    return String(
+      obj.demBones.rigId ||
+      (obj.demBones.rig && obj.demBones.rig.id) ||
+      ''
+    );
+  }
+
+  function explicitStickRigProxyGroupId(obj){
+    const data=obj && obj._lukeAnimateStickRig;
+    if(!data || typeof data!=='object') return '';
+    return String(
+      data.rigId ||
+      data.groupId ||
+      data.rootId ||
+      data.rootObjectId ||
+      data.ownerRigId ||
+      ''
+    );
+  }
+
+  function currentEditedStickRigOwner(){
+    if(!editingClipId || !contextStack.length) return null;
+    const parent=contextStack[contextStack.length-1];
+    const parentObjects=parent && parent.data && Array.isArray(parent.data.drawObjects)
+      ?parent.data.drawObjects
+      :[];
+    const matches=parentObjects.filter(object=>
+      object &&
+      object.type==='clipinstance' &&
+      String(object.clipId||'')===String(editingClipId) &&
+      object._lukeAnimateStickRig
+    );
+    if(!matches.length) return null;
+    // A Clip definition is shared by its instances. If more than one matching
+    // instance exists, the definition still represents one StickRig edit context.
+    return matches[0];
+  }
+
+  function offstageProxyTargetDescriptor(obj,index){
+    const demRigId=demBonesProxyRigId(obj);
+    if(demRigId){
+      const rig=obj.demBones && obj.demBones.rig;
+      return {
+        key:'dembones:'+demRigId,
+        kind:'dembones',
+        groupId:demRigId,
+        label:String((rig&&rig.name)||'Dem Bones Rig')
+      };
+    }
+
+    if(obj && obj._lukeAnimateStickRig){
+      const explicitId=explicitStickRigProxyGroupId(obj);
+      if(explicitId){
+        return {
+          key:'stickrig:'+explicitId,
+          kind:'stickrig',
+          groupId:explicitId,
+          label:'StickRig'
+        };
+      }
+
+      const owner=currentEditedStickRigOwner();
+      if(owner){
+        const ownerId=String(owner.id||owner.clipId||editingClipId||'rig');
+        return {
+          key:'stickrig-owner:'+ownerId,
+          kind:'stickrig',
+          groupId:ownerId,
+          label:String(objectLayerName(owner)||'StickRig')
+        };
+      }
+      // On the main stage each StickRig root is a real Clip instance already,
+      // so do not merge unrelated StickRigs merely because they use StickRig data.
+    }
+
+    return {
+      key:'object:'+String(obj&&obj.id||index),
+      kind:'object',
+      groupId:'',
+      label:String(objectLayerName(obj)||drawObjectTypeLabel(obj&&obj.type))
+    };
+  }
+
+  function offstageProxyStageGeometry(obj,includeInside=false){
     if(!obj) return null;
     const eff=getEffectiveObj(obj,t);
-    const lt=getLiveTransform(obj,eff);
-    const sceneCorners=getTransformedCorners(lt);
+    let lt=getLiveTransform(obj,eff);
+    let sceneCorners=getTransformedCorners(lt);
+    let stagePivot=sceneToStagePoint({x:lt.pivotX,y:lt.pivotY});
+    let proxyWidthStage=Math.max(1,Math.abs(lt.halfW*2*lt.scaleX));
+    let proxyHeightStage=Math.max(1,Math.abs(lt.halfH*2*lt.scaleY));
+    let proxyRotation=Number(lt.rotation)||0;
+
+    // DemBones deformation is supplied through effective.points. The normal
+    // transform bounds are based on the rest geometry, so derive the proxy from
+    // the CURRENT deformed points while still applying the object's ordinary
+    // transform around its original centroid. This keeps the one rig box wrapped
+    // around the actual posed curves rather than their undeformed rest shapes.
+    if(
+      obj.type!=='clipinstance' &&
+      obj.type!=='group' &&
+      Array.isArray(eff.points) &&
+      eff.points.length
+    ){
+      const xs=eff.points.map(point=>Number(point&&point.x)||0);
+      const ys=eff.points.map(point=>Number(point&&point.y)||0);
+      const local={
+        x1:Math.min(...xs),
+        y1:Math.min(...ys),
+        x2:Math.max(...xs),
+        y2:Math.max(...ys)
+      };
+      const base=getDrawObjectBounds(obj);
+      const basePivotX=(base.x1+base.x2)/2;
+      const basePivotY=(base.y1+base.y2)/2;
+      const axes=getObjectScaleAxes(obj,eff);
+      const rotation=Number(eff.trotation)||0;
+      const tx=Number(eff.tx)||0;
+      const ty=Number(eff.ty)||0;
+      const rad=rotation*Math.PI/180;
+      const localCorners=[
+        {key:'tl',x:local.x1,y:local.y1},
+        {key:'tr',x:local.x2,y:local.y1},
+        {key:'bl',x:local.x1,y:local.y2},
+        {key:'br',x:local.x2,y:local.y2}
+      ];
+      sceneCorners=localCorners.map(point=>{
+        const dx=(point.x-basePivotX)*axes.x;
+        const dy=(point.y-basePivotY)*axes.y;
+        const rotated=rotatePoint(dx,dy,rad);
+        return {
+          key:point.key,
+          x:basePivotX+tx+rotated.x,
+          y:basePivotY+ty+rotated.y
+        };
+      });
+      const localCenterX=(local.x1+local.x2)/2;
+      const localCenterY=(local.y1+local.y2)/2;
+      const centreDelta=rotatePoint(
+        (localCenterX-basePivotX)*axes.x,
+        (localCenterY-basePivotY)*axes.y,
+        rad
+      );
+      const sceneCentre={
+        x:basePivotX+tx+centreDelta.x,
+        y:basePivotY+ty+centreDelta.y
+      };
+      stagePivot=sceneToStagePoint(sceneCentre);
+      proxyWidthStage=Math.max(1,Math.abs((local.x2-local.x1)*axes.x));
+      proxyHeightStage=Math.max(1,Math.abs((local.y2-local.y1)*axes.y));
+      proxyRotation=rotation;
+      lt=Object.assign({},lt,{pivotX:sceneCentre.x,pivotY:sceneCentre.y,rotation:rotation});
+    }
+
     const stageCorners=sceneCorners.map(point=>{
       const stage=sceneToStagePoint(point);
       return {key:point.key,x:stage.x,y:stage.y};
     });
-    const stagePivot=sceneToStagePoint({x:lt.pivotX,y:lt.pivotY});
     const xs=stageCorners.map(point=>point.x);
     const ys=stageCorners.map(point=>point.y);
     if(!xs.length || !ys.length) return null;
@@ -8458,38 +8620,195 @@ ctx.fill();</textarea>
       y2:Math.max(...ys)
     };
     const outside=(bounds.x1<0 || bounds.y1<0 || bounds.x2>W || bounds.y2>H);
-    if(!outside) return null;
+    if(!outside && !includeInside) return null;
     const completelyOutside=(bounds.x2<0 || bounds.y2<0 || bounds.x1>W || bounds.y1>H);
-    return {eff,lt,stageCorners,stagePivot,bounds,completelyOutside};
+    return {
+      eff,
+      lt,
+      stageCorners,
+      stagePivot,
+      bounds,
+      outside,
+      completelyOutside,
+      proxyWidthStage,
+      proxyHeightStage,
+      proxyRotation
+    };
   }
 
-  function configureOffstageProxyElement(element,objectId){
-    element.dataset.objectId=String(objectId||'');
+  function combinedOffstageProxyGeometry(target){
+    if(!target || !Array.isArray(target.members) || !target.members.length) return null;
+    if(target.kind==='object'){
+      return offstageProxyStageGeometry(target.members[0].object,false);
+    }
+
+    const geometries=target.members
+      .map(member=>offstageProxyStageGeometry(member.object,true))
+      .filter(Boolean);
+    if(!geometries.length) return null;
+
+    const bounds={
+      x1:Math.min(...geometries.map(geometry=>geometry.bounds.x1)),
+      y1:Math.min(...geometries.map(geometry=>geometry.bounds.y1)),
+      x2:Math.max(...geometries.map(geometry=>geometry.bounds.x2)),
+      y2:Math.max(...geometries.map(geometry=>geometry.bounds.y2))
+    };
+    const outside=(bounds.x1<0 || bounds.y1<0 || bounds.x2>W || bounds.y2>H);
+    if(!outside) return null;
+    const completelyOutside=(bounds.x2<0 || bounds.y2<0 || bounds.x1>W || bounds.y1>H);
+    const stagePivot={
+      x:(bounds.x1+bounds.x2)/2,
+      y:(bounds.y1+bounds.y2)/2
+    };
+
+    return {
+      eff:null,
+      lt:null,
+      stageCorners:null,
+      stagePivot,
+      bounds,
+      outside:true,
+      completelyOutside,
+      proxyWidthStage:Math.max(1,bounds.x2-bounds.x1),
+      proxyHeightStage:Math.max(1,bounds.y2-bounds.y1),
+      proxyRotation:0,
+      memberGeometries:geometries
+    };
+  }
+
+  function proxyTargetRepresentative(target){
+    if(!target || !Array.isArray(target.members) || !target.members.length) return null;
+    const selected=target.members.find(member=>selectedDrawIndices.has(member.index));
+    return selected||target.members[0];
+  }
+
+  function proxyTargetStillSelected(target){
+    if(!target) return false;
+    const representative=proxyTargetRepresentative(target);
+    return !!(representative && selectedDrawIndices.has(representative.index));
+  }
+
+  function selectOffstageProxyTarget(target,additive){
+    const representative=proxyTargetRepresentative(target);
+    if(!representative) return false;
+    offstageProxySelectionInProgress=true;
+    try{
+      selectDrawObject(representative.index,!!additive,true);
+    }finally{
+      offstageProxySelectionInProgress=false;
+    }
+    activeOffstageProxyGroupKey=target.kind==='object'?'':target.key;
+    updateInspector();
+    renderLayerList();
+    renderTimeline();
+    renderTransformHandles();
+    return true;
+  }
+
+  function startOffstageProxyGroupDrag(target,startCanvas){
+    if(!target || target.kind==='object' || !Array.isArray(target.members) || !target.members.length) return;
+
+    const geometry=combinedOffstageProxyGeometry(target);
+    if(!geometry) return;
+
+    const starts=target.members.map(member=>{
+      const object=member.object;
+      const effective=getEffectiveObj(object,t);
+      const isClip=object.type==='clipinstance';
+      return {
+        member,
+        object,
+        isClip,
+        x:isClip
+          ?Number(effective.x!==undefined?effective.x:object.x)||0
+          :Number(effective.tx!==undefined?effective.tx:object.tx)||0,
+        y:isClip
+          ?Number(effective.y!==undefined?effective.y:object.y)||0
+          :Number(effective.ty!==undefined?effective.ty:object.ty)||0
+      };
+    });
+
+    let historyPushed=false;
+    let moved=false;
+    inspectorDragging=true;
+
+    function onMove(event){
+      const current=canvasCoords(event.clientX,event.clientY);
+      let dx=current.x-startCanvas.x;
+      let dy=current.y-startCanvas.y;
+      const snapped=snapBoundsDeltaToGuides(geometry.bounds,dx,dy);
+      dx=snapped.dx;
+      dy=snapped.dy;
+
+      if(!historyPushed && Math.hypot(dx,dy)>=0.5){
+        pushUndo();
+        historyPushed=true;
+      }
+      if(!historyPushed) return;
+
+      moved=true;
+      starts.forEach(start=>{
+        setObjectFieldForCurrentTime(start.object,start.isClip?'x':'tx',start.x+dx);
+        setObjectFieldForCurrentTime(start.object,start.isClip?'y':'ty',start.y+dy);
+      });
+      updateInspector();
+      renderOffstageObjectProxies();
+    }
+
+    function onUp(){
+      window.removeEventListener('mousemove',onMove);
+      window.removeEventListener('mouseup',onUp);
+      inspectorDragging=false;
+      if(moved){
+        target.members.forEach(member=>renderKeyframeList(member.object));
+        renderTimeline();
+      }
+      renderTransformHandles();
+      renderOffstageObjectProxies();
+    }
+
+    window.addEventListener('mousemove',onMove);
+    window.addEventListener('mouseup',onUp);
+  }
+
+  function addOffstageProxyGroupKeyframe(target){
+    if(!target || target.kind==='object' || !Array.isArray(target.members) || !target.members.length) return false;
+    pushUndo();
+    target.members.forEach(member=>addObjectKeyAtTime(member.object,null,t));
+    target.members.forEach(member=>renderKeyframeList(member.object));
+    renderTimeline();
+    renderTransformHandles();
+    renderOffstageObjectProxies();
+    return true;
+  }
+
+  function configureOffstageProxyElement(element,proxyKey){
+    element.dataset.proxyKey=String(proxyKey||'');
     element.addEventListener('mousedown',event=>{
       if(event.button!==0 || exportPlayback.active) return;
       if(stageTool!=='none') return;
 
-      const objectId=element.dataset.objectId;
-      const index=findCurrentDrawObjectIndexById(objectId);
-      if(index<0) return;
-      const object=drawObjects[index];
+      const target=offstageProxyTargets.get(element.dataset.proxyKey);
+      if(!target || !target.members || !target.members.length) return;
+      const representative=proxyTargetRepresentative(target);
+      if(!representative) return;
+      const object=representative.object;
       if(!object || object.enabled===false || panelForDrawObject(object)!=='animate') return;
 
       const additive=!!(event.shiftKey || event.ctrlKey || event.metaKey);
       event.preventDefault();
       event.stopPropagation();
 
-      selectDrawObject(index,additive,true);
-      updateInspector();
-      renderLayerList();
-      renderTimeline();
-      renderTransformHandles();
-
+      if(!selectOffstageProxyTarget(target,additive)) return;
       if(additive) return;
 
       element.classList.add('dragging');
       const startCanvas=canvasCoords(event.clientX,event.clientY);
-      startObjectStageDrag(index,startCanvas);
+      if(target.kind==='object'){
+        startObjectStageDrag(representative.index,startCanvas);
+      }else{
+        startOffstageProxyGroupDrag(target,startCanvas);
+      }
 
       const finish=()=>{
         element.classList.remove('dragging');
@@ -8504,8 +8823,12 @@ ctx.fill();</textarea>
   function renderOffstageObjectProxies(){
     if(!offstageProxyLayer) return;
 
-    if(exportPlayback.active || onionSkinRendering){
-      clearOffstageObjectProxies();
+    if(exportPlayback.active){
+      clearOffstageObjectProxies(true);
+      return;
+    }
+    if(onionSkinRendering){
+      clearOffstageObjectProxies(false);
       return;
     }
 
@@ -8522,9 +8845,6 @@ ctx.fill();</textarea>
       return;
     }
 
-    // A fixed editor layer follows the visible stage-workspace viewport rather
-    // than the canvas bitmap. This is what allows its controls to exist outside
-    // the stage without becoming part of the rendered animation.
     offstageProxyLayer.style.left=wrapRect.left+'px';
     offstageProxyLayer.style.top=wrapRect.top+'px';
     offstageProxyLayer.style.width=wrapRect.width+'px';
@@ -8532,43 +8852,62 @@ ctx.fill();</textarea>
 
     const scaleX=canvasRect.width/Math.max(1,W);
     const scaleY=canvasRect.height/Math.max(1,H);
-    const activeIds=new Set();
+    const grouped=new Map();
 
     drawObjects.forEach((rawObject,index)=>{
       if(!rawObject || rawObject.enabled===false) return;
       const object=ensureDrawObjectMetadata(rawObject);
       if(panelForDrawObject(object)!=='animate') return;
+      const descriptor=offstageProxyTargetDescriptor(object,index);
+      let target=grouped.get(descriptor.key);
+      if(!target){
+        target={
+          key:descriptor.key,
+          kind:descriptor.kind,
+          groupId:descriptor.groupId,
+          label:descriptor.label,
+          members:[]
+        };
+        grouped.set(descriptor.key,target);
+      }
+      target.members.push({object,index});
+    });
 
-      const geometry=offstageProxyStageGeometry(object);
+    offstageProxyTargets.clear();
+    grouped.forEach((target,key)=>offstageProxyTargets.set(key,target));
+    const activeKeys=new Set();
+
+    grouped.forEach(target=>{
+      const geometry=combinedOffstageProxyGeometry(target);
       if(!geometry) return;
 
-      const objectId=String(object.id);
-      activeIds.add(objectId);
+      target.geometry=geometry;
+      const proxyKey=target.key;
+      activeKeys.add(proxyKey);
 
-      let element=offstageProxyElements.get(objectId);
+      let element=offstageProxyElements.get(proxyKey);
       if(!element){
         element=document.createElement('div');
         element.className='offstage-object-proxy';
-        configureOffstageProxyElement(element,objectId);
-        offstageProxyElements.set(objectId,element);
+        configureOffstageProxyElement(element,proxyKey);
+        offstageProxyElements.set(proxyKey,element);
         offstageProxyLayer.appendChild(element);
       }
 
-      element.dataset.objectId=objectId;
-      element.dataset.objectIndex=String(index);
-      element.classList.toggle('selected',selectedDrawIndices.has(index));
+      element.dataset.proxyKey=proxyKey;
+      element.dataset.proxyKind=target.kind;
+      element.dataset.objectId=String(target.members[0]&&target.members[0].object&&target.members[0].object.id||'');
+      element.classList.toggle('selected',proxyTargetStillSelected(target));
       element.classList.toggle('partial',!geometry.completelyOutside);
+      element.classList.toggle('rig-group',target.kind!=='object');
       const proxyInteractive=(stageTool==='none' && !shapePointEditMode && !isParticlesPanelVisible());
       element.style.pointerEvents=proxyInteractive?'auto':'none';
-      element.style.zIndex=String(100+index);
+      element.style.zIndex=String(100+Math.max(...target.members.map(member=>member.index)));
 
       const stagePivot=geometry.stagePivot;
       const projectedX=(canvasRect.left-wrapRect.left)+(stagePivot.x*scaleX);
       const projectedY=(canvasRect.top-wrapRect.top)+(stagePivot.y*scaleY);
 
-      // Keep the retrieval cross reachable even when the object's true pivot is
-      // hundreds or thousands of stage units away. Nearby off-stage objects stay
-      // at their exact projected location; only unreachable handles are clamped.
       const grabMargin=18;
       const topbar=document.getElementById('topbar');
       const topbarRect=topbar?topbar.getBoundingClientRect():null;
@@ -8585,34 +8924,51 @@ ctx.fill();</textarea>
       const remote=Math.abs(visualX-projectedX)>.5 || Math.abs(visualY-projectedY)>.5;
       element.classList.toggle('remote',remote);
 
-      const width=Math.max(26,Math.abs(geometry.lt.halfW*2*geometry.lt.scaleX*scaleX));
-      const height=Math.max(26,Math.abs(geometry.lt.halfH*2*geometry.lt.scaleY*scaleY));
+      const width=Math.max(26,Math.abs(geometry.proxyWidthStage*scaleX));
+      const height=Math.max(26,Math.abs(geometry.proxyHeightStage*scaleY));
       element.style.left=visualX+'px';
       element.style.top=visualY+'px';
       element.style.width=width+'px';
       element.style.height=height+'px';
-      element.style.transform='translate(-50%,-50%) rotate('+(Number(geometry.lt.rotation)||0)+'deg)';
+      element.style.transform='translate(-50%,-50%) rotate('+(Number(geometry.proxyRotation)||0)+'deg)';
 
-      const effective=geometry.eff||object;
-      const px=object.type==='clipinstance'
-        ?Number(effective.x!==undefined?effective.x:object.x)||0
-        :(geometry.lt.pivotX||0);
-      const py=object.type==='clipinstance'
-        ?Number(effective.y!==undefined?effective.y:object.y)||0
-        :(geometry.lt.pivotY||0);
-      const keyText=autoKeyframe
-        ?'Drag: move real object and Auto Keyframe at current frame'
-        :'Drag: move real object · use Add Keyframe to key this position';
-      element.title=(objectLayerName(object)||drawObjectTypeLabel(object.type))+
-        ' — off stage at X '+px.toFixed(1)+', Y '+py.toFixed(1)+'\n'+keyText+
-        (remote?'\nProxy handle is clamped into view; the object keeps its true off-stage coordinates.':'');
+      const keyText=target.kind==='object'
+        ?(autoKeyframe
+          ?'Drag: move real object and Auto Keyframe at current frame'
+          :'Drag: move real object · use Add Keyframe to key this position')
+        :(autoKeyframe
+          ?'Drag: move whole '+target.label+' and Auto Keyframe every represented member at current frame'
+          :'Drag: move whole '+target.label+' · + Keyframe keys every represented member');
+
+      let positionText='';
+      if(target.kind==='object'){
+        const object=target.members[0].object;
+        const effective=geometry.eff||object;
+        const px=object.type==='clipinstance'
+          ?Number(effective.x!==undefined?effective.x:object.x)||0
+          :(geometry.lt&&geometry.lt.pivotX||0);
+        const py=object.type==='clipinstance'
+          ?Number(effective.y!==undefined?effective.y:object.y)||0
+          :(geometry.lt&&geometry.lt.pivotY||0);
+        positionText=' — off stage at X '+px.toFixed(1)+', Y '+py.toFixed(1);
+      }else{
+        positionText=' — '+target.members.length+' member'+(target.members.length===1?'':'s')+
+          ' · group centre X '+stagePivot.x.toFixed(1)+', Y '+stagePivot.y.toFixed(1);
+      }
+
+      element.title=target.label+positionText+'\n'+keyText+
+        (remote?'\nProxy handle is clamped into view; the rig/object keeps its true off-stage coordinates.':'');
     });
 
-    offstageProxyElements.forEach((element,objectId)=>{
-      if(activeIds.has(objectId)) return;
+    offstageProxyElements.forEach((element,proxyKey)=>{
+      if(activeKeys.has(proxyKey)) return;
       element.remove();
-      offstageProxyElements.delete(objectId);
+      offstageProxyElements.delete(proxyKey);
     });
+
+    if(activeOffstageProxyGroupKey && !activeKeys.has(activeOffstageProxyGroupKey)){
+      activeOffstageProxyGroupKey='';
+    }
   }
 
   function shapeCanEditPoints(obj){
@@ -9599,6 +9955,10 @@ ctx.fill();</textarea>
   function renderTransformHandles(){
     overlay.querySelectorAll('.xform-handle, .xform-axis-handle, .xform-rotate-handle, .shape-point-handle, .bezier-anchor-handle, .bezier-control-handle, .bezier-handle-line, .pen-edit-anchor, .pen-edit-control, .pen-edit-bend, .pen-edit-width, .pen-edit-line').forEach(e=>e.remove());
     if(exportPlayback.active) return;
+    if(activeOffstageProxyGroupKey){
+      const proxyTarget=offstageProxyTargets.get(activeOffstageProxyGroupKey);
+      if(proxyTarget && proxyTarget.kind!=='object' && proxyTargetStillSelected(proxyTarget)) return;
+    }
     if(stageTool==='bcurve' && currentBezierObject()){ renderBezierCurveHandles(); return; }
     const penSelection=getSelectedSingleObject();
     if(stageTool==='pen'&&penSelection&&penSelection.obj&&penSelection.obj.penStroke){renderPenStrokeHandles(penSelection.obj);return;}
@@ -9985,6 +10345,20 @@ ctx.fill();</textarea>
     const obj=currentShapePointEditObject();if(!obj)return;
     deleteEditableShapePoint(obj,shapePointSelectedIndex,true);
   });
+
+  // v171: when a rig proxy is active, + Keyframe keys the complete represented
+  // DemBones/StickRig group rather than only the representative curve/part.
+  document.getElementById('btn-add-keyframe').addEventListener('click', event=>{
+    if(!activeOffstageProxyGroupKey) return;
+    const target=offstageProxyTargets.get(activeOffstageProxyGroupKey);
+    if(!target || target.kind==='object' || !proxyTargetStillSelected(target)){
+      activeOffstageProxyGroupKey='';
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    addOffstageProxyGroupKeyframe(target);
+  },true);
 
   document.getElementById('btn-add-keyframe').addEventListener('click', ()=>{
     const sel = getSelectedSingleObject(); if(!sel) return;
@@ -11698,6 +12072,7 @@ ctx.fill();</textarea>
 
   function selectEffectLayer(index, openOwnerPanel){
     if(index < 0 || index >= layers.length) return;
+    activeOffstageProxyGroupKey='';
     if(index !== activeIndex) saveActivePathEditor();
     activeIndex = index;
     selectedDrawIndices.clear();
@@ -11711,6 +12086,7 @@ ctx.fill();</textarea>
 
   function selectDrawObject(index, additive, openOwnerPanel){
     if(index < 0 || index >= drawObjects.length) return;
+    if(!offstageProxySelectionInProgress) activeOffstageProxyGroupKey='';
     const isolated=getIsolatedGroupInfo();
     const obj = ensureDrawObjectMetadata(isolated && isolated.rootIndex===index ? isolated.child : drawObjects[index]);
     if(isolated && isolated.rootIndex===index) additive=false;
