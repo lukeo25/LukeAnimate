@@ -3921,6 +3921,10 @@ ctx.fill();</textarea>
   // or set obj.panelId directly when creating their object.
   const objectPanelOwners = Object.create(null);
   const objectEvaluators = new Map();
+  // v173: custom object renderers let tools such as Dem Bones draw a deformed
+  // transparent raster in the normal stage renderer. Because this hook lives
+  // inside renderOneDrawObject it is also used for Clip rendering and export.
+  const objectRenderers = new Map();
   const stageOverlayRenderers = new Map();
   const clipPivotCompensators = new Map();
   const selectionInspectorSuppressors = new Set();
@@ -3934,6 +3938,14 @@ ctx.fill();</textarea>
   }
   function unregisterObjectEvaluator(id){
     return objectEvaluators.delete(String(id));
+  }
+  function registerObjectRenderer(id, renderer){
+    if(!id || typeof renderer !== 'function') throw new Error('registerObjectRenderer requires an id and function.');
+    objectRenderers.set(String(id), renderer);
+    return true;
+  }
+  function unregisterObjectRenderer(id){
+    return objectRenderers.delete(String(id));
   }
   function registerStageOverlayRenderer(id, renderer){
     if(!id || typeof renderer !== 'function') throw new Error('registerStageOverlayRenderer requires an id and function.');
@@ -6139,6 +6151,34 @@ ctx.fill();</textarea>
     if(trotation) ctx.rotate(trotation * Math.PI/180);
     if(scaleAxes.x !== 1 || scaleAxes.y !== 1) ctx.scale(scaleAxes.x,scaleAxes.y);
     ctx.translate(-pivotX, -pivotY);
+
+    // v173: give registered tools first chance to render an object. Returning
+    // true (or {handled:true}) suppresses the built-in renderer for that object.
+    // The current object transform/opacity is already on ctx, so custom renderers
+    // behave exactly like native objects inside nested Clips and during export.
+    let customObjectHandled = false;
+    if(objectRenderers.size){
+      for(const [rendererId, renderer] of objectRenderers){
+        try{
+          const result = renderer(ctx, obj, eff, LukeAnimatePluginAPI);
+          if(result === true || (result && result.handled === true)){
+            customObjectHandled = true;
+            break;
+          }
+        }catch(err){
+          console.warn('Luke Animate object renderer failed:', rendererId, err);
+        }
+      }
+    }
+    if(customObjectHandled){
+      ctx.restore();
+      if(!onionSkinRendering && idx !== undefined && selectedDrawIndices.has(idx)){
+        const isolated = getIsolatedGroupInfo();
+        if(isolated && isolated.rootIndex === idx) drawSelectionHighlight(isolated.child);
+        else drawSelectionHighlight(obj);
+      }
+      return;
+    }
 
     const fillColor = eff.fillColor || obj.fillColor || obj.color || '#4fe0c4';
     const strokeColor = eff.strokeColor || obj.strokeColor || obj.color || '#1b1f24';
@@ -11293,7 +11333,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 112,
+    version: 113,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -11323,6 +11363,8 @@ ctx.fill();</textarea>
     registerObjectPanelOwner(type, panelId){ registerObjectPanelOwner(type, panelId); },
     registerObjectEvaluator(id, evaluator){ return registerObjectEvaluator(id, evaluator); },
     unregisterObjectEvaluator(id){ return unregisterObjectEvaluator(id); },
+    registerObjectRenderer(id, renderer){ return registerObjectRenderer(id, renderer); },
+    unregisterObjectRenderer(id){ return unregisterObjectRenderer(id); },
     registerStageOverlayRenderer(id, renderer){ return registerStageOverlayRenderer(id, renderer); },
     unregisterStageOverlayRenderer(id){ return unregisterStageOverlayRenderer(id); },
     registerClipPivotCompensator(id, callback){ return registerClipPivotCompensator(id, callback); },
@@ -14761,19 +14803,9 @@ ctx.fill();</textarea>
 
     normalizeAllDrawObjects();
     const isolatedTimelineInfo=getIsolatedGroupInfo();
-    const timelineObjectEntries=(isolatedTimelineInfo
+    const timelineObjectEntries=isolatedTimelineInfo
       ? [{obj:isolatedTimelineInfo.child,idx:isolatedTimelineInfo.rootIndex,isolated:true}]
-      : drawObjects.map((obj,idx)=>({obj,idx,isolated:false})))
-      /*
-        Dem Bones-rigged shapes (and expression slot shapes) are fully
-        managed through the Dem Bones panel's own Curves/Expression tools,
-        never as individual native timeline rows - a single imported
-        character could easily be a dozen-plus separate paths, which used
-        to flood this list with one row per path. The Dem Bones panel
-        already lists them by name; here they should only ever surface as
-        their one Character instance row.
-      */
-      .filter(entry=>!entry.obj||!(entry.obj.demBones||entry.obj.demBonesExpression));
+      : drawObjects.map((obj,idx)=>({obj,idx,isolated:false}));
     timelineObjectEntries.forEach(entry=>{
       const obj=entry.obj,idx=entry.idx;
       const row = document.createElement('div');
