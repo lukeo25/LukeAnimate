@@ -1,253 +1,22 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v15.14
+/* Luke Animate Dem Bones + MyCharacter GPT v16.3
    Native Luke Animate floating tool.
-   Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
 
-   v15.14 fixes two real interaction bugs in Edit Bone and Animate:
-   - a click that missed every bone used to fall straight through to native
-     Luke Animate selection of whatever shape was underneath, instead of
-     being swallowed. That is what let clicking in Edit Bone select
-     artwork/other objects at all - now it does nothing;
-   - boneHit() did a plain nearest-search across every bone's head and tail
-     with no idea which bone the panel actually has selected. A parent's
-     tail and every child's head normally sit at the exact same point (a
-     hub), so that search could silently hand a drag to a different bone
-     than the one shown in the Edit Bone panel - which is what made the
-     root bone appear to only move on one axis some of the time, since some
-     drags were landing on an entirely different bone's handle. In Edit
-     Bone, the currently selected bone's own head/tail now get first claim
-     on a click within range before any other bone is considered, so the
-     bone you are looking at is always the bone you actually drag.
-
-   v15.13:
-   - Edit Bone gained an "Editing" bone picker at the top of the tab, so
-     every bone in the rig - root or child - is reachable and editable
-     directly from there without leaving the tab to reselect on stage or in
-     Bones. Dragging a bone's tail rotates it around its head; dragging the
-     head translates the whole bone instead - that is true for the root
-     bone exactly the same as every child, there is no special-case lock on
-     either;
-   - setting a key now keyframes the whole rig's pose at that frame, not
-     just the one bone that was dragged or edited - both from the Animate
-     tab's Set Key button and from dragging a bone directly on stage. Every
-     other bone gets a key with its current interpolated pose so nothing
-     drifts unexpectedly at that frame;
-   - the panel now only reopens from a closed state via double-clicking a
-     visible bone. A single click on a bone (or anywhere else on the
-     character) is plain native Select/Edit and never opens the panel;
-     right-click still works as the other, broader "Edit Character" way in.
-
-   v15.12 hides Dem Bones-managed shape rows from the native Timeline
-   entirely from inside this plugin file - no index.html change needed at
-   all, so there is nothing else to push or deploy anywhere else. It runs
-   on the same polling loop already used for stage sync, matching each
-   Timeline row's displayed name against every shape this plugin currently
-   owns (bound to a rig, or an expression slot) and hiding that row
-   directly. This is the same outcome the v15.9 index.html filter was
-   meant to give, now delivered without requiring that file to be edited or
-   pushed anywhere. Editing a bone (Bones/Edit Bone/Animate) should now only
-   ever show Bone rows in the Timeline, never the underlying shapes.
-
-   v15.11 is a hotfix for a real bug v15.10 introduced: it exposed the
-   objects converted by createRigFromObjects via rig.__dbLastChosenObjects -
-   a property attached directly to the rig object. Every one of those
-   objects has demBones.rig pointing straight back at that same rig, so this
-   created a permanent circular reference living ON the rig itself, not just
-   for that one call. Anywhere the rig was later cloned or JSON.stringify'd -
-   saving a part, saving a character, committing - "Converting circular
-   structure to JSON" followed. The converted objects are now handed back
-   through a plain module-level variable instead, which is never itself
-   serialized, so it cannot leak a cycle into anything the rig touches.
-
-   v15.10 closes a real ordering gap that could undermine the v15.9
-   index.html timeline filter regardless of whether that file is up to date:
-   loadSvgFile and useStageSelection both staged every shape on the native
-   timeline via addDrawObject BEFORE tagging it as a rig member, not after.
-   That left a genuine window - not just a display lag - where a freshly
-   ingested shape was completely indistinguishable from a normal, untagged
-   native object. Both now convert and tag the whole batch first, then stage
-   only what actually needs a fresh addDrawObject call (clones; reused
-   originals are already on stage).
-
-   v15.9:
-   - the wall of identical "Drawing 0" rows in the native Timeline/Layers
-     panel was traced to its real cause: DemBones never gave any shape it
-     created a .name, so the native panel fell back to a single generic type
-     label for every one of them - a whole SVG import reads as a dozen-plus
-     identical rows. I first checked whether these could be consolidated
-     onto fewer native timeline layers, but confirmed that would silently
-     break rendering (a layer only ever shows its first matching frame, so
-     multiple simultaneous shapes sharing one layer would hide all but one).
-     The correct, safe fix is naming: imported SVG shapes now get the
-     source SVG's own id (if it looks hand-authored) or a plain "Shape N",
-     so each row in the native panel is distinct and readable instead of a
-     wall of duplicates;
-   - the Character must now be named before its first part can be added -
-     Add To Character is blocked, with a red inline prompt and the Name
-     field focused, until a real name is entered. This matters because that
-     name becomes the Clip/instance's actual name as an object on Main
-     Scene the moment the first part is added, not something to fix up
-     later.
-
-   v15.8:
-   - the bone cursor icon is now half its previous size (15x15 instead of
-     30x30, hotspot adjusted to match);
-   - Edit Bone now evaluates deformation at true rest, ignoring whatever
-     frame the timeline playhead is on. Previously, editing a bone's rest
-     position/envelope was combined with any pose or point keys that already
-     existed at the current frame, which made rest edits visibly warp the
-     curves - something that should only ever happen from actually posing in
-     Animate. Bones, Curves and every other tab are unaffected;
-   - v15.5 removed left-click-reopens-DemBones entirely in favour of right-
-     click only. That went further than intended: clicking the character's
-     shape/silhouette still never reopens the panel, but clicking directly on
-     a visible bone icon/line - a much more deliberate target - once again
-     reopens DemBones straight into that bone's Animate view when the panel
-     is closed, alongside the right-click "Edit Character" menu as the other
-     way in.
-
-   v15.7 adds mode-specific cursors, purely cosmetic/UX - no rig or placement
-   logic touched:
-   - the stage cursor becomes the LukeAnimate Bone.svg icon, recoloured
-     green, while actively dragging out a new bone on the Bones tab, and the
-     same icon recoloured blue while on the Edit Bone tab;
-   - the stage cursor resets to the normal pointer everywhere else on stage,
-     including whenever the panel is closed;
-   - inside the DemBones panel itself, every button (including tabs, part
-     cards, curve point rows and the right-click context menu) shows a
-     pointer/finger cursor; everything else in the panel (labels, inputs,
-     the panel background) uses the standard cursor.
-
-   v15.6 fixes a real detection gap found by re-examining the original
-   "stray artwork" screenshot properly: allObjectArrays() - the function
-   findObjectById, rigObjects and the Clean Up Stray Artwork orphan scan all
-   rely on - only ever looked inside each clip's drawObjects array. Content
-   that only lives in a clip's sceneFrames or drawingLayers instead (as the
-   rest of this file already has to account for elsewhere, in
-   characterRootPartInstances and pruneCharacterRootToPartInstances) was
-   invisible to it, so a stray object stored that way could never be found
-   or removed no matter how many times Clean Up Stray Artwork was run. It
-   now also flattens the active context's and every clip's sceneFrames/
-   drawingLayers content into the same search.
-
-   v15.5 replaces the v15.4 pivot-only guess with a real fix, and changes how
-   the panel is invoked from the stage:
-   - v15.4 tried to correct the Character root Clip's offset by only moving
-     its pivot/instance position. That assumed a specific nested-Clip pivot
-     convention that could not be confirmed against Luke Animate's own
-     rendering, and it left every part instance positioned at its own
-     unrelated absolute Build Parts coordinate. This replaces that with a
-     structural fix: every part is now stored relative to one shared origin
-     established by the first part added (root pivot fixed at 0,0, matching
-     the convention already proven correct for each part's own Clip), so the
-     result is correct regardless of exactly how pivot is interpreted.
-     Existing characters migrate automatically and silently the next time
-     MyCharacter is touched (adding a part, Force Sync Now, or loading a
-     saved character), with no visible jump on stage;
-   - left-clicking the character, including its visible bones, no longer
-     opens DemBones under any circumstance - animation and normal Select/
-     Edit now always happen directly on stage with the panel closed;
-   - DemBones now opens only via an explicit right-click on the character,
-     which shows a small "Edit Character" context menu; choosing it opens
-     the panel directly into that part's Animate view.
-
-   v15.4 fixes two real coordinate-continuity bugs, not just their symptoms:
-   - the Character root Clip's pivot/instance position used to be set to
-     wherever the stage view happened to be scrolled/centred at the moment
-     MyCharacter was first created, with no relationship to where the
-     character's actual artwork was built. That mismatch is exactly what
-     made the whole Clip render offset from itself on the main stage versus
-     inside its own part Clips. The pivot is now anchored to the first
-     part's real build-time centre instead, so the Character renders with
-     zero net offset from its content. Existing characters self-heal the
-     next time a part is added or MyCharacter is finalised;
-   - once a shape is bound to a rig its geometry is 100% bone-driven every
-     frame, but dragging it with Luke Animate's native Select/Edit tool could
-     still leave it a leftover x/y/tx/ty/scale/rotation that got applied a
-     second time on top of the rig's already-absolute output, making the
-     shape appear to detach and "pull away" from the character instead of
-     staying put. The evaluator now resets those fields on every bound
-     shape, so a native drag has no lasting effect;
-   - since dragging can no longer be used to fix a shape that was ingested
-     far from the rest of its part (a common cause of "doubled"/floating
-     artwork), the Curves tab gained a real, intentional replacement: Center
-     On Selected Bone moves a shape's own points (and its DemBones rest
-     points) so it sits centred on the selected bone, or the rig's centre if
-     no bone is selected.
-
-   v15.3 removes the separate "Commit" tab/step, which was a leftover from an
-   older version of this tool where finalising MyCharacter had to be done as
-   its own explicit action:
-   - Add To Character now calls the same finalising logic automatically the
-     moment a part is added, so MyCharacter's Clip and the main stage are
-     kept in a finished, up-to-date state (including clearing that part's own
-     Build Parts artwork) as a normal part of the workflow, not a separate
-     gate the person has to remember;
-   - the Build Character tab absorbed the old Commit tab's Vector Exchange
-     (SVG export/import) and housekeeping tools. The old "Create / Update
-     Character Clip" action is still available there as "Force Sync Now",
-     grouped under Maintenance alongside Resync Bones and Clean Up Stray
-     Artwork, for the rare case something needs to be forced by hand;
-   - the workflow step strip is now 3 steps (Build Parts -> Bones -> Add To
-     Character) instead of 4, since Commit is no longer a distinct step.
-
-   v15.2 adds two housekeeping tools, in response to stray duplicated
-   artwork/bones being left behind by abandoned or interrupted Build Parts
-   sessions:
-   - Clean Up Stray Artwork (Build Character tab and Commit tab) scans every
-     clip plus Main Scene for DemBones-tagged shapes whose rig is not the one
-     currently open in Build Parts and not a rig actually inside a real
-     MyCharacter part, then removes them. It never touches the part you are
-     currently building or any committed part;
-   - Resync Bones / Placement (Build Character tab) re-reads every unpinned
-     part's cached transform from its real on-stage Clip instance without
-     moving or deleting anything, for cases where a part's bone overlay has
-     drifted from its artwork;
-   - the Commit tab now reports how many stray shapes it currently sees, and
-     opening the panel warns up front if any exist.
-
-   v15.1 is a usability pass over v15.0. No rig, deformation or character
-   logic changed - only the panel UI:
-   - opens on Build Parts (the real first step) instead of Build Character,
-     which used to greet new users with an empty "No character parts yet" list;
-   - the 9 tabs are grouped into "1 Rig a part" / "2 Assemble & finish" rows
-     with full labels ("Edit Bn" -> "Edit Bone") instead of one cramped
-     3-column grid that clipped text;
-   - a clickable step strip (Build Parts -> Bones -> Add To Character ->
-     Commit) sits under the tabs so the required order is always visible and
-     any step can be jumped to directly;
-   - Clear All (bones), Delete Part and Return Shapes To Stage now ask for
-     confirmation first, since each discards rig/binding work in one click;
-   - Build Parts explains what the tab does and its buttons have tooltips;
-     "Add Dummy" is relabelled "Add Placeholder Shape" with a one-line
-     explanation of when to use it;
-   - Build Parts, Bones, Build Character and Commit are labelled Step 1-4 so
-     the step strip numbering matches the heading inside each tab.
-
-   v15 defines the final Character lifecycle:
-   - Build Parts artwork is temporary construction material;
-   - MyCharacter is the one persistent stage object after finalising/closing;
-   - Create / Update Character Clip returns to Main Scene and removes loose
-     DemBones source SVG/rig objects from the main stage;
-   - closing DemBones does the same cleanup whenever a Character exists;
-   - the Character Clip itself remains on stage at its existing transform;
-   - Character bones remain visible over the finished Character even while the
-     DemBones panel is closed;
-   - clicking one of those visible bones reopens DemBones directly in Animate
-     for the correct Character part and bone;
-   - Character-root contents are pruned to real part Clip instances only, so a
-     stray construction SVG cannot remain inside MyCharacter.
-   Retains v14 live bounds/origin syncing, v13 panel stability, v12 registration,
-   v11 Select / Move, Adjust, Animate and click-a-bone pinning.
+   v16.3 builds the requested PNG/live-bone work on the current v15.14 behaviour:
+   compact workflow layout, transparent PNG mesh deformation, visible
+   envelope resize handles, reliable leaf-bone editing, B+click/double-click
+   reopening from a rigged character, and live bone manipulation while the
+   panel is closed. Requires Luke Animate Plugin API v113 for PNG rendering.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "15.14";
+  var TOOL_VERSION = "16.3";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
+  var RASTER_RENDERER_ID = "luke-animate-dembones-raster-renderer";
   var ICON_URL = (item && item.iconUrl) || "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Bone.svg";
   var GROUP_ID = group && group.id ? group.id : "animate";
   var ITEM_ID = item && (item.id || item.label) ? (item.id || item.label) : TOOL_ID;
@@ -270,6 +39,7 @@
   if(alreadyCurrent)return;
   try{API.unregisterObjectEvaluator("luke-animate-dem-bones-evaluator");}catch(eOldEval){}
   try{API.unregisterStageOverlayRenderer("luke-animate-dem-bones-overlay");}catch(eOldOverlay){}
+  try{if(typeof API.unregisterObjectRenderer==="function")API.unregisterObjectRenderer(RASTER_RENDERER_ID);}catch(eOldRaster){}
 
   var state = {
     panel:null,
@@ -310,7 +80,10 @@
     statusType:"",
     listenersBound:false,
     lastStageSelectionIds:[],
-    showEnvelopes:true
+    showEnvelopes:true,
+    bKeyDown:false,
+    closedBonePartId:null,
+    closedBoneId:""
   };
 
   function n(value,fallback){ var x=Number(value); return isFinite(x)?x:fallback; }
@@ -343,10 +116,10 @@
     return [];
   }
   function supportedObject(o){
-    return !!(o && (["freehand","line","rect","ellipse","text","path","curve","polyline","polygon"].indexOf(o.type)!==-1 || (Array.isArray(o.points)&&o.points.length>1)));
+    return !!(o && (["freehand","line","rect","ellipse","text","path","curve","polyline","polygon","image"].indexOf(o.type)!==-1 || (Array.isArray(o.points)&&o.points.length>1)));
   }
   function supportedWarpObject(o){
-    return !!(o && (["freehand","line","rect","ellipse","path","curve","polyline","polygon"].indexOf(o.type)!==-1 || (Array.isArray(o.points)&&o.points.length>1)));
+    return !!(o && (["freehand","line","rect","ellipse","path","curve","polyline","polygon","image"].indexOf(o.type)!==-1 || (Array.isArray(o.points)&&o.points.length>1)));
   }
   function setStatus(message,type){ state.status=String(message||""); state.statusType=type||""; if(state.panel){ var el=state.panel.querySelector("[data-db-status]"); if(el){ el.textContent=state.status; el.className="db-status "+state.statusType; } } }
   function notify(message,bad){ setStatus(message,bad?"bad":"good"); try{ bad?API.warn(message):API.log(message); }catch(e){} }
@@ -359,16 +132,6 @@
 
   function allObjectArrays(){
     var out=[sceneObjects()];
-
-    /*
-      drawObjects is not the only place a clip's real content can live -
-      characterRootPartInstances/pruneCharacterRootToPartInstances already
-      have to fall back to sceneFrames/drawingLayers elsewhere in this file.
-      Anything that only exists in one of those forms was previously
-      invisible to findObjectById and to the orphan scan used by Clean Up
-      Stray Artwork, so it could never be found or removed. Flatten those
-      forms into synthetic read-only arrays too.
-    */
     if(typeof API.getDrawingLayers==="function"){
       var activeLayerObjects=[];
       (API.getDrawingLayers()||[]).forEach(function(layer){
@@ -378,19 +141,15 @@
       });
       if(activeLayerObjects.length)out.push(activeLayerObjects);
     }
-
     Object.keys(clips()).forEach(function(id){
       var c=clips()[id];
       if(!c)return;
-
       if(Array.isArray(c.drawObjects))out.push(c.drawObjects);
-
       if(Array.isArray(c.sceneFrames)){
         c.sceneFrames.forEach(function(frame){
           if(frame&&Array.isArray(frame.objects))out.push(frame.objects);
         });
       }
-
       if(Array.isArray(c.drawingLayers)){
         var layerObjects=[];
         c.drawingLayers.forEach(function(layer){
@@ -401,7 +160,6 @@
         if(layerObjects.length)out.push(layerObjects);
       }
     });
-
     return out;
   }
 
@@ -482,6 +240,10 @@
       return {x1:Math.min.apply(null,xs),y1:Math.min.apply(null,ys),x2:Math.max.apply(null,xs),y2:Math.max.apply(null,ys)};
     }
     if(o.type==="line"||o.type==="rect"||o.type==="ellipse") return {x1:Math.min(n(o.x1,0),n(o.x2,0)),y1:Math.min(n(o.y1,0),n(o.y2,0)),x2:Math.max(n(o.x1,0),n(o.x2,0)),y2:Math.max(n(o.y1,0),n(o.y2,0))};
+    if(o.type==="image"){
+      var ix=n(o.x,0),iy=n(o.y,0),iw=Math.max(1,n(o.width,1)),ih=Math.max(1,n(o.height,1));
+      return {x1:ix,y1:iy,x2:ix+iw,y2:iy+ih};
+    }
     if(o.type==="text"){
       var fs=Math.max(1,n(o.fontSize,32));
       var lines=String(o.text||"").split(/\r?\n/);
@@ -507,7 +269,7 @@
     */
     if(o.type==="freehand" && Array.isArray(o.points)) o.points.forEach(function(p){p.x=n(p.x,0)+dx;p.y=n(p.y,0)+dy;});
     else if(o.type==="line"||o.type==="rect"||o.type==="ellipse"){o.x1=n(o.x1,0)+dx;o.y1=n(o.y1,0)+dy;o.x2=n(o.x2,0)+dx;o.y2=n(o.y2,0)+dy;}
-    else if(o.type==="text"||o.type==="clipinstance"){o.x=n(o.x,0)+dx;o.y=n(o.y,0)+dy;}
+    else if(o.type==="text"||o.type==="clipinstance"||o.type==="image"){o.x=n(o.x,0)+dx;o.y=n(o.y,0)+dy;}
     if(o.demBones && Array.isArray(o.demBones.restPoints)) o.demBones.restPoints.forEach(function(p){p.x=n(p.x,0)+dx;p.y=n(p.y,0)+dy;});
     return o;
   }
@@ -627,15 +389,6 @@
     Array.prototype.forEach.call(imported.querySelectorAll("path,polyline,polygon,line,rect,circle,ellipse,text"),function(el){
       var tag=el.tagName.toLowerCase(), st=styleOfElement(el), o=null;
       shapeCounter++;
-      /*
-        Every ingested shape used to keep no name at all, which left the
-        native Timeline/Layers rows falling back to a single generic type
-        label ("Drawing") for every one of them - a whole SVG import reads
-        as a wall of identical rows. Prefer the source SVG's own id if it
-        looks like something a person actually typed rather than an
-        auto-generated id from the export tool; otherwise fall back to a
-        plain, distinct "Shape N".
-      */
       var sourceId=(el.getAttribute("id")||"").trim();
       var looksAutoGenerated=/^(path|rect|circle|ellipse|line|polygon|polyline|text|g|svg|layer)[-_]?\d*$/i.test(sourceId);
       var shapeName=(sourceId&&!looksAutoGenerated)?sourceId:("Shape "+shapeCounter);
@@ -905,31 +658,168 @@
     allObjectArrays().forEach(function(list){list.forEach(function(o){if(o&&o.demBonesExpression&&o.demBonesExpression.rigId===rig.id)o.demBonesExpression.rig=rig;});});
   }
 
-  var lastCreatedRigObjects=[];
+  function isRasterWarpObject(o){
+    return !!(o&&o.type==="image"&&o.src);
+  }
 
+  function createRasterSkinData(o,rig){
+    ensureObjectId(o);
+    var x=n(o.x,0),y=n(o.y,0),w=Math.max(1,n(o.width,1)),h=Math.max(1,n(o.height,1));
+    var cols=clamp(Math.round(w/36),6,22);
+    var rows=clamp(Math.round(h/36),6,22);
+    var points=[];
+    for(var row=0;row<=rows;row++){
+      for(var col=0;col<=cols;col++){
+        points.push({x:x+w*(col/cols),y:y+h*(row/rows)});
+      }
+    }
+    o.tx=0;o.ty=0;o.tscale=1;o.trotation=0;o.keyframes=[];
+    o.demBones={
+      version:5,
+      rigId:rig.id,
+      rig:rig,
+      raster:true,
+      rasterCols:cols,
+      rasterRows:rows,
+      sourceX:x,
+      sourceY:y,
+      sourceWidth:w,
+      sourceHeight:h,
+      restPoints:points,
+      weights:[],
+      closedPath:false,
+      weightModel:""
+    };
+    return o;
+  }
+
+  function triangleMatrix(s0,s1,s2,d0,d1,d2){
+    var sx0=s0.x,sy0=s0.y,sx1=s1.x,sy1=s1.y,sx2=s2.x,sy2=s2.y;
+    var dx0=d0.x,dy0=d0.y,dx1=d1.x,dy1=d1.y,dx2=d2.x,dy2=d2.y;
+    var denom=sx0*(sy1-sy2)+sx1*(sy2-sy0)+sx2*(sy0-sy1);
+    if(Math.abs(denom)<.0000001)return null;
+    return{
+      a:(dx0*(sy1-sy2)+dx1*(sy2-sy0)+dx2*(sy0-sy1))/denom,
+      b:(dy0*(sy1-sy2)+dy1*(sy2-sy0)+dy2*(sy0-sy1))/denom,
+      c:(dx0*(sx2-sx1)+dx1*(sx0-sx2)+dx2*(sx1-sx0))/denom,
+      d:(dy0*(sx2-sx1)+dy1*(sx0-sx2)+dy2*(sx1-sx0))/denom,
+      e:(dx0*(sx1*sy2-sx2*sy1)+dx1*(sx2*sy0-sx0*sy2)+dx2*(sx0*sy1-sx1*sy0))/denom,
+      f:(dy0*(sx1*sy2-sx2*sy1)+dy1*(sx2*sy0-sx0*sy2)+dy2*(sx0*sy1-sx1*sy0))/denom
+    };
+  }
+
+  var rasterImageCache={};
+  function rasterImageForSource(source){
+    var src=String(source||"");
+    if(!src)return null;
+    var record=rasterImageCache[src];
+    if(record)return record.image;
+    var image=new Image();
+    record={image:image,loaded:false,failed:false};
+    rasterImageCache[src]=record;
+    image.onload=function(){record.loaded=true;try{API.refreshUI();}catch(ignore){}};
+    image.onerror=function(){record.failed=true;};
+    image.src=src;
+    return image;
+  }
+
+  function drawRasterTriangle(ctx,image,s0,s1,s2,d0,d1,d2){
+    var m=triangleMatrix(s0,s1,s2,d0,d1,d2);
+    if(!m)return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(d0.x,d0.y);ctx.lineTo(d1.x,d1.y);ctx.lineTo(d2.x,d2.y);ctx.closePath();
+    ctx.clip();
+    ctx.transform(m.a,m.b,m.c,m.d,m.e,m.f);
+    ctx.drawImage(image,0,0);
+    ctx.restore();
+  }
+
+  function rasterObjectRenderer(ctx,object,effective,api){
+    if(!object||object.type!=="image"||!object.demBones||!object.demBones.raster||!object.demBones.rig)return false;
+    var image=rasterImageForSource(effective&&effective.src!==undefined?effective.src:object.src);
+    if(!image||!image.complete||!image.naturalWidth||!image.naturalHeight)return true;
+    var data=object.demBones;
+    var geometry=deformedObjectGeometry(object,n(api&&api.time,currentTime()));
+    if(!geometry||!Array.isArray(geometry.points))return true;
+    var cols=Math.max(1,Math.round(n(data.rasterCols,8))),rows=Math.max(1,Math.round(n(data.rasterRows,8)));
+    var expected=(cols+1)*(rows+1);
+    if(geometry.points.length!==expected)return true;
+    var iw=image.naturalWidth,ih=image.naturalHeight;
+    function idx(row,col){return row*(cols+1)+col;}
+    function src(row,col){return{x:iw*(col/cols),y:ih*(row/rows)};}
+    for(var row=0;row<rows;row++){
+      for(var col=0;col<cols;col++){
+        var d00=geometry.points[idx(row,col)],d10=geometry.points[idx(row,col+1)],d01=geometry.points[idx(row+1,col)],d11=geometry.points[idx(row+1,col+1)];
+        var s00=src(row,col),s10=src(row,col+1),s01=src(row+1,col),s11=src(row+1,col+1);
+        drawRasterTriangle(ctx,image,s00,s10,s11,d00,d10,d11);
+        drawRasterTriangle(ctx,image,s00,s11,s01,d00,d11,d01);
+      }
+    }
+    return true;
+  }
+
+  function loadPngFile(file){
+    if(!file)return;
+    if(typeof API.registerObjectRenderer!=="function"){
+      notify("PNG bone deformation needs the supplied v173 index file.",true);
+      return;
+    }
+    var reader=new FileReader();
+    reader.onload=function(){
+      var dataUrl=reader.result;
+      var image=new Image();
+      image.onload=function(){
+        var topLeft=API.stageToScenePoint({x:0,y:0});
+        var bottomRight=API.stageToScenePoint({x:API.width,y:API.height});
+        var viewW=Math.abs(bottomRight.x-topLeft.x),viewH=Math.abs(bottomRight.y-topLeft.y);
+        var scale=Math.min(1,(viewW*.62)/Math.max(1,image.naturalWidth),(viewH*.62)/Math.max(1,image.naturalHeight));
+        var w=Math.max(1,image.naturalWidth*scale),h=Math.max(1,image.naturalHeight*scale);
+        var centre=currentStageCentreScene();
+        var object={
+          type:"image",id:uid("db-png"),name:(file.name||"PNG Part").replace(/\.[^.]+$/,"")||"PNG Part",
+          src:dataUrl,x:centre.x-w/2,y:centre.y-h/2,width:w,height:h,
+          naturalWidth:image.naturalWidth,naturalHeight:image.naturalHeight,
+          opacity:1,tx:0,ty:0,tscale:1,trotation:0,keyframes:[],mediaStartTime:0
+        };
+        API.pushUndo();
+        var rig=createRigFromObjects([object],object.name,state.pointMode);
+        if(!rig)return;
+        API.addDrawObject(object,"animate");
+        state.lastStageSelectionIds=[object.id];
+        state.tab="bones";state.mode="add-bone";
+        try{API.selectDrawObject(object);}catch(ignoreSelect){}
+        renderAll();API.refreshUI();
+        notify("PNG loaded. Add bones, then Bind.",false);
+      };
+      image.onerror=function(){notify("PNG load failed.",true);};
+      image.src=dataUrl;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  var lastCreatedRigObjects=[];
   function createRigFromObjects(objects,name,pointMode){
     var supplied=(objects||[]).filter(supportedWarpObject);
-    if(!supplied.length){notify("No usable vector shapes were supplied.",true);return null;}
+    if(!supplied.length){notify("No usable vector or PNG artwork was supplied.",true);return null;}
     var rig=createEmptyRig(name),chosen=[];
     supplied.forEach(function(source){
-      var o=convertToWarpPath(source,pointMode||"selected");
-      if(!o||!Array.isArray(o.points)||o.points.length<2)return;
+      var o;
+      if(isRasterWarpObject(source)){
+        o=createRasterSkinData(source,rig);
+      }else{
+        o=convertToWarpPath(source,pointMode||"selected");
+      }
+      if(!o)return;
+      if(!isRasterWarpObject(o)&&(!Array.isArray(o.points)||o.points.length<2))return;
       chosen.push(o);
       rig.targetIds.push(o.id);
-      o.demBones={version:3,rigId:rig.id,rig:rig,pointMode:o.demBonesPointMode||pointMode||"selected",restPoints:(o.points||[]).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};}),weights:[],closedPath:!!o.closedPath};
+      if(!o.demBones||!o.demBones.raster){
+        o.demBones={version:4,rigId:rig.id,rig:rig,pointMode:o.demBonesPointMode||pointMode||"selected",restPoints:(o.points||[]).map(function(p){return{x:n(p.x,0),y:n(p.y,0)};}),weights:[],closedPath:!!o.closedPath};
+      }
     });
-    if(!chosen.length){notify("The supplied vector shapes could not be ingested.",true);return null;}
-    state.activeRig=rig;state.selectedBoneId="";state.selectedCurveId=chosen[0].id;state.selectedPointIndex=0;syncRigRefs(rig);
-    /*
-      Hand the converted objects back through a plain module-level variable,
-      never as a property attached to the rig itself. rig.__dbLastChosenObjects
-      used to do exactly that, and because each object's demBones.rig points
-      straight back at this same rig, it created a permanent circular
-      reference living ON the rig - not just for this one call, but for
-      every later clone()/JSON.stringify of that rig (saving a part, saving
-      a character, committing). This variable is plain, transient, and never
-      itself serialized, so it can't leak a cycle into anything.
-    */
+    if(!chosen.length){notify("The supplied artwork could not be ingested.",true);return null;}
+    state.activeRig=rig;state.selectedBoneId="";state.selectedCurveId=chosen[0].type==="image"?"":chosen[0].id;state.selectedPointIndex=0;syncRigRefs(rig);
     lastCreatedRigObjects=chosen;
     return rig;
   }
@@ -940,12 +830,11 @@
        object ids captured immediately before the panel suppressed the inspector. */
     var chosen=selectedObjects(true).filter(supportedWarpObject);
     if(!chosen.length){
-      notify("No selected Luke Animate vector was found. Use the Select tool, click the stage shape, then click Use Stage Selection.",true);
+      notify("No selected Luke Animate vector or PNG was found. Select the artwork, then click Use Stage Selection.",true);
       return;
     }
     API.pushUndo();
-    var working=[];
-    var toStage=[];
+    var working=[],toStage=[];
     chosen.forEach(function(source){
       var target=source;
       if(!state.removeOriginals){
@@ -956,25 +845,16 @@
       }
       working.push(target);
     });
-    /*
-      Same fix as loadSvgFile: tag every object as a rig member before any
-      clone is staged on the native timeline, not after - convert/tag the
-      whole batch first, then stage only the clones (reused originals are
-      already staged, so they need no extra addDrawObject call).
-    */
     var rig=createRigFromObjects(working,"Stage Part",state.pointMode);
-    if(!rig){
-      return;
+    if(rig){
+      toStage.forEach(function(o){API.addDrawObject(o,"animate");});
+      state.lastStageSelectionIds=working.map(function(o){return o.id;});
+      try{API.selectDrawObject(working[0]);}catch(eSelect){}
+      state.tab="bones";state.mode="add-bone";renderAll();
+      API.refreshUI();
+      var modeLabel=state.pointMode==="limb"?"Limb":(state.pointMode==="uniform"?"Uniform":"Selected points");
+      notify("Ingested "+working.length+" selected vector"+(working.length===1?"":"s")+" using "+modeLabel+". Drag to create the first bone; keep dragging to extend the chain.",false);
     }
-    toStage.forEach(function(o){
-      API.addDrawObject(o,"animate");
-    });
-    state.lastStageSelectionIds=working.map(function(o){return o.id;});
-    try{API.selectDrawObject(working[0]);}catch(eSelect){}
-    state.tab="bones";state.mode="add-bone";renderAll();
-    API.refreshUI();
-    var modeLabel=state.pointMode==="limb"?"Limb":(state.pointMode==="uniform"?"Uniform":"Selected points");
-    notify("Ingested "+working.length+" selected vector"+(working.length===1?"":"s")+" using "+modeLabel+". Drag to create the first bone; keep dragging to extend the chain.",false);
   }
 
   function addDummy(){
@@ -1025,9 +905,13 @@
     (rig.bones||[]).forEach(function(b){
       if(b.parentId&&by[b.parentId]){
         var parent=by[b.parentId];
-        b.localRestAngle=n(b.localRestAngle,b.restAngle-angleOf(parent.restHead,parent.restTail));
+        b.restAngle=angleOf(b.restHead,b.restTail);
+        b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));
+        b.localRestAngle=b.restAngle-angleOf(parent.restHead,parent.restTail);
       }else{
         b.parentId="";
+        b.restAngle=angleOf(b.restHead,b.restTail);
+        b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));
         b.localRestAngle=b.restAngle;
       }
     });
@@ -1104,9 +988,9 @@
 
     var d=o.demBones;
     var points=(
-      o.points&&o.points.length
-        ?o.points
-        :(d.restPoints||[])
+      d.raster
+        ?(d.restPoints||[])
+        :(o.points&&o.points.length?o.points:(d.restPoints||[]))
     ).map(function(p){
       return{
         x:n(p.x,0),
@@ -1127,6 +1011,7 @@
       SVG/native curves from developing lumpy or wrongly oriented bends.
     */
     if(
+      !d.raster&&
       Array.isArray(o.bezierHandles)&&
       o.bezierHandles.length===points.length
     ){
@@ -1373,10 +1258,6 @@
   function clearBones(){
     var rig=state.activeRig;
     if(!rig)return;
-    if(!rig.bones.length)return;
-    if(!window.confirm('Delete all '+rig.bones.length+' bone(s) from "'+(rig.name||'this part')+'"? This can be undone with Ctrl+Z.')){
-      return;
-    }
     API.pushUndo();
     rig.bones=[];
     state.selectedBoneId="";
@@ -1849,11 +1730,11 @@
       var head=stagePointFromScene(record.head);
       var tail=stagePointFromScene(record.tail);
 
-      var selected=!!(
-        state.open&&
-        state.activeRig===record.part.rig&&
-        String(state.selectedBoneId)===String(record.bone.id)
-      );
+      var selected=!!((
+        state.open&&state.activeRig===record.part.rig&&String(state.selectedBoneId)===String(record.bone.id)
+      )||(
+        !state.open&&Number(state.closedBonePartId)===Number(record.part.id)&&String(state.closedBoneId)===String(record.bone.id)
+      ));
 
       ctx.lineWidth=selected?5:3;
       ctx.strokeStyle=selected
@@ -1908,49 +1789,107 @@
 
   function characterAnimationBoneHit(event){
     var point=selectedScenePoint(event);
-    var nodeThreshold=scenePixels(14);
-    var lineThreshold=scenePixels(9);
-    var best=null;
-
-    characterBoneDisplayRecords(
-      currentTime()
-    ).forEach(function(record){
-      var headDistance=Math.hypot(
-        point.x-record.head.x,
-        point.y-record.head.y
-      );
-
-      var tailDistance=Math.hypot(
-        point.x-record.tail.x,
-        point.y-record.tail.y
-      );
-
-      var lineDistance=distancePointToSegment(
-        point,
-        record.head,
-        record.tail
-      );
-
-      var distance=Math.min(
-        headDistance,
-        tailDistance,
-        lineDistance
-      );
-
-      var hit=
-        headDistance<=nodeThreshold||
-        tailDistance<=nodeThreshold||
-        lineDistance<=lineThreshold;
-
-      if(hit&&(!best||distance<best.distance)){
-        best={
-          part:record.part,
-          bone:record.bone,
-          distance:distance
-        };
-      }
+    var nodeThreshold=scenePixels(14),lineThreshold=scenePixels(9),best=null;
+    characterBoneDisplayRecords(currentTime()).forEach(function(record){
+      var headDistance=Math.hypot(point.x-record.head.x,point.y-record.head.y);
+      var tailDistance=Math.hypot(point.x-record.tail.x,point.y-record.tail.y);
+      var lineDistance=distancePointToSegment(point,record.head,record.tail);
+      var handle="line",distance=lineDistance;
+      if(headDistance<=tailDistance&&headDistance<=lineDistance){handle="head";distance=headDistance;}
+      else if(tailDistance<=lineDistance){handle="tail";distance=tailDistance;}
+      var hit=headDistance<=nodeThreshold||tailDistance<=nodeThreshold||lineDistance<=lineThreshold;
+      if(hit&&(!best||distance<best.distance))best={part:record.part,bone:record.bone,handle:handle,head:record.head,tail:record.tail,distance:distance};
     });
+    return best;
+  }
 
+  function mainScenePointToCharacterRoot(point,time){
+    var root=state.character.rootClipId?clips()[state.character.rootClipId]:null;
+    var instance=characterRootInstance();
+    if(!root||!instance)return{x:n(point&&point.x,0),y:n(point&&point.y,0)};
+    var effective=instance;
+    if(typeof API.getEffectiveObject==="function")try{effective=API.getEffectiveObject(instance,time)||instance;}catch(ignore){}
+    var q={x:n(point&&point.x,0)-n(effective.x,0),y:n(point&&point.y,0)-n(effective.y,0)};
+    q=inverseRotateVector(n(point&&point.x,0)-n(effective.x,0),n(point&&point.y,0)-n(effective.y,0),n(effective.rotation,0)*Math.PI/180);
+    var scale=Math.max(.0001,n(effective.scale,1)),sx=Math.max(.0001,n(effective.scaleX,1)),sy=Math.max(.0001,n(effective.scaleY,1));
+    return{x:n(root.pivotX,0)+q.x/(scale*sx),y:n(root.pivotY,0)+q.y/(scale*sy)};
+  }
+
+  function characterPointToPartLocal(part,mainPoint,time){
+    var charPoint=mainScenePointToCharacterRoot(mainPoint,time);
+    var transform=resolvedPartTransform(part,time,{});
+    var q=inverseRotateVector(charPoint.x-transform.x,charPoint.y-transform.y,n(transform.rotation,0)*Math.PI/180);
+    var scale=Math.max(.0001,n(transform.scale,1)),sx=Math.max(.0001,n(transform.scaleX,1)),sy=Math.max(.0001,n(transform.scaleY,1));
+    return{x:q.x/(scale*sx),y:q.y/(scale*sy)};
+  }
+
+  function stageRiggedShapeHit(event){
+    var point=selectedScenePoint(event), pad=scenePixels(7), best=null;
+    var list=sceneObjects();
+    for(var i=list.length-1;i>=0;i--){
+      var object=list[i];
+      if(!object||!object.demBones||!object.demBones.rig)continue;
+      var bounds=objectBounds(object);
+      if(!(bounds&&isFinite(bounds.x1)&&isFinite(bounds.y1)&&isFinite(bounds.x2)&&isFinite(bounds.y2)))continue;
+      var x1=bounds.x1-pad,x2=bounds.x2+pad,y1=bounds.y1-pad,y2=bounds.y2+pad;
+      if(point.x>=x1&&point.x<=x2&&point.y>=y1&&point.y<=y2){
+        var area=Math.max(1,(x2-x1)*(y2-y1));
+        if(!best||area<best.area)best={object:object,rig:object.demBones.rig,area:area};
+      }
+    }
+    return best;
+  }
+
+  function activateStandaloneRigForEdit(hit){
+    if(!hit||!hit.rig)return false;
+    state.activeRig=hit.rig;
+    syncRigRefs(state.activeRig);
+    state.selectedBoneId=state.activeRig.bones&&state.activeRig.bones.length?state.activeRig.bones[0].id:"";
+    state.selectedCurveId=hit.object&&hit.object.type!=="image"?hit.object.id:"";
+    state.selectedPointIndex=0;
+    state.tab="editbone";
+    state.mode="select";
+    state.showEnvelopes=true;
+    return true;
+  }
+
+  function activeRigBoneHitAtTime(event){
+    var rig=state.activeRig;if(!rig)return null;
+    var p=selectedScenePoint(event),map=posedTransformMap(rig,currentTime());
+    var best=null,bestD=scenePixels(14),lineD=scenePixels(9);
+    if(state.closedBoneId){
+      var selected=(rig.bones||[]).filter(function(b){return String(b.id)===String(state.closedBoneId);})[0],sq=selected&&map[selected.id];
+      if(selected&&sq){
+        var hd=Math.hypot(p.x-sq.head.x,p.y-sq.head.y),td=Math.hypot(p.x-sq.tail.x,p.y-sq.tail.y);
+        if(Math.min(hd,td)<bestD)return{bone:selected,handle:hd<=td?"head":"tail",point:p,distance:Math.min(hd,td)};
+      }
+    }
+    (rig.bones||[]).forEach(function(b){
+      var q=map[b.id];if(!q)return;
+      [["head",q.head],["tail",q.tail]].forEach(function(pair){var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);if(d<bestD&&(!best||d<best.distance))best={bone:b,handle:pair[0],point:p,distance:d};});
+      var ld=distancePointToSegment(p,q.head,q.tail);if(ld<lineD&&(!best||ld<best.distance-scenePixels(2)))best={bone:b,handle:"line",point:p,distance:ld};
+    });
+    return best;
+  }
+
+  function characterPartShapeHit(event){
+    if(!state.character.parts.length)return null;
+    var p=selectedScenePoint(event),best=null;
+    state.character.parts.forEach(function(part){
+      if(!part||!part.rig)return;
+      var localObjects=rigObjects(part.rig),localBounds=combinedBounds(localObjects);
+      if(!(localBounds.x2>localBounds.x1&&localBounds.y2>localBounds.y1))return;
+      var transform=resolvedPartTransform(part,currentTime(),{});
+      var corners=[
+        {x:localBounds.x1,y:localBounds.y1},{x:localBounds.x2,y:localBounds.y1},
+        {x:localBounds.x2,y:localBounds.y2},{x:localBounds.x1,y:localBounds.y2}
+      ].map(function(pt){return partLocalPointToCharacterScene(transform,pt);});
+      var editing=typeof API.getEditingClipId==="function"?API.getEditingClipId():null;
+      if(!editing)corners=corners.map(function(pt){return characterRootPointToMainScene(pt,currentTime());});
+      var xs=corners.map(function(pt){return pt.x;}),ys=corners.map(function(pt){return pt.y;});
+      var pad=scenePixels(7),x1=Math.min.apply(null,xs)-pad,x2=Math.max.apply(null,xs)+pad,y1=Math.min.apply(null,ys)-pad,y2=Math.max.apply(null,ys)+pad;
+      if(p.x>=x1&&p.x<=x2&&p.y>=y1&&p.y<=y2){var area=(x2-x1)*(y2-y1);if(!best||area<best.area)best={part:part,area:area};}
+    });
     return best;
   }
 
@@ -1978,119 +1917,6 @@
         )*180/Math.PI
       };
     }).filter(Boolean);
-  }
-
-  function characterPartWorldBounds(part,time){
-    if(!part||!part.rig)return null;
-
-    var localBounds=rigTargetBounds(part.rig);
-    if(!isFinite(localBounds.x1))return null;
-
-    var transform=resolvedPartTransform(part,time,{});
-    var corners=[
-      {x:localBounds.x1,y:localBounds.y1},
-      {x:localBounds.x2,y:localBounds.y1},
-      {x:localBounds.x2,y:localBounds.y2},
-      {x:localBounds.x1,y:localBounds.y2}
-    ].map(function(point){
-      return partLocalPointToCharacterScene(transform,point);
-    });
-
-    var editing=typeof API.getEditingClipId==="function"?API.getEditingClipId():null;
-    if(!editing){
-      corners=corners.map(function(point){
-        return characterRootPointToMainScene(point,time);
-      });
-    }
-
-    var xs=corners.map(function(c){return c.x;});
-    var ys=corners.map(function(c){return c.y;});
-
-    return{
-      x1:Math.min.apply(null,xs),
-      y1:Math.min.apply(null,ys),
-      x2:Math.max.apply(null,xs),
-      y2:Math.max.apply(null,ys)
-    };
-  }
-
-  /*
-    Right-click support so animation on stage stays untouched by default:
-    a normal left click/drag on the character is always plain Luke Animate
-    Select/Edit, and DemBones only opens when the person explicitly asks for
-    it via right-click > Edit Character.
-  */
-  function characterRightClickHit(event){
-    if(!state.character.committed||!state.character.parts.length)return null;
-
-    var editing=typeof API.getEditingClipId==="function"?API.getEditingClipId():null;
-    if(editing&&String(editing)!==String(state.character.rootClipId))return null;
-
-    var point=selectedScenePoint(event);
-    var time=currentTime();
-    var hit=null;
-
-    state.character.parts.forEach(function(part){
-      var bounds=characterPartWorldBounds(part,time);
-      if(!bounds)return;
-      if(point.x>=bounds.x1&&point.x<=bounds.x2&&point.y>=bounds.y1&&point.y<=bounds.y2){
-        hit=part;
-      }
-    });
-
-    return hit;
-  }
-
-  var characterContextMenuEl=null;
-
-  function closeCharacterContextMenu(){
-    if(characterContextMenuEl){
-      characterContextMenuEl.remove();
-      characterContextMenuEl=null;
-    }
-    window.removeEventListener("pointerdown",closeCharacterContextMenu,true);
-    window.removeEventListener("keydown",characterContextMenuKeydown,true);
-  }
-
-  function characterContextMenuKeydown(event){
-    if(event.key==="Escape")closeCharacterContextMenu();
-  }
-
-  function showCharacterContextMenu(clientX,clientY,part){
-    closeCharacterContextMenu();
-    ensureStyle();
-
-    var menu=document.createElement("div");
-    menu.className="la-dembones-ctx";
-    menu.dataset.lukeAnimateFloatingPanel="true";
-    menu.innerHTML='<button type="button" data-db-ctx-edit>✎ Edit Character'+(part?' — '+esc(part.name||'Part'):'')+'</button>';
-    document.body.appendChild(menu);
-
-    var rect=menu.getBoundingClientRect();
-    var left=Math.min(clientX,window.innerWidth-rect.width-8);
-    var top=Math.min(clientY,window.innerHeight-rect.height-8);
-    menu.style.left=Math.max(4,left)+"px";
-    menu.style.top=Math.max(4,top)+"px";
-
-    characterContextMenuEl=menu;
-
-    menu.querySelector("[data-db-ctx-edit]").onclick=function(){
-      closeCharacterContextMenu();
-      open();
-      if(part){
-        state.character.selectedPartId=part.id;
-        activateCharacterPartMode(part,"animate");
-      }else{
-        state.tab="character";
-        renderAll();
-      }
-      API.refreshUI();
-    };
-
-    setTimeout(function(){
-      window.addEventListener("pointerdown",closeCharacterContextMenu,true);
-      window.addEventListener("keydown",characterContextMenuKeydown,true);
-    },0);
   }
 
   function deformedObjectGeometry(object,time){
@@ -2124,14 +1950,6 @@
 
     var rest=restTransformMap(rig);
     var editingRestOnly=state.tab==="editbone";
-    /*
-      Edit Bone changes the rig's rest definition, not a pose - it must never
-      be evaluated against whatever the timeline playhead happens to be
-      sitting on. If the character already has pose or point keys at the
-      current frame, blending a rest edit into that pose is exactly what
-      made bone editing appear to drag the curves around. Animate is the
-      only place time-based posing should apply.
-    */
     var posed=editingRestOnly?rest:posedTransformMap(rig,time);
     var base=editingRestOnly?data.restPoints:interpolatePointKey(rig,object.id,time,data.restPoints);
 
@@ -2154,6 +1972,7 @@
     var changed=false;
 
     rigObjects(rig).forEach(function(object){
+      if(object&&object.demBones&&object.demBones.raster)return;
       var geometry=deformedObjectGeometry(object,time);
       if(!geometry)return;
 
@@ -2207,34 +2026,22 @@
       return r;
     }
 
+    if(object&&object.demBones&&object.demBones.raster){
+      var rasterOut=Object.assign({},effective);
+      rasterOut.tx=0;rasterOut.ty=0;rasterOut.tscale=1;rasterOut.tscaleX=1;rasterOut.tscaleY=1;rasterOut.trotation=0;
+      return rasterOut;
+    }
     var geometry=deformedObjectGeometry(object,time);
     if(!geometry)return effective;
 
     var out=Object.assign({},effective);
     out.points=geometry.points;
     out.closedPath=!!geometry.closedPath;
-
-    if(geometry.bezierHandles){
-      out.bezierHandles=geometry.bezierHandles;
-    }
-
-    /*
-      demBones.restPoints/weights already bake this object's full absolute
-      position, rotation and scale into geometry.points every frame. Any x/y,
-      tx/ty, scale or rotation the object also carries - most commonly left
-      behind by dragging a rigged shape with Luke Animate's native Select/
-      Edit tool - would then be applied a second time on top of that already
-      -absolute geometry. That double application is what made a dragged
-      shape appear to detach and "pull away" from the character instead of
-      staying bone-driven. Neutralise those fields here so a native drag has
-      no lasting effect once the rig recomputes the shape's real position;
-      to actually move a badly-placed shape, reposition it relative to its
-      bones on the Curves tab instead.
-    */
+    if(geometry.bezierHandles)out.bezierHandles=geometry.bezierHandles;
     out.x=0;out.y=0;out.tx=0;out.ty=0;
     out.scale=1;out.scaleX=1;out.scaleY=1;
-    out.rotation=0;
-
+    out.tscale=1;out.tscaleX=1;out.tscaleY=1;
+    out.rotation=0;out.trotation=0;
     return out;
   }
 
@@ -2284,90 +2091,43 @@
   }
 
   function characterContentOrigin(){
-    /*
-      This is only used to decide where the Character root Clip itself sits
-      on the main stage - it must NOT be used as the Clip's pivot (see
-      ensureCharacterRoot, which always keeps pivot at 0,0 to match the
-      already-correct part-clip convention). Prefer the shared origin
-      established when the first part was built; fall back to the first
-      part's own recorded centre, then to the current stage view as a last
-      resort for a character with no parts yet.
-    */
     if(state.character.originSet&&isFinite(Number(state.character.originX))&&isFinite(Number(state.character.originY))){
-      return {x:Number(state.character.originX),y:Number(state.character.originY)};
+      return{x:Number(state.character.originX),y:Number(state.character.originY)};
     }
     var firstPart=state.character.parts&&state.character.parts[0];
     if(firstPart&&firstPart.localOrigin&&isFinite(Number(firstPart.localOrigin.x))&&isFinite(Number(firstPart.localOrigin.y))){
-      return {x:Number(firstPart.localOrigin.x),y:Number(firstPart.localOrigin.y)};
+      return{x:Number(firstPart.localOrigin.x),y:Number(firstPart.localOrigin.y)};
     }
     return currentStageCentreScene();
   }
 
-  /*
-    Characters built before this fix have each part instance positioned at
-    its own unrelated absolute Build Parts coordinate inside a root Clip
-    whose pivot was either an arbitrary stage-view point (pre-v15.4) or the
-    first part's absolute coordinate used as if it were a pivot (v15.4) -
-    neither is guaranteed to match how the engine actually resolves nested
-    Clip positions. This re-bases every part to a single shared local origin
-    (0,0 pivot, small relative offsets) - the same convention already proven
-    correct for each part's own internal Clip - without moving anything
-    visible on stage.
-  */
   function migrateCharacterOrigin(root){
     if(!root)return;
-
     var parts=state.character.parts||[];
     var origin=null;
-
     if(state.character.originSet&&isFinite(Number(state.character.originX))&&isFinite(Number(state.character.originY))){
       origin={x:Number(state.character.originX),y:Number(state.character.originY)};
     }else{
-      var first=parts[0];
-      var firstTransform=first&&normalisePartTransform(first.transform);
-      if(firstTransform){
-        origin={x:firstTransform.x,y:firstTransform.y};
-      }
+      var first=parts[0],firstTransform=first&&normalisePartTransform(first.transform);
+      if(firstTransform)origin={x:firstTransform.x,y:firstTransform.y};
     }
-
-    if(!origin){
-      origin=characterContentOrigin();
-    }
-
+    if(!origin)origin=characterContentOrigin();
     parts.forEach(function(part){
       var transform=normalisePartTransform(part.transform);
-      var relativeX=transform.x-origin.x;
-      var relativeY=transform.y-origin.y;
-
+      var relativeX=transform.x-origin.x,relativeY=transform.y-origin.y;
       part.transform=Object.assign({},transform,{x:relativeX,y:relativeY});
-
       var instance=partInstance(part);
-      if(instance){
-        instance.x=relativeX;
-        instance.y=relativeY;
-      }
+      if(instance){instance.x=relativeX;instance.y=relativeY;}
     });
-
-    state.character.originX=origin.x;
-    state.character.originY=origin.y;
-    state.character.originSet=true;
-
-    root.pivotX=0;
-    root.pivotY=0;
-
+    state.character.originX=origin.x;state.character.originY=origin.y;state.character.originSet=true;
+    root.pivotX=0;root.pivotY=0;
     var rootInstance=characterRootInstance();
-    if(rootInstance){
-      rootInstance.x=origin.x;
-      rootInstance.y=origin.y;
-    }
+    if(rootInstance){rootInstance.x=origin.x;rootInstance.y=origin.y;}
   }
 
   function ensureCharacterRoot(){
     var map=clips();
-    var root=state.character.rootClipId
-      ?map[state.character.rootClipId]
-      :null;
-
+    var root=state.character.rootClipId?map[state.character.rootClipId]:null;
     if(root){
       if(root.__dbCharacterPlacementVersion!==4){
         migrateCharacterOrigin(root);
@@ -2375,57 +2135,17 @@
       }
       return root;
     }
-
     var centre=characterContentOrigin();
     var id=uid("db-character-clip");
-
     root={
-      id:id,
-      name:state.character.name||"MyCharacter",
-      points:[],
-      closed:false,
-      targetPoints:[],
-      layers:[],
-      drawObjects:[],
-      pivotX:0,
-      pivotY:0,
-      timelineDuration:Math.max(3,n(API.getTimelineDuration(),6)),
-      loopTimeline:true,
-      __demBonesCharacter:true,
-      __dbCharacterPlacementVersion:4
+      id:id,name:state.character.name||"MyCharacter",points:[],closed:false,targetPoints:[],layers:[],drawObjects:[],
+      pivotX:0,pivotY:0,timelineDuration:Math.max(3,n(API.getTimelineDuration(),6)),loopTimeline:true,
+      __demBonesCharacter:true,__dbCharacterPlacementVersion:4
     };
-
-    map[id]=root;
-    state.character.rootClipId=id;
-    state.character.id=state.character.id||uid("character");
-
-    if(!state.character.originSet){
-      state.character.originX=centre.x;
-      state.character.originY=centre.y;
-      state.character.originSet=true;
-    }
-
-    var instance={
-      type:"clipinstance",
-      clipId:id,
-      name:root.name,
-      x:centre.x,
-      y:centre.y,
-      scale:1,
-      scaleX:1,
-      scaleY:1,
-      rotation:0,
-      timeOffset:0,
-      opacity:1,
-      keyframes:[],
-      id:uid("db-character-instance"),
-      __demBonesCharacterInstance:true,
-      __dbCharacterId:state.character.id
-    };
-
-    API.addDrawObject(instance,"animate");
-    state.character.rootInstanceId=instance.id;
-
+    map[id]=root;state.character.rootClipId=id;state.character.id=state.character.id||uid("character");
+    if(!state.character.originSet){state.character.originX=centre.x;state.character.originY=centre.y;state.character.originSet=true;}
+    var instance={type:"clipinstance",clipId:id,name:root.name,x:centre.x,y:centre.y,scale:1,scaleX:1,scaleY:1,rotation:0,timeOffset:0,opacity:1,keyframes:[],id:uid("db-character-instance"),__demBonesCharacterInstance:true,__dbCharacterId:state.character.id};
+    API.addDrawObject(instance,"animate");state.character.rootInstanceId=instance.id;
     return root;
   }
 
@@ -2515,30 +2235,11 @@
     part.localOrigin={x:cx,y:cy};
 
     if(!part.transform){
-      /*
-        Every part's Build Parts shapes are recorded at whatever absolute
-        stage position they happened to be built at (cx,cy here). Character
-        parts need a single, shared local origin so they all combine
-        correctly inside one root Clip - otherwise each part instance ends
-        up positioned using its own unrelated absolute build coordinate,
-        which is what made the Character render clipped/offset from itself.
-        The very first part establishes that shared origin; every part after
-        it (including this one, if it is not first) is stored relative to it.
-      */
-      if(!state.character.originSet){
-        state.character.originX=cx;
-        state.character.originY=cy;
-        state.character.originSet=true;
-      }
-
+      if(!state.character.originSet){state.character.originX=cx;state.character.originY=cy;state.character.originSet=true;}
       part.transform={
         x:cx-n(state.character.originX,0),
         y:cy-n(state.character.originY,0),
-        scale:1,
-        scaleX:1,
-        scaleY:1,
-        rotation:0,
-        opacity:1
+        scale:1,scaleX:1,scaleY:1,rotation:0,opacity:1
       };
     }else{
       part.transform=normalisePartTransform(part.transform);
@@ -2836,25 +2537,12 @@
       if(!options.silent)notify("Build or import a part first.",true);
       return null;
     }
-
-    /*
-      The Character's name becomes the actual Clip/instance name shown on
-      Main Scene the moment the first part is added (see ensureCharacterRoot
-      / makeCharacterPartInstance), so it needs to be a real, deliberate
-      choice up front rather than silently shipping as "MyCharacter" because
-      nobody happened to touch the field. Only gate the very first part -
-      once the Character exists, renaming later is just editing that field.
-    */
     if(!state.character.parts.length&&!state.character.nameConfirmed){
       if(!options.silent){
-        state.tab="character";
-        renderAll();
+        state.tab="character";renderAll();
         var nameField=state.panel&&state.panel.querySelector("[data-db-character-name]");
-        if(nameField){
-          nameField.focus();
-          nameField.select();
-        }
-        notify("Name your character first - this becomes its name as an object on Main Scene.",true);
+        if(nameField){nameField.focus();nameField.select();}
+        notify("Name the character before adding the first part.",true);
       }
       return null;
     }
@@ -2929,17 +2617,6 @@
     if(!options.keepTab)state.tab="character";
 
     var installedInstance=installCharacterPartInstance(part);
-
-    /*
-      Finalising used to be a separate manual "Commit" step. It now runs
-      automatically the moment a part is added, so MyCharacter's Clip and
-      the main stage are always left in a finished, up-to-date state -
-      including clearing this part's own Build Parts artwork - without
-      the person needing to remember an extra action. The part's own
-      instance is re-selected afterwards so Select / Move still works
-      immediately, even though finalising re-selects the Character root
-      by default.
-    */
     finaliseCharacterOnStage(true);
     installedInstance=partInstance(part)||installedInstance;
 
@@ -3030,10 +2707,6 @@
 
   function deleteCharacterPart(part){
     if(!part)return;
-
-    if(!window.confirm('Delete "'+(part.name||'this part')+'" from MyCharacter? This removes its Clip, rig and any pin made to it. This can be undone with Ctrl+Z.')){
-      return;
-    }
 
     if(state.character.rootClipId){
       returnToCharacterRoot();
@@ -3139,11 +2812,12 @@
       character:{
         name:state.character.name,
         id:state.character.id,
+        originX:n(state.character.originX,0),
+        originY:n(state.character.originY,0),
+        originSet:!!state.character.originSet,
+        nameConfirmed:!!state.character.nameConfirmed,
         nextPartId:state.character.nextPartId,
         selectedPartId:state.character.selectedPartId,
-        originX:state.character.originX,
-        originY:state.character.originY,
-        originSet:!!state.character.originSet,
         parts:state.character.parts.map(function(part){
           return{
             id:part.id,
@@ -3198,7 +2872,7 @@
       originX:n(data.character.originX,0),
       originY:n(data.character.originY,0),
       originSet:!!data.character.originSet,
-      nameConfirmed:true,
+      nameConfirmed:data.character.nameConfirmed!==false,
       parts:data.character.parts.map(function(raw){
         return{
           id:n(raw.id,0),
@@ -3218,16 +2892,7 @@
     };
 
     ensureCharacterRoot();
-
-    if(!data.character.originSet){
-      /*
-        Older saved characters never had a shared origin - their part
-        transforms are still whatever absolute Build Parts coordinates they
-        were recorded at. Re-base them now, the same way an in-place
-        upgrade would, before any instances are created from them.
-      */
-      migrateCharacterOrigin(clips()[state.character.rootClipId]);
-    }
+    if(!state.character.originSet){try{migrateCharacterOrigin();}catch(ignoreOriginMigration){}}
 
     state.character.parts.forEach(function(part){
       if(part.source)createPartClip(part,part.source);
@@ -3321,109 +2986,43 @@
     }
   }
 
-  function liveKeptRigIds(){
-    var keep={};
-    if(state.activeRig&&state.activeRig.id)keep[String(state.activeRig.id)]=true;
-    state.character.parts.forEach(function(part){
-      if(part.rig&&part.rig.id)keep[String(part.rig.id)]=true;
-    });
-    return keep;
+  function committedRigIds(){
+    var ids={};
+    (state.character.parts||[]).forEach(function(part){if(part&&part.rig&&part.rig.id)ids[String(part.rig.id)]=true;});
+    return ids;
   }
-
   function findOrphanDemBonesObjects(){
-    var keep=liveKeptRigIds();
-    var found=[];
-    var seen={};
+    var keep=committedRigIds();
+    if(state.activeRig&&state.activeRig.id)keep[String(state.activeRig.id)]=true;
+    var seen={},out=[];
     allObjectArrays().forEach(function(list){
-      list.forEach(function(o){
+      (list||[]).forEach(function(o){
         if(!o||seen[o.id])return;
-        var rigId=(o.demBones&&o.demBones.rigId)||(o.demBonesExpression&&o.demBonesExpression.rigId);
-        if(rigId&&!keep[String(rigId)]){
-          seen[o.id]=true;
-          found.push(o);
-        }
+        var rigId=o.demBones&&o.demBones.rigId || o.demBonesExpression&&o.demBonesExpression.rigId;
+        if(rigId&&!keep[String(rigId)]){seen[o.id]=true;out.push(o);}
       });
     });
-    return found;
+    return out;
   }
-
-  /*
-    A part's Build Parts source shapes normally get removed the moment the
-    part is added to MyCharacter and the Character is next finalised. If a
-    part was abandoned mid-build, built while a different clip context was
-    active, or the panel was closed before finalising, those source shapes
-    (and any bones drawn for them) are left behind as stray duplicates
-    anywhere in the project. This sweeps every clip plus Main Scene for any
-    DemBones-tagged object whose rig is not the one currently being built and
-    not the rig actually living inside a real MyCharacter part, and removes
-    it. It never touches the rig currently open in Build Parts or any rig
-    that is part of a real, committed MyCharacter part.
-  */
   function cleanUpLooseArtwork(silent){
     var orphans=findOrphanDemBonesObjects();
-    if(!orphans.length){
-      if(!silent)notify("No stray Build Parts artwork found.",false);
-      return 0;
-    }
-    if(!silent&&!window.confirm("Remove "+orphans.length+" stray shape(s) left over from earlier Build Parts sessions? This will not touch MyCharacter or the part you are currently building. This can be undone with Ctrl+Z.")){
-      return 0;
-    }
-    API.pushUndo();
-    var ids={};
-    orphans.forEach(function(o){ids[String(o.id)]=true;});
-    var wasEditing=typeof API.getEditingClipId==="function"?API.getEditingClipId():null;
-    exitToMainScene();
+    if(!orphans.length){if(!silent)notify("No stray Build Parts artwork found.",false);return 0;}
+    if(!silent&&!window.confirm("Remove "+orphans.length+" stray shape(s)? MyCharacter and the current Build Parts rig are kept."))return 0;
+    API.pushUndo();var ids={};orphans.forEach(function(o){ids[String(o.id)]=true;});
     removeObjectsAndLayersFromActiveContext(function(o){return !!(o&&ids[String(o.id)]);});
     Object.keys(clips()).forEach(function(clipId){
-      var c=clips()[clipId];
-      if(!c)return;
+      var c=clips()[clipId];if(!c)return;
       if(Array.isArray(c.drawObjects))c.drawObjects=c.drawObjects.filter(function(o){return !(o&&ids[String(o.id)]);});
-      if(Array.isArray(c.sceneFrames)){
-        c.sceneFrames.forEach(function(frame){
-          if(frame&&Array.isArray(frame.objects))frame.objects=frame.objects.filter(function(o){return !(o&&ids[String(o.id)]);});
-        });
-      }
-      if(Array.isArray(c.drawingLayers)){
-        c.drawingLayers=c.drawingLayers.filter(function(layer){
-          return !(layer.frames||[]).some(function(frame){return frame&&frame.object&&ids[String(frame.object.id)];});
-        });
-      }
+      if(Array.isArray(c.sceneFrames))c.sceneFrames.forEach(function(frame){if(frame&&Array.isArray(frame.objects))frame.objects=frame.objects.filter(function(o){return !(o&&ids[String(o.id)]);});});
+      if(Array.isArray(c.drawingLayers))c.drawingLayers=c.drawingLayers.filter(function(layer){return !(layer.frames||[]).some(function(frame){return frame&&frame.object&&ids[String(frame.object.id)];});});
     });
-    if(wasEditing&&typeof API.enterClip==="function"){
-      try{API.enterClip(wasEditing);}catch(eReenter){}
-    }
-    API.refreshUI();
-    renderAll();
-    if(!silent)notify("Removed "+orphans.length+" stray shape(s).",false);
-    return orphans.length;
+    API.refreshUI();renderAll();if(!silent)notify("Removed "+orphans.length+" stray shape(s).",false);return orphans.length;
   }
-
-  /*
-    Character bone overlays are recomputed live every frame from the current
-    part transforms and the Character root instance's own position/scale, so
-    they never go stale on their own. What can drift is part.transform - the
-    cached record DemBones uses as the base for pinning and for the Adjust/
-    Animate views. If a part was moved on stage while its instance briefly
-    fell out of registration (a dropped selection mid-drag, an undo that
-    skipped a step, etc.) that cache can lag behind where the shape actually
-    is, which reads as bones hanging away from the artwork. This forces every
-    unpinned part's cached transform back from its real on-stage instance and
-    prunes anything in the Character root that is not a genuine part
-    instance, without moving or deleting any artwork.
-  */
   function resyncCharacterPlacement(){
-    if(!state.character.parts.length){
-      notify("No character parts to resync yet.",false);
-      return;
-    }
-    API.pushUndo();
-    syncAllUnpinnedCharacterTransforms();
-    ensureCharacterRoot();
-    updateCharacterInstances();
-    pruneCharacterRootToPartInstances();
-    renderAll();
-    API.refreshUI();
-    notify("Character part placements resynced from the stage.",false);
+    if(!state.character.parts.length){notify("No character parts to resync.",false);return;}
+    API.pushUndo();syncAllUnpinnedCharacterTransforms();ensureCharacterRoot();updateCharacterInstances();
+    if(typeof pruneCharacterRootToPartInstances==='function')pruneCharacterRootToPartInstances();
+    renderAll();API.refreshUI();notify("Character placement resynced.",false);
   }
 
   function cleanupLooseBuildPartsFromMainScene(){
@@ -3597,7 +3196,7 @@
 
       if(!created){
         notify(
-          "There is no finished Build Parts rig to add yet. Import or build a part first.",
+          "There is no finished Build Parts rig to commit. Import or build a part first.",
           true
         );
         return;
@@ -3912,27 +3511,7 @@
     API.refreshUI();
   }
 
-  /*
-    When a pose is decided on, the whole rig's pose needs to be locked in at
-    that frame, not just whichever bone was actually dragged or edited -
-    otherwise every other bone keeps interpolating from its nearest OTHER
-    keys and can drift unexpectedly at this frame. This gives every bone
-    without an exact key at this time one, using its current interpolated
-    pose, so nothing shifts.
-  */
-  function ensureRigKeyedAtTime(rig,time,skipBoneId){
-    if(!rig)return;
-    (rig.bones||[]).forEach(function(bone){
-      if(String(bone.id)===String(skipBoneId))return;
-      if(exactBoneKey(bone,time))return;
-      var pose=interpolatePose(bone,time);
-      bone.keys=bone.keys||[];
-      bone.keys.push(Object.assign({time:time},pose));
-      bone.keys.sort(function(a,b){return a.time-b.time;});
-    });
-  }
-
-  function setBoneKey(){var b=selectedBone();if(!b){notify("Select a bone first.",true);return;}API.pushUndo();var pose=readPoseInputs(),time=currentTime(),key=exactBoneKey(b,time);if(key)Object.assign(key,pose);else b.keys.push(Object.assign({time:time},pose));b.keys.sort(function(a,b){return a.time-b.time;});ensureRigKeyedAtTime(state.activeRig,time,b.id);API.refreshUI();renderAll();notify("Whole pose keyed on frame "+currentFrame()+".",false);}
+  function setBoneKey(){var b=selectedBone();if(!b){notify("Select a bone first.",true);return;}API.pushUndo();var pose=readPoseInputs(),time=currentTime(),key=exactBoneKey(b,time);if(key)Object.assign(key,pose);else b.keys.push(Object.assign({time:time},pose));b.keys.sort(function(a,b){return a.time-b.time;});API.refreshUI();renderAll();notify("Bone key set on frame "+currentFrame()+".",false);}
   function deleteBoneKey(){var b=selectedBone();if(!b)return;var t=currentTime(),before=b.keys.length;b.keys=b.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});API.refreshUI();renderAll();notify(before!==b.keys.length?"Bone key deleted.":"No bone key on this frame.",false);}
 
   function normaliseWeightList(list){
@@ -4012,43 +3591,15 @@
     state.selectedPointIndex=clamp(index,0,o.points.length-1);API.refreshUI();renderAll();notify('Curve point deleted.',false);
   }
 
-  /*
-    Shapes are entirely bone-driven once bound (see the evaluator's fixed
-    transform reset), so Luke Animate's native drag can no longer be used to
-    fix a shape that was ingested far from the rest of its rig - dragging it
-    now has no lasting effect, by design. This gives a real, intentional way
-    to fix that: it shifts the shape's own points (and its DemBones rest
-    points, kept together via shiftObject) so its bounding-box centre lands
-    exactly on the selected bone's midpoint, or the whole rig's centre if no
-    bone is selected.
-  */
   function centerSelectedCurveOnBone(){
-    var rig=state.activeRig;
-    var o=findObjectById(state.selectedCurveId);
-    if(!rig||!o||!Array.isArray(o.points)||!o.points.length){
-      notify("Select a shape with points first.",true);
-      return;
-    }
-    var bone=selectedBone();
-    var target;
-    if(bone){
-      target={x:(bone.restHead.x+bone.restTail.x)/2,y:(bone.restHead.y+bone.restTail.y)/2};
-    }else{
-      var bounds=rigTargetBounds(rig);
-      target={x:bounds.cx,y:bounds.cy};
-    }
-    var current=combinedBounds([o]);
-    var dx=target.x-current.cx;
-    var dy=target.y-current.cy;
-    if(Math.abs(dx)<0.01&&Math.abs(dy)<0.01){
-      notify("Shape is already centred there.",false);
-      return;
-    }
-    API.pushUndo();
-    shiftObject(o,dx,dy);
-    bindRig(false);
-    renderAll();
-    notify((bone?('Centred on bone "'+(bone.name||"Bone")+'".'):"Centred on the rig's centre."),false);
+    var rig=state.activeRig,o=findObjectById(state.selectedCurveId);
+    if(!rig||!o||!Array.isArray(o.points)||!o.points.length){notify("Select a curve first.",true);return;}
+    var bone=selectedBone(),target;
+    if(bone)target={x:(bone.restHead.x+bone.restTail.x)/2,y:(bone.restHead.y+bone.restTail.y)/2};
+    else{var rb=rigTargetBounds(rig);target={x:rb.cx,y:rb.cy};}
+    var current=combinedBounds([o]),dx=target.x-current.cx,dy=target.y-current.cy;
+    if(Math.abs(dx)<.01&&Math.abs(dy)<.01){notify("Already centred.",false);return;}
+    API.pushUndo();shiftObject(o,dx,dy);bindRig(false);renderAll();notify(bone?'Centred on '+(bone.name||'bone')+'.':'Centred on rig.',false);
   }
 
   function subdivideSelectedCurve(){
@@ -4120,27 +3671,13 @@
 
         API.pushUndo();
 
-        /*
-          Tag every shape as a rig member BEFORE it is ever registered with
-          the native timeline, not after. Staging first and tagging second
-          left a real window where a freshly imported shape sat on the
-          timeline completely untagged - genuinely indistinguishable from a
-          normal native object - until whatever next triggered a timeline
-          refresh caught up. Converting/tagging first removes that window
-          entirely rather than relying on refresh timing.
-        */
         var rig=createRigFromObjects(
           objects,
           file.name.replace(/\.[^.]+$/,"")||"SVG Part"
         );
-
         var staged=rig?lastCreatedRigObjects:objects;
-
         staged.forEach(function(o){
-          API.addDrawObject(
-            o,
-            "animate"
-          );
+          API.addDrawObject(o,"animate");
         });
 
         state.tab="bones";
@@ -4169,52 +3706,74 @@
   function savePart(){var data=serializeBuildPart();if(!data){notify("Build or load a part first.",true);return;}downloadText((data.name||"DemBonesPart")+".dembones.json",JSON.stringify(data,null,2),"application/json");notify("Saved part.",false);}
   function loadJsonFile(file,kind){if(!file)return;var reader=new FileReader();reader.onload=function(){try{var data=JSON.parse(reader.result);if(kind==="part")loadBuildPart(data,true);else if(kind==="character")loadCharacterData(data);else if(kind==="rig")loadBuildPart(data,true);}catch(e){notify("Load failed: "+(e.message||e),true);}};reader.readAsText(file);}
 
-  function releaseRigToStage(){var rig=state.activeRig;if(!rig)return;if((rig.bones||[]).length&&!window.confirm('Return "'+(rig.name||'this part')+'" to the stage as plain shapes? Its '+rig.bones.length+' bone(s) and binding will be discarded (the shapes themselves are kept). This can be undone with Ctrl+Z.')){return;}rigObjects(rig).forEach(function(o){delete o.demBones;});allObjectArrays().forEach(function(list){for(var i=list.length-1;i>=0;i--){var o=list[i];if(o&&o.demBonesExpression&&o.demBonesExpression.rigId===rig.id)delete o.demBonesExpression;}});state.activeRig=null;state.selectedBoneId="";state.selectedCurveId="";API.refreshUI();renderAll();notify("Build Parts shapes returned to the stage as ordinary editable vectors.",false);}
+  function releaseRigToStage(){
+    var rig=state.activeRig;if(!rig)return;
+    if((rig.bones||[]).length&&!window.confirm('Return "'+(rig.name||'this part')+'" to the stage as plain artwork? Its '+rig.bones.length+' bone(s) and binding will be discarded. This can be undone with Ctrl+Z.'))return;
+    API.pushUndo();
+    rigObjects(rig).forEach(function(o){delete o.demBones;});
+    allObjectArrays().forEach(function(list){for(var i=list.length-1;i>=0;i--){var o=list[i];if(o&&o.demBonesExpression&&o.demBonesExpression.rigId===rig.id)delete o.demBonesExpression;}});
+    state.activeRig=null;state.selectedBoneId="";state.selectedCurveId="";API.refreshUI();renderAll();notify("Build Parts artwork returned to the stage without bones.",false);
+  }
+
+
+  var characterContextMenuEl=null;
+  function closeCharacterContextMenu(){
+    if(characterContextMenuEl){try{characterContextMenuEl.remove();}catch(ignore){}characterContextMenuEl=null;}
+  }
+  function characterRightClickHit(event){
+    if(!(state.character.committed&&state.character.parts.length))return null;
+    var shapeHit=characterPartShapeHit(event);
+    if(shapeHit)return shapeHit.part;
+    var boneHitClosed=characterAnimationBoneHit(event);
+    return boneHitClosed?boneHitClosed.part:null;
+  }
+  function showCharacterContextMenu(clientX,clientY,part){
+    closeCharacterContextMenu();
+    var el=document.createElement('div');
+    el.className='db-character-context';
+    el.style.cssText='position:fixed;left:'+clientX+'px;top:'+clientY+'px;z-index:1000000;background:#fff;border:1px solid #cfd6df;border-radius:7px;padding:4px;box-shadow:0 4px 14px rgba(0,0,0,.18);font:12px Arial,sans-serif';
+    var b=document.createElement('button');b.type='button';b.textContent='Edit Character';b.style.cssText='border:0;background:#fff;padding:7px 12px;border-radius:5px;cursor:pointer';
+    b.onclick=function(){closeCharacterContextMenu();open();activateCharacterPartMode(part,'animate');};
+    el.appendChild(b);document.body.appendChild(el);characterContextMenuEl=el;
+    setTimeout(function(){window.addEventListener('pointerdown',closeCharacterContextMenu,{once:true,capture:true});},0);
+  }
 
   function selectedScenePoint(event){var rect=API.canvas.getBoundingClientRect(),sx=(event.clientX-rect.left)*(API.width/rect.width),sy=(event.clientY-rect.top)*(API.height/rect.height);return API.stageToScenePoint({x:sx,y:sy});}
   function stagePointFromScene(p){return API.sceneToStagePoint(p);}
   function boneHit(event){
-    var rig=state.activeRig;
-    if(!rig)return null;
+    var rig=state.activeRig;if(!rig)return null;
     var p=selectedScenePoint(event);
     var map=state.tab==="animate"?posedTransformMap(rig,currentTime()):restTransformMap(rig);
     var best=null,bestD=scenePixels(14),lineD=scenePixels(9);
-
-    /*
-      A parent bone's tail and every child's head normally sit at the exact
-      same point (a hub) - a plain nearest-search across every bone treats
-      that as a coin flip, and can silently hand a drag to a different bone
-      than the one actually selected/shown in the Edit Bone panel. That is
-      what made the root bone intermittently behave as if one axis of
-      dragging did nothing - some drags were landing on a different bone's
-      handle entirely. In Edit Bone, once a bone is selected, its own head
-      and tail get first claim on any point within the hit radius before
-      any other bone is even considered, so the bone you are looking at is
-      always the bone you actually drag.
-    */
-    if(state.tab==="editbone"&&state.selectedBoneId){
-      var selected=boneById(state.selectedBoneId);
-      var selectedTransform=selected&&map[selected.id];
-      if(selected&&selectedTransform){
-        var ownBest=null;
-        [["head",selectedTransform.head],["tail",selectedTransform.tail]].forEach(function(pair){
-          var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);
-          if(d<bestD&&(!ownBest||d<ownBest.distance)){ownBest={bone:selected,handle:pair[0],point:p,distance:d};}
-        });
-        if(ownBest)return ownBest;
+    if(state.selectedBoneId&&(state.tab==="editbone"||state.tab==="animate")){
+      var selected=boneById(state.selectedBoneId),sq=selected&&map[selected.id];
+      if(selected&&sq){
+        var own=[];own.push({bone:selected,handle:"head",distance:Math.hypot(p.x-sq.head.x,p.y-sq.head.y)});own.push({bone:selected,handle:"tail",distance:Math.hypot(p.x-sq.tail.x,p.y-sq.tail.y)});
+        own.sort(function(a,b){return a.distance-b.distance;});if(own[0].distance<bestD)return Object.assign({point:p},own[0]);
       }
     }
-
     (rig.bones||[]).forEach(function(b){
-      var q=map[b.id];
-      if(!q)return;
-      [["head",q.head],["tail",q.tail]].forEach(function(pair){
-        var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);
-        if(d<bestD&&(!best||d<best.distance)){best={bone:b,handle:pair[0],point:p,distance:d};}
-      });
-      var ld=distancePointToSegment(p,q.head,q.tail);
-      if(ld<lineD&&(!best||ld<best.distance-scenePixels(2))){best={bone:b,handle:"line",point:p,distance:ld};}
+      var q=map[b.id];if(!q)return;
+      [["head",q.head],["tail",q.tail]].forEach(function(pair){var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);if(d<bestD&&(!best||d<best.distance))best={bone:b,handle:pair[0],point:p,distance:d};});
+      var ld=distancePointToSegment(p,q.head,q.tail);if(ld<lineD&&(!best||ld<best.distance-scenePixels(2)))best={bone:b,handle:"line",point:p,distance:ld};
     });
+    return best;
+  }
+
+  function envelopeHandleHit(event){
+    if(state.tab!=="editbone"||!state.showEnvelopes)return null;
+    var bone=selectedBone();if(!bone)return null;
+    var map=restTransformMap(state.activeRig),q=map[bone.id];if(!q)return null;
+    var dx=q.tail.x-q.head.x,dy=q.tail.y-q.head.y,len=Math.max(.0001,Math.hypot(dx,dy)),perp={x:-dy/len,y:dx/len};
+    var r0=Math.max(2,n(bone.envStart,30)),r1=Math.max(2,n(bone.envEnd,r0));
+    var handles=[
+      {end:"start",side:1,p:{x:q.head.x+perp.x*r0,y:q.head.y+perp.y*r0}},
+      {end:"start",side:-1,p:{x:q.head.x-perp.x*r0,y:q.head.y-perp.y*r0}},
+      {end:"end",side:1,p:{x:q.tail.x+perp.x*r1,y:q.tail.y+perp.y*r1}},
+      {end:"end",side:-1,p:{x:q.tail.x-perp.x*r1,y:q.tail.y-perp.y*r1}}
+    ];
+    var p=selectedScenePoint(event),threshold=scenePixels(10),best=null;
+    handles.forEach(function(h){var d=Math.hypot(p.x-h.p.x,p.y-h.p.y);if(d<=threshold&&(!best||d<best.distance))best={bone:bone,end:h.end,side:h.side,point:p,distance:d};});
     return best;
   }
 
@@ -4228,245 +3787,159 @@
     return key;
   }
 
+  function ensureRigKeyedAtTime(rig,time,preferredBoneId){
+    if(!rig)return;
+    (rig.bones||[]).forEach(function(bone){
+      ensureBoneKeyForDrag(bone,time);
+    });
+  }
+
   function onPointerDown(event){
-    /*
-      Clicking the character's shape/silhouette is always plain Luke Animate
-      Select/Edit - it must never itself pop the panel open. A single click
-      on a visible bone no longer reopens DemBones either, so a normal click
-      on a bone can be used for plain native selection too - see the
-      dblclick listener in bindGlobal for the actual "go back into
-      DemBones" trigger, and the contextmenu listener for the other, right-
-      click way in.
-    */
     if(!state.open){
-      return;
-    }
-
-    if(!["character","bones","editbone","animate","curves","expression"].includes(state.tab))return;
-    if(event.target&&event.target.closest&&event.target.closest(".la-dembones-full"))return;
-
-    if(state.tab==="character"){
-      /*
-        Normal Character mode stays out of the way of Luke Animate Select/Edit.
-        Only explicit pin-pick mode captures a stage click.
-      */
-      if(state.character.pinPickSourceId){
-        var pinHit=characterPinHit(event);
-
-        event.preventDefault();
-        event.stopImmediatePropagation();
-
-        if(pinHit){
-          completePartPin(
-            partById(state.character.pinPickSourceId),
-            pinHit.target,
-            pinHit.bone,
-            pinHit.attachPoint
-          );
-        }else{
-          notify(
-            "Click directly on a visible green/yellow bone node or yellow bone line.",
-            true
-          );
+      if(state.bKeyDown){
+        if(state.character.committed&&state.character.showBones){
+          var shapeHit=characterPartShapeHit(event);
+          if(shapeHit){
+            event.preventDefault();event.stopImmediatePropagation();open();activateCharacterPartMode(shapeHit.part,"adjust");
+            var nearest=characterAnimationBoneHit(event);if(nearest&&nearest.part===shapeHit.part)state.selectedBoneId=nearest.bone.id;
+            renderAll();API.refreshUI();return;
+          }
+        }
+        var looseShape=stageRiggedShapeHit(event);
+        if(looseShape){
+          event.preventDefault();event.stopImmediatePropagation();
+          activateStandaloneRigForEdit(looseShape);open();renderAll();API.refreshUI();return;
+        }
+      }
+      if(state.character.committed&&state.character.showBones){
+        var closedHit=characterAnimationBoneHit(event);
+        if(closedHit){
+          event.preventDefault();event.stopImmediatePropagation();
+          API.pushUndo();
+          state.closedBonePartId=closedHit.part.id;state.closedBoneId=closedHit.bone.id;
+          var localPointer=characterPointToPartLocal(closedHit.part,selectedScenePoint(event),currentTime());
+          var map=posedTransformMap(closedHit.part.rig,currentTime());
+          state.drag={kind:"closed-animate-bone",pointerId:event.pointerId,part:closedHit.part,bone:closedHit.bone,handle:closedHit.handle,startPointer:localPointer,startPose:clone(interpolatePose(closedHit.bone,currentTime())),startTransform:clone(map[closedHit.bone.id]),key:ensureBoneKeyForDrag(closedHit.bone,currentTime())};
+          ensureRigKeyedAtTime(closedHit.part.rig,currentTime(),closedHit.bone.id);
+          API.refreshUI();return;
+        }
+      }
+      if(state.activeRig){
+        var looseBoneHit=activeRigBoneHitAtTime(event);
+        if(looseBoneHit){
+          event.preventDefault();event.stopImmediatePropagation();API.pushUndo();
+          state.closedBonePartId=null;state.closedBoneId=looseBoneHit.bone.id;
+          var looseMap=posedTransformMap(state.activeRig,currentTime());
+          state.drag={kind:"closed-active-rig-bone",pointerId:event.pointerId,bone:looseBoneHit.bone,handle:looseBoneHit.handle,startPointer:selectedScenePoint(event),startPose:clone(interpolatePose(looseBoneHit.bone,currentTime())),startTransform:clone(looseMap[looseBoneHit.bone.id]),key:ensureBoneKeyForDrag(looseBoneHit.bone,currentTime())};
+          ensureRigKeyedAtTime(state.activeRig,currentTime(),looseBoneHit.bone.id);
+          API.refreshUI();return;
         }
       }
       return;
     }
-
+    if(!["character","bones","editbone","animate","curves","expression"].includes(state.tab))return;
+    if(event.target&&event.target.closest&&event.target.closest(".la-dembones-full"))return;
+    if(state.tab==="character"){
+      if(state.character.pinPickSourceId){
+        var pinHit=characterPinHit(event);event.preventDefault();event.stopImmediatePropagation();
+        if(pinHit)completePartPin(partById(state.character.pinPickSourceId),pinHit.target,pinHit.bone,pinHit.attachPoint);
+        else notify("Click directly on a visible bone.",true);
+      }
+      return;
+    }
     var point=selectedScenePoint(event);
-
     if(state.tab==="curves"){
-      var curve=findObjectById(state.selectedCurveId);
-      if(!curve&&state.activeRig){var curveObjects=rigObjects(state.activeRig);curve=curveObjects[0]||null;if(curve)state.selectedCurveId=curve.id;}
-      if(!curve)return;
-      var effCurve=typeof API.getEffectiveObject==="function"?API.getEffectiveObject(curve,currentTime()):curve;
-      var shownPoints=Array.isArray(effCurve.points)?effCurve.points:curve.points;
-      var pointThreshold=scenePixels(10),bestPoint=-1,bestDistance=Infinity;
-      (shownPoints||[]).forEach(function(q,i){var d=Math.hypot(point.x-q.x,point.y-q.y);if(d<bestDistance){bestDistance=d;bestPoint=i;}});
-      if(state.curvePointAddMode){
-        var addSegment=closestCurveSegment(curve,point);
-        if(addSegment&&addSegment.distance<=scenePixels(18)){
-          insertPointInCurveObject(curve,addSegment,true);state.curvePointAddMode=false;state.mode="select";renderAll();notify('Curve point inserted without changing the outline.',false);
-        }else notify('Click closer to a curve segment.',true);
-        event.preventDefault();event.stopImmediatePropagation();return;
-      }
+      var curve=findObjectById(state.selectedCurveId);if(!curve&&state.activeRig){var curveObjects=rigObjects(state.activeRig).filter(function(o){return o.type!=="image";});curve=curveObjects[0]||null;if(curve)state.selectedCurveId=curve.id;}if(!curve)return;
+      var effCurve=typeof API.getEffectiveObject==="function"?API.getEffectiveObject(curve,currentTime()):curve;var shownPoints=Array.isArray(effCurve.points)?effCurve.points:curve.points;
+      var pointThreshold=scenePixels(10),bestPoint=-1,bestDistance=Infinity;(shownPoints||[]).forEach(function(q,i){var d=Math.hypot(point.x-q.x,point.y-q.y);if(d<bestDistance){bestDistance=d;bestPoint=i;}});
+      if(state.curvePointAddMode){var addSegment=closestCurveSegment(curve,point);if(addSegment&&addSegment.distance<=scenePixels(18)){insertPointInCurveObject(curve,addSegment,true);state.curvePointAddMode=false;state.mode="select";renderAll();}else notify("Click closer to a curve segment.",true);event.preventDefault();event.stopImmediatePropagation();return;}
       if(bestPoint>=0&&bestDistance<=pointThreshold){state.selectedPointIndex=bestPoint;state.curvePointAddMode=false;state.mode="select";renderAll();event.preventDefault();event.stopImmediatePropagation();return;}
-      if(event.ctrlKey){
-        var segment=closestCurveSegment(curve,point);
-        if(segment&&segment.distance<=scenePixels(18)){
-          insertPointInCurveObject(curve,segment,true);state.curvePointAddMode=false;state.mode="select";renderAll();notify('Curve point inserted without changing the outline.',false);
-        }else notify('Click closer to a curve segment.',true);
-        event.preventDefault();event.stopImmediatePropagation();return;
-      }
+      if(event.ctrlKey){var segment=closestCurveSegment(curve,point);if(segment&&segment.distance<=scenePixels(18)){insertPointInCurveObject(curve,segment,true);state.curvePointAddMode=false;state.mode="select";renderAll();}event.preventDefault();event.stopImmediatePropagation();return;}
       return;
     }
-
-    var hit=boneHit(event);
-
-    if(state.tab==="bones"){
-      if(hit){
-        event.preventDefault();event.stopImmediatePropagation();
-        state.selectedBoneId=hit.bone.id;
-        state.mode="add-bone";
-        state.drag={kind:"maybe-add",pointerId:event.pointerId,start:point,current:point};
-        renderAll();
-        return;
-      }
-      if(state.mode!=="add-bone")return;
-      event.preventDefault();event.stopImmediatePropagation();
-      state.addPreview={head:point,tail:point};
-      state.drag={kind:"add",pointerId:event.pointerId,start:point,current:point};
-      return;
-    }
-
-    if(!hit){
-      if(state.tab==="editbone"||state.tab==="animate"){
-        /*
-          Edit Bone and Animate only ever operate on bone nodes - a click
-          that misses every bone must be swallowed here, not fall through
-          to native Luke Animate selection of whatever shape happens to be
-          underneath. Previously this just returned without blocking the
-          event, which is exactly what let a click select the underlying
-          artwork instead of a bone.
-        */
-        event.preventDefault();
-        event.stopImmediatePropagation();
-      }
-      return;
-    }
-    event.preventDefault();event.stopImmediatePropagation();
-    state.selectedBoneId=hit.bone.id;
-
     if(state.tab==="editbone"){
-      API.pushUndo();
-      state.drag={
-        kind:"edit-rest",
-        pointerId:event.pointerId,
-        bone:hit.bone,
-        handle:hit.handle,
-        startPointer:point,
-        startHead:clone(hit.bone.restHead),
-        startTail:clone(hit.bone.restTail)
-      };
-      renderAll();
-      return;
+      var envHit=envelopeHandleHit(event);
+      if(envHit){event.preventDefault();event.stopImmediatePropagation();API.pushUndo();state.drag={kind:"resize-envelope",pointerId:event.pointerId,bone:envHit.bone,end:envHit.end,side:envHit.side};return;}
     }
-
+    var hit=boneHit(event);
+    if(state.tab==="bones"){
+      if(hit){event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;state.mode="add-bone";state.drag={kind:"maybe-add",pointerId:event.pointerId,start:point,current:point};renderAll();return;}
+      if(state.mode!=="add-bone")return;event.preventDefault();event.stopImmediatePropagation();state.addPreview={head:point,tail:point};state.drag={kind:"add",pointerId:event.pointerId,start:point,current:point};return;
+    }
+    if(!hit){if(state.tab==="editbone"||state.tab==="animate"){event.preventDefault();event.stopImmediatePropagation();}return;}
+    event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;
+    if(state.tab==="editbone"){
+      API.pushUndo();var parent=hit.bone.parentId?boneById(hit.bone.parentId):null;
+      state.drag={kind:"edit-rest",pointerId:event.pointerId,bone:hit.bone,parent:parent,handle:hit.handle,startPointer:point,startHead:clone(hit.bone.restHead),startTail:clone(hit.bone.restTail),startParentTail:parent?clone(parent.restTail):null};renderAll();return;
+    }
     if(state.tab==="animate"){
-      API.pushUndo();
-      var map=posedTransformMap(state.activeRig,currentTime());
-      state.drag={
-        kind:"animate-bone",
-        pointerId:event.pointerId,
-        bone:hit.bone,
-        handle:hit.handle,
-        startPointer:point,
-        startPose:clone(interpolatePose(hit.bone,currentTime())),
-        startTransform:clone(map[hit.bone.id]),
-        key:ensureBoneKeyForDrag(hit.bone,currentTime())
-      };
-      /*
-        Posing on stage is the same "a pose was decided on" moment as
-        clicking Set Key in the panel - the whole rig's pose needs locking
-        in at this frame, not just the bone being dragged.
-      */
-      ensureRigKeyedAtTime(state.activeRig,currentTime(),hit.bone.id);
-      renderAll();
-      return;
+      API.pushUndo();var map=posedTransformMap(state.activeRig,currentTime());state.drag={kind:"animate-bone",pointerId:event.pointerId,bone:hit.bone,handle:hit.handle,startPointer:point,startPose:clone(interpolatePose(hit.bone,currentTime())),startTransform:clone(map[hit.bone.id]),key:ensureBoneKeyForDrag(hit.bone,currentTime())};ensureRigKeyedAtTime(state.activeRig,currentTime(),hit.bone.id);renderAll();return;
     }
-
     renderAll();
   }
 
   function onPointerMove(event){
-    if(!state.open||!state.drag)return;
+    if(!state.drag)return;
     if(state.drag.pointerId!==undefined&&event.pointerId!==state.drag.pointerId)return;
-    var p=selectedScenePoint(event);
-    event.preventDefault();event.stopImmediatePropagation();
-
-    if(state.drag.kind==="maybe-add"){
-      state.drag.current=p;
-      if(Math.hypot(p.x-state.drag.start.x,p.y-state.drag.start.y)>=scenePixels(8)){
-        state.drag.kind="add";
-        state.addPreview={head:clone(state.drag.start),tail:clone(p)};
-      }
-      API.refreshUI();
-      return;
+    var p=selectedScenePoint(event);event.preventDefault();event.stopImmediatePropagation();
+    if(state.drag.kind==="closed-animate-bone"){
+      var lp=characterPointToPartLocal(state.drag.part,p,currentTime()),ckey=state.drag.key,cpose=state.drag.startPose;
+      if(state.drag.handle==="tail"||state.drag.bone.parentId||state.drag.handle==="line"){
+        var desired=Math.atan2(lp.y-state.drag.startTransform.head.y,lp.x-state.drag.startTransform.head.x),delta=(desired-state.drag.startTransform.angle)*180/Math.PI;while(delta>180)delta-=360;while(delta<-180)delta+=360;ckey.rotation=round3(n(cpose.rotation,0)+delta);if(state.drag.bone.parentId){ckey.dx=0;ckey.dy=0;}
+      }else{ckey.dx=round3(n(cpose.dx,0)+(lp.x-state.drag.startPointer.x));ckey.dy=round3(n(cpose.dy,0)+(lp.y-state.drag.startPointer.y));}
+      API.refreshUI();return;
     }
-
-    if(state.drag.kind==="add"){
-      state.drag.current=p;
-      if(state.addPreview)state.addPreview.tail=clone(p);
-      API.refreshUI();
-      return;
+    if(state.drag.kind==="closed-active-rig-bone"){
+      var lkey=state.drag.key,lpose=state.drag.startPose;
+      if(state.drag.handle==="tail"||state.drag.bone.parentId||state.drag.handle==="line"){
+        var ldesired=Math.atan2(p.y-state.drag.startTransform.head.y,p.x-state.drag.startTransform.head.x),ldelta=(ldesired-state.drag.startTransform.angle)*180/Math.PI;while(ldelta>180)ldelta-=360;while(ldelta<-180)ldelta+=360;lkey.rotation=round3(n(lpose.rotation,0)+ldelta);if(state.drag.bone.parentId){lkey.dx=0;lkey.dy=0;}
+      }else{lkey.dx=round3(n(lpose.dx,0)+(p.x-state.drag.startPointer.x));lkey.dy=round3(n(lpose.dy,0)+(p.y-state.drag.startPointer.y));}
+      API.refreshUI();return;
     }
-
+    if(!state.open)return;
+    if(state.drag.kind==="maybe-add"){state.drag.current=p;if(Math.hypot(p.x-state.drag.start.x,p.y-state.drag.start.y)>=scenePixels(8)){state.drag.kind="add";state.addPreview={head:clone(state.drag.start),tail:clone(p)};}API.refreshUI();return;}
+    if(state.drag.kind==="add"){state.drag.current=p;if(state.addPreview)state.addPreview.tail=clone(p);API.refreshUI();return;}
+    if(state.drag.kind==="resize-envelope"){
+      var eb=state.drag.bone,anchor=state.drag.end==="start"?eb.restHead:eb.restTail,radius=clamp(Math.hypot(p.x-anchor.x,p.y-anchor.y),2,500);
+      if(state.drag.end==="start")eb.envStart=round3(radius);else eb.envEnd=round3(radius);
+      rebuildRigSkinData(state.activeRig);API.refreshUI();return;
+    }
     if(state.drag.kind==="edit-rest"){
-      var b=state.drag.bone;
-      var dx=p.x-state.drag.startPointer.x,dy=p.y-state.drag.startPointer.y;
+      var b=state.drag.bone,dx=p.x-state.drag.startPointer.x,dy=p.y-state.drag.startPointer.y;
       if(state.drag.handle==="tail"){
         b.restTail={x:round3(p.x),y:round3(p.y)};
       }else{
         b.restHead={x:round3(state.drag.startHead.x+dx),y:round3(state.drag.startHead.y+dy)};
         b.restTail={x:round3(state.drag.startTail.x+dx),y:round3(state.drag.startTail.y+dy)};
+        if(state.drag.parent&&state.drag.startParentTail){
+          state.drag.parent.restTail={x:round3(state.drag.startParentTail.x+dx),y:round3(state.drag.startParentTail.y+dy)};
+          state.drag.parent.restLength=Math.max(.001,Math.hypot(state.drag.parent.restTail.x-state.drag.parent.restHead.x,state.drag.parent.restTail.y-state.drag.parent.restHead.y));
+          state.drag.parent.restAngle=angleOf(state.drag.parent.restHead,state.drag.parent.restTail);
+        }
       }
-      b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));
-      b.restAngle=angleOf(b.restHead,b.restTail);
-      enforceRestChains();
-      normaliseRigBones(state.activeRig);
-      API.refreshUI();
-      return;
+      b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));b.restAngle=angleOf(b.restHead,b.restTail);enforceRestChains();normaliseRigBones(state.activeRig);API.refreshUI();return;
     }
-
     if(state.drag.kind==="animate-bone"){
-      var key=state.drag.key;
-      var startPose=state.drag.startPose;
-      if(state.drag.handle==="tail"||state.drag.bone.parentId){
-        var desired=Math.atan2(p.y-state.drag.startTransform.head.y,p.x-state.drag.startTransform.head.x);
-        var delta=(desired-state.drag.startTransform.angle)*180/Math.PI;
-        while(delta>180)delta-=360;while(delta<-180)delta+=360;
-        key.rotation=round3(n(startPose.rotation,0)+delta);
-        if(state.drag.bone.parentId){key.dx=0;key.dy=0;}
-      }else{
-        key.dx=round3(n(startPose.dx,0)+(p.x-state.drag.startPointer.x));
-        key.dy=round3(n(startPose.dy,0)+(p.y-state.drag.startPointer.y));
-      }
-      API.refreshUI();
-      return;
+      var key=state.drag.key,startPose=state.drag.startPose;
+      if(state.drag.handle==="tail"||state.drag.bone.parentId||state.drag.handle==="line"){
+        var desired2=Math.atan2(p.y-state.drag.startTransform.head.y,p.x-state.drag.startTransform.head.x),delta2=(desired2-state.drag.startTransform.angle)*180/Math.PI;while(delta2>180)delta2-=360;while(delta2<-180)delta2+=360;key.rotation=round3(n(startPose.rotation,0)+delta2);if(state.drag.bone.parentId){key.dx=0;key.dy=0;}
+      }else{key.dx=round3(n(startPose.dx,0)+(p.x-state.drag.startPointer.x));key.dy=round3(n(startPose.dy,0)+(p.y-state.drag.startPointer.y));}
+      API.refreshUI();return;
     }
   }
 
   function onPointerUp(event){
-    if(!state.drag){
-      if(state.open&&state.tab==="character"){
-        setTimeout(function(){
-          syncCharacterSelectionFromStage();
-          syncAllUnpinnedCharacterTransforms();
-          renderBody();
-        },0);
-      }
-      return;
-    }
+    if(!state.drag){if(state.open&&state.tab==="character")setTimeout(function(){syncCharacterSelectionFromStage();syncAllUnpinnedCharacterTransforms();renderBody();},0);return;}
     if(state.drag.pointerId!==undefined&&event.pointerId!==state.drag.pointerId)return;
-    event.preventDefault();event.stopImmediatePropagation();
-    var finished=state.drag;
-    if(finished.kind==="add"&&state.addPreview){
-      var type=state.panel.querySelector("[data-db-bone-type]")?state.panel.querySelector("[data-db-bone-type]").value:"bone";
-      addBone(state.addPreview.head,state.addPreview.tail,type);
-    }else if(finished.kind==="edit-rest"){
-      bindRig(false);
-      notify("Rest bone edited. Child joints remain connected.",false);
-    }else if(finished.kind==="animate-bone"){
-      API.refreshUI();
-      notify("Bone pose keyed on frame "+currentFrame()+".",false);
-    }
-    state.drag=null;
-    state.addPreview=null;
-    state.mode=state.tab==="bones"?"add-bone":"select";
-    if(state.activeRig){
-      syncRigDisplayGeometry(state.activeRig,currentTime());
-    }
-    renderAll();
+    event.preventDefault();event.stopImmediatePropagation();var finished=state.drag;
+    if(finished.kind==="add"&&state.addPreview){var type=state.panel&&state.panel.querySelector("[data-db-bone-type]")?state.panel.querySelector("[data-db-bone-type]").value:"bone";addBone(state.addPreview.head,state.addPreview.tail,type);}
+    else if(finished.kind==="edit-rest"){bindRig(false);notify("Rest bone updated.",false);}
+    else if(finished.kind==="resize-envelope"){rebuildRigSkinData(state.activeRig);notify("Envelope resized.",false);}
+    else if(finished.kind==="animate-bone"){API.refreshUI();notify("Bone pose keyed on frame "+currentFrame()+".",false);}
+    else if(finished.kind==="closed-animate-bone"||finished.kind==="closed-active-rig-bone"){API.refreshUI();}
+    state.drag=null;state.addPreview=null;
+    if(state.open){state.mode=state.tab==="bones"?"add-bone":"select";if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());renderAll();}
+    else API.refreshUI();
   }
 
   function drawBoneEnvelope(ctx,bone,q,selected){
@@ -4555,13 +4028,10 @@
     ctx.stroke();
 
     if(selected){
-      ctx.fillStyle="rgba(14,156,134,.9)";
-      ctx.font="10px Arial";
-      ctx.fillText(
-        "Envelope "+round3(r0)+" → "+round3(r1),
-        (h.x+t.x)/2+8,
-        (h.y+t.y)/2+18
-      );
+      ctx.fillStyle="#ffffff";
+      ctx.strokeStyle="#0e9c86";
+      ctx.lineWidth=2;
+      [hPlus,hMinus,tPlus,tMinus].forEach(function(handle){ctx.beginPath();ctx.rect(handle.x-5,handle.y-5,10,10);ctx.fill();ctx.stroke();});
     }
 
     ctx.restore();
@@ -4611,15 +4081,13 @@
       Parts rig.
     */
     if(!state.open){
-      if(
-        state.character.committed&&
-        state.character.showBones
-      ){
-        drawCharacterAnimationBones(
-          ctx
-        );
+      if(state.character.committed&&state.character.showBones){
+        drawCharacterAnimationBones(ctx);
       }
-
+      if(state.activeRig){
+        var closedMap=posedTransformMap(state.activeRig,currentTime());
+        (state.activeRig.bones||[]).forEach(function(b){if(closedMap[b.id])drawBone(ctx,b,closedMap[b.id],String(b.id)===String(state.closedBoneId));});
+      }
       return;
     }
 
@@ -4639,10 +4107,9 @@
 
     if(!state.activeRig)return;
 
-    var map=posedTransformMap(
-      state.activeRig,
-      currentTime()
-    );
+    var map=state.tab==="animate"?posedTransformMap(
+      state.activeRig,currentTime()
+    ):restTransformMap(state.activeRig);
 
     /*
       Envelopes are painted first so bones and control points stay readable.
@@ -4727,12 +4194,10 @@
 
   function ensureStyle(){
     if(document.getElementById("la-dembones-full-style"))return;var s=document.createElement("style");s.id="la-dembones-full-style";s.textContent=[
-      ".la-dembones-full{position:fixed;left:28px;top:18px;width:496px;max-width:calc(100vw - 16px);height:min(760px,calc(100vh - 36px));display:none;flex-direction:column;background:#f1f3f6;border:1px solid #bfc6cf;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden;color:#27313d;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;z-index:10000;cursor:default}.la-dembones-full button,.la-dembones-full [data-db-part-card],.la-dembones-full [data-db-point-index],.la-dembones-full label.db-check,.la-dembones-ctx button{cursor:pointer}",
+      ".la-dembones-full{position:fixed;left:28px;top:18px;width:374px;max-width:calc(100vw - 16px);height:min(720px,calc(100vh - 36px));display:none;flex-direction:column;background:#f1f3f6;border:1px solid #bfc6cf;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden;color:#27313d;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;z-index:10000}",
       ".la-dembones-full.open{display:flex}.db-head{display:flex;align-items:center;gap:9px;padding:8px 10px;background:#fff;border-bottom:1px solid #d3d8df;cursor:move;user-select:none}.db-head img{width:27px;height:27px;filter:grayscale(1) brightness(.72)}.db-title{flex:1}.db-title strong{display:block;font-size:14px;color:#29434a}.db-title span{font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:#7b8491}.db-frame{border:1px solid #bbc3cd;border-radius:999px;padding:5px 9px;background:#fff;font-size:10px}.db-frame b{color:#0e9c86}.db-close{width:32px;height:32px;border:1px solid #bbc3cd;border-radius:8px;background:#fff;font-size:20px;color:#566270;cursor:pointer}",
-      ".db-tabs{padding:8px 7px 5px;background:#e4e7eb;border-bottom:1px solid #cbd1d8}.db-tab-group{margin-bottom:6px}.db-tab-group:last-child{margin-bottom:0}.db-tab-group-label{display:block;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#828d99;margin:0 0 4px 2px}.db-tabs-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.db-tabs-row.two{grid-template-columns:repeat(2,minmax(0,1fr))}.db-tab{height:32px;border:1px solid #aeb7c2;border-radius:7px;background:#626a74;color:#fff;font-size:10.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}.db-tab.active{background:#0e9c86;border-color:#0b8574;font-weight:700}.db-tab:hover{border-color:#0e9c86}",
-      ".db-steps{display:flex;align-items:center;padding:9px 12px;background:#eef1f4;border-bottom:1px solid #cbd1d8;font-size:9.5px;color:#7b8491}.db-step{display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer}.db-step:hover .db-step-label{text-decoration:underline}.db-step-dot{width:16px;height:16px;border-radius:50%;background:#c7cdd4;color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0}.db-step.done .db-step-dot{background:#0e9c86}.db-step.current .db-step-dot{background:#0e9c86;box-shadow:0 0 0 3px rgba(14,156,134,.25)}.db-step.current .db-step-label{color:#0e9c86;font-weight:700}.db-step-sep{flex:1;height:1px;background:#cbd1d8;margin:0 6px;min-width:8px}",
-      ".db-body{flex:1;min-height:0;overflow:auto;padding:10px 10px 76px}.db-page{display:none}.db-page.active{display:block}.db-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:10px;margin-bottom:9px}.db-section h3{margin:0 0 8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#66717e}.db-help{font-size:11px;line-height:1.45;color:#6b7582;margin:0 0 8px}.db-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.db-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.db-btn{border:1px solid #b8c0ca;border-radius:8px;background:#eceff2;color:#4b5766;padding:8px 6px;font-size:11px;cursor:pointer}.db-btn:hover{border-color:#0e9c86}.db-btn.primary,.db-btn.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}.db-btn.danger{color:#ad4d4d;border-color:#ddbcbc}.db-btn:disabled{opacity:.45}.db-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:7px;align-items:center;margin-bottom:7px}.db-row.three{grid-template-columns:92px minmax(0,1fr) 70px}.db-row label{font-size:11px;color:#63707e}.db-row input,.db-row select,.db-row textarea{width:100%;min-width:0;border:1px solid #c7ced7;border-radius:7px;background:#f4f5f7;color:#27313d;padding:7px;font-size:11px}.db-row input[type=range]{padding:0;accent-color:#0e9c86}.db-check{display:flex;align-items:center;gap:7px;font-size:11px;color:#63707e}.db-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto}.db-card{border:1px solid #ccd2da;border-radius:9px;background:#f7f8fa;padding:8px}.db-card.active{border-color:#0e9c86;background:#e8f6f3}.db-card-head{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;gap:6px;align-items:center}.db-character-card .db-card-head{grid-template-columns:28px 28px minmax(0,1fr) 28px}.db-pin-mini{font-size:14px;line-height:1}.db-pin-mini.active{background:#0e9c86;border-color:#0e9c86;color:#fff}.db-part-summary{margin-top:7px;padding:6px 7px;border:1px solid #d7dce2;border-radius:7px;background:#fff;color:#66717e;font-size:10px;line-height:1.35}.db-pin-status{margin-top:7px;padding:7px;border:1px solid #d2d8df;border-radius:7px;background:#f3f5f7;font-size:10px;color:#626e7b}.db-pin-status.pinned{border-color:#9bcfc5;background:#eaf7f4;color:#237768}.db-card-head input{width:100%;min-width:0;border:1px solid #c6cdd6;border-radius:6px;padding:6px}.db-mini{width:28px;height:28px;border:1px solid #b9c1cb;border-radius:6px;background:#fff;cursor:pointer}.db-card-body{margin-top:7px}.db-bone-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:6px;align-items:center;border:1px solid #cfd5dc;border-radius:7px;padding:7px;background:#f5f6f8;cursor:pointer}.db-bone-row.active{border-color:#0e9c86;background:#e5f6f2}.db-dot{width:11px;height:11px;border-radius:50%;background:#6f7781}.db-bone-row.active .db-dot{background:#0e9c86}.db-status{position:absolute;left:10px;right:10px;bottom:10px;min-height:38px;max-height:58px;overflow:auto;border:1px solid #cbd2da;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596573}.db-status.good{border-color:#0e9c86;color:#117d6d}.db-status.bad{border-color:#c66a6a;color:#a33d3d}.db-hidden{display:none}.db-pill{display:inline-block;border:1px solid #c7ced7;border-radius:999px;padding:3px 7px;font-size:9px;color:#64707e;background:#fff}.db-empty{border:1px dashed #bbc3cd;border-radius:9px;padding:14px;text-align:center;color:#78828e;font-size:11px}.db-point-list{max-height:190px;overflow:auto;border:1px solid #d0d6dd;border-radius:8px;background:#fafbfc}.db-point-row{display:grid;grid-template-columns:34px 1fr 1fr;gap:6px;padding:5px;border-bottom:1px solid #e1e4e8}.db-point-row:last-child{border-bottom:0}.db-point-row.active{background:#e4f5f1}.db-point-row input{width:100%;min-width:0;border:1px solid #c9d0d8;border-radius:5px;padding:5px}.db-subtabs{display:flex;gap:6px;margin-bottom:8px}.db-subtab{flex:1;border:1px solid #b9c1cb;border-radius:7px;background:#e9ecef;padding:7px;font-size:10px}.db-subtab.active{background:#3fae9b;color:#fff;border-color:#0e9c86}",
-      ".la-dembones-ctx{position:fixed;z-index:10001;background:#fff;border:1px solid #bfc6cf;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:4px;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}.la-dembones-ctx button{display:block;width:100%;white-space:nowrap;text-align:left;border:0;background:none;color:#27313d;font-size:12px;padding:8px 12px;border-radius:6px;cursor:pointer}.la-dembones-ctx button:hover{background:#e8f6f3;color:#0e9c86}",
+      ".db-tabs{padding:7px;background:#e4e7eb;border-bottom:1px solid #cbd1d8}.db-tab-group{margin-bottom:5px}.db-tab-group:last-child{margin-bottom:0}.db-tab-group-label{display:block;font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#818b96;margin:0 0 3px 1px}.db-tabs-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.db-tabs-row.two{grid-template-columns:repeat(2,minmax(0,1fr))}.db-tab{height:25px;border:1px solid #aeb7c2;border-radius:6px;background:#626a74;color:#fff;font-size:9px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 3px}.db-tab.active{background:#0e9c86;border-color:#0b8574;font-weight:700}.db-steps{display:flex;align-items:center;padding:7px 10px;background:#eef1f4;border-bottom:1px solid #cbd1d8;font-size:8.5px;color:#7b8491}.db-step{display:flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer}.db-step-dot{width:14px;height:14px;border-radius:50%;background:#c7cdd4;color:#fff;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;flex-shrink:0}.db-step.done .db-step-dot,.db-step.current .db-step-dot{background:#0e9c86}.db-step.current .db-step-label{color:#0e9c86;font-weight:700}.db-step-sep{flex:1;height:1px;background:#cbd1d8;margin:0 5px;min-width:7px}",
+      ".db-body{flex:1;min-height:0;overflow:auto;padding:8px 7px 46px}.db-page{display:none}.db-page.active{display:block}.db-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:8px;margin-bottom:7px}.db-section h3{margin:0 0 8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#66717e}.db-help{font-size:9.5px;line-height:1.35;color:#6b7582;margin:0 0 8px}.db-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.db-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.db-btn{border:1px solid #b8c0ca;border-radius:8px;background:#eceff2;color:#4b5766;padding:6px 5px;font-size:9px;cursor:pointer}.db-btn:hover{border-color:#0e9c86}.db-btn.primary,.db-btn.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}.db-btn.danger{color:#ad4d4d;border-color:#ddbcbc}.db-btn:disabled{opacity:.45}.db-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:7px;align-items:center;margin-bottom:7px}.db-row.three{grid-template-columns:92px minmax(0,1fr) 70px}.db-row label{font-size:11px;color:#63707e}.db-row input,.db-row select,.db-row textarea{width:100%;min-width:0;border:1px solid #c7ced7;border-radius:7px;background:#f4f5f7;color:#27313d;padding:7px;font-size:11px}.db-row input[type=range]{padding:0;accent-color:#0e9c86}.db-check{display:flex;align-items:center;gap:7px;font-size:11px;color:#63707e}.db-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto}.db-card{border:1px solid #ccd2da;border-radius:9px;background:#f7f8fa;padding:8px}.db-card.active{border-color:#0e9c86;background:#e8f6f3}.db-card-head{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;gap:6px;align-items:center}.db-character-card .db-card-head{grid-template-columns:28px 28px minmax(0,1fr) 28px}.db-pin-mini{font-size:14px;line-height:1}.db-pin-mini.active{background:#0e9c86;border-color:#0e9c86;color:#fff}.db-part-summary{margin-top:7px;padding:6px 7px;border:1px solid #d7dce2;border-radius:7px;background:#fff;color:#66717e;font-size:10px;line-height:1.35}.db-pin-status{margin-top:7px;padding:7px;border:1px solid #d2d8df;border-radius:7px;background:#f3f5f7;font-size:10px;color:#626e7b}.db-pin-status.pinned{border-color:#9bcfc5;background:#eaf7f4;color:#237768}.db-card-head input{width:100%;min-width:0;border:1px solid #c6cdd6;border-radius:6px;padding:6px}.db-mini{width:28px;height:28px;border:1px solid #b9c1cb;border-radius:6px;background:#fff;cursor:pointer}.db-card-body{margin-top:7px}.db-bone-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:6px;align-items:center;border:1px solid #cfd5dc;border-radius:7px;padding:7px;background:#f5f6f8;cursor:pointer}.db-bone-row.active{border-color:#0e9c86;background:#e5f6f2}.db-dot{width:11px;height:11px;border-radius:50%;background:#6f7781}.db-bone-row.active .db-dot{background:#0e9c86}.db-status{position:absolute;left:7px;right:7px;bottom:7px;min-height:26px;max-height:42px;overflow:auto;border:1px solid #cbd2da;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596573}.db-status.good{border-color:#0e9c86;color:#117d6d}.db-status.bad{border-color:#c66a6a;color:#a33d3d}.db-hidden{display:none}.db-pill{display:inline-block;border:1px solid #c7ced7;border-radius:999px;padding:3px 7px;font-size:9px;color:#64707e;background:#fff}.db-empty{border:1px dashed #bbc3cd;border-radius:9px;padding:14px;text-align:center;color:#78828e;font-size:11px}.db-point-list{max-height:190px;overflow:auto;border:1px solid #d0d6dd;border-radius:8px;background:#fafbfc}.db-point-row{display:grid;grid-template-columns:34px 1fr 1fr;gap:6px;padding:5px;border-bottom:1px solid #e1e4e8}.db-point-row:last-child{border-bottom:0}.db-point-row.active{background:#e4f5f1}.db-point-row input{width:100%;min-width:0;border:1px solid #c9d0d8;border-radius:5px;padding:5px}.db-subtabs{display:flex;gap:6px;margin-bottom:8px}.db-subtab{flex:1;border:1px solid #b9c1cb;border-radius:7px;background:#e9ecef;padding:7px;font-size:10px}.db-subtab.active{background:#3fae9b;color:#fff;border-color:#0e9c86}",
       "@media(max-width:560px){.la-dembones-full{left:8px;top:8px;width:calc(100vw - 16px);height:calc(100vh - 16px)}.db-row,.db-row.three{grid-template-columns:78px minmax(0,1fr)}.db-row.three>*:last-child{grid-column:2}.db-grid3{grid-template-columns:repeat(2,minmax(0,1fr))}}"
     ].join("\n");document.head.appendChild(s);
   }
@@ -4740,34 +4205,17 @@
   function tabButton(id,label){return'<button class="db-tab'+(state.tab===id?' active':'')+'" data-db-tab="'+id+'" type="button">'+label+'</button>';}
 
   function workflowStepsHtml(){
-    var rig=state.activeRig;
-    var hasShapes=!!(rig&&rigObjects(rig).length);
-    var hasBones=!!(rig&&rig.bones&&rig.bones.length);
-    var inCharacter=state.character.parts.length>0;
-    var steps=[
-      {label:'Build Parts',done:hasShapes,tab:'source'},
-      {label:'Bones',done:hasBones,tab:'bones'},
-      {label:'Add To Character',done:inCharacter,tab:'character'}
-    ];
-    var currentIndex=0;
-    for(var i=0;i<steps.length;i++){ if(steps[i].done) currentIndex=i+1; }
-    if(currentIndex>steps.length-1) currentIndex=steps.length-1;
-    return '<div class="db-steps">'+steps.map(function(step,index){
-      var state_="";
-      if(step.done) state_=" done";
-      else if(index===currentIndex) state_=" current";
-      return '<div class="db-step'+state_+'" data-db-step-jump="'+step.tab+'" title="Go to '+esc(step.label)+'"><span class="db-step-dot">'+(step.done?'\u2713':(index+1))+'</span><span class="db-step-label">'+esc(step.label)+'</span></div>'+(index<steps.length-1?'<span class="db-step-sep"></span>':'');
-    }).join('')+'</div>';
+    var rig=state.activeRig,hasShapes=!!(rig&&rigObjects(rig).length),hasBones=!!(rig&&rig.bones&&rig.bones.length),inCharacter=state.character.parts.length>0;
+    var steps=[{label:"Build Parts",done:hasShapes,tab:"source"},{label:"Bones",done:hasBones,tab:"bones"},{label:"Add To Character",done:inCharacter,tab:"character"}],current=hasShapes?(hasBones?2:1):0;if(inCharacter)current=2;
+    return '<div class="db-steps">'+steps.map(function(step,index){var cls=step.done?' done':(index===current?' current':'');return '<div class="db-step'+cls+'" data-db-step-jump="'+step.tab+'"><span class="db-step-dot">'+(step.done?'✓':(index+1))+'</span><span class="db-step-label">'+step.label+'</span></div>'+(index<2?'<span class="db-step-sep"></span>':'');}).join('')+'</div>';
   }
 
   function panelHtml(){
     return '<div class="db-head" data-db-drag><img src="'+esc(ICON_URL)+'" alt=""><div class="db-title"><strong>Dem Bones</strong><span>MyCharacter · Build Parts · Bone Animation</span></div><div class="db-frame">Frame <b data-db-frame>'+currentFrame()+'</b></div><button class="db-close" data-db-close type="button">×</button></div>'+ 
-      '<div class="db-tabs">'+'<div class="db-tab-group"><span class="db-tab-group-label">1 Rig a part</span><div class="db-tabs-row">'+tabButton('source','Build Parts')+tabButton('bones','Bones')+tabButton('editbone','Edit Bone')+tabButton('animate','Animate')+tabButton('curves','Curves')+tabButton('expression','Expression')+'</div></div>'+
-      '<div class="db-tab-group"><span class="db-tab-group-label">2 Build the character</span><div class="db-tabs-row two">'+tabButton('character','Build Character')+tabButton('help','Help')+'</div></div>'+ 
-      '</div>'+
-      '<div data-db-steps>'+workflowStepsHtml()+'</div>'+
-      '<div class="db-body" data-db-body></div>'+ 
+      '<div class="db-tabs"><div class="db-tab-group"><span class="db-tab-group-label">1 Rig a part</span><div class="db-tabs-row">'+tabButton('source','Build Parts')+tabButton('bones','Bones')+tabButton('editbone','Edit Bone')+tabButton('animate','Animate')+tabButton('curves','Curves')+tabButton('expression','Expression')+'</div></div><div class="db-tab-group"><span class="db-tab-group-label">2 Build the character</span><div class="db-tabs-row two">'+tabButton('character','Build Character')+tabButton('help','Help')+'</div></div></div>'+ 
+      '<div data-db-steps>'+workflowStepsHtml()+'</div><div class="db-body" data-db-body></div>'+ 
       '<input class="db-hidden" type="file" accept=".svg,image/svg+xml" data-db-svg>'+ 
+      '<input class="db-hidden" type="file" accept=".png,image/png" data-db-png>'+ 
       '<input class="db-hidden" type="file" accept="application/json,.json,.dembones" data-db-part-file>'+ 
       '<input class="db-hidden" type="file" accept="application/json,.json,.mycharacter" data-db-character-file>'+ 
       '<input class="db-hidden" type="file" accept=".svg,image/svg+xml" data-db-expression-file>'+ 
@@ -4776,7 +4224,6 @@
 
   function characterPage(){
     /* PANEL RENDER IS READ-ONLY: never rewrite stage geometry here. */
-    var orphanCount=findOrphanDemBonesObjects().length;
     var cards=state.character.parts.length
       ?state.character.parts.map(function(part){
           var active=Number(state.character.selectedPartId)===Number(part.id);
@@ -4803,11 +4250,11 @@
                     '<button class="db-btn" data-db-part-up="'+part.id+'">Move Up</button>'+
                     '<button class="db-btn" data-db-part-down="'+part.id+'">Move Down</button>'+
                   '</div>'+
-                  '<div class="db-part-summary">X '+round3(transform.x)+' · Y '+round3(transform.y)+' · Scale '+round3(transform.scale)+' · Rotation '+round3(transform.rotation)+'°<br><b>Select / Move</b> uses Luke Animate’s normal stage handles. <b>Adjust</b> edits rest bones/envelopes. <b>Animate</b> edits bone animation.</div>'+
+                  '<div class="db-part-summary">X '+round3(transform.x)+' · Y '+round3(transform.y)+' · Scale '+round3(transform.scale)+' · Rotation '+round3(transform.rotation)+'°</div>'+
                   '<div class="db-pin-status'+(part.pin?' pinned':'')+'">'+esc(pinStatusText(part))+
                     (part.pin
                       ?'<div style="margin-top:6px"><button class="db-btn" style="width:100%" data-db-clear-pin="'+part.id+'">Unpin — keep current position</button></div>'
-                      :'<div style="margin-top:4px">Press 📌, then click the target bone on another visible part. Pinning will not move this part when the pin is created.</div>')+
+                      :'')+
                   '</div>'+
                 '</div>'
                 :'')+
@@ -4817,25 +4264,27 @@
 
     return '<div class="db-page active">'+
       '<div class="db-section">'+
-        '<h3>Step 3 · Build Character</h3>'+
-        '<div class="db-row"><label>Name'+(state.character.nameConfirmed?'':' *')+'</label><input value="'+(state.character.nameConfirmed?esc(state.character.name):'')+'" placeholder="Name this character…" data-db-character-name></div>'+
-        (state.character.nameConfirmed?'':'<p class="db-help" style="color:#b3261e">Name the character before adding a part - this becomes its name as an object on Main Scene.</p>')+
+        '<h3>MyCharacter</h3>'+
+        '<div class="db-row"><label>Name</label><input value="'+(state.character.nameConfirmed?esc(state.character.name):'')+'" placeholder="Name character" data-db-character-name></div>'+
         '<div class="db-grid3"><button class="db-btn primary" data-db-character-add>Add Current Part</button><button class="db-btn" data-db-character-save>Save</button><button class="db-btn" data-db-character-load>Load</button></div>'+
-        '<p class="db-help" style="margin-top:8px">Character parts are real Luke Animate Clip instances. Click a part card or Select / Move, then use the normal Select/Edit tool on stage. 📌 follows the LukeTools pin workflow. Adding a part to MyCharacter automatically keeps the Character Clip up to date and clears its own Build Parts artwork off the stage - there is no separate step to remember.</p>'+
+        '<p class="db-help" style="margin-top:8px">Add parts, adjust bones, or animate.</p>'+
       '</div>'+
       '<div class="db-section"><h3>Parts</h3><div class="db-list">'+cards+'</div></div>'+
-      '<div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div>'+
-      '<div class="db-section"><h3>Maintenance</h3><p class="db-help">These do not need to be used in normal course - MyCharacter keeps itself in sync automatically. Use them only if something looks wrong.</p><div class="db-grid3"><button class="db-btn" data-db-character-resync title="If a part\'s bones look offset from its artwork, this re-reads every part\'s real on-stage position without moving anything">Resync Bones</button><button class="db-btn'+(orphanCount?' primary':'')+'" data-db-character-cleanup title="Removes any leftover Build Parts shapes and bones from abandoned or already-added parts, anywhere in the project">Clean Up Stray Artwork'+(orphanCount?' ('+orphanCount+')':'')+'</button><button class="db-btn" data-db-character-commit title="Force MyCharacter to rebuild itself right now">Force Sync Now</button></div></div>'+
+      '<div class="db-section"><h3>Maintenance</h3><div class="db-grid3"><button class="db-btn" data-db-character-resync>Resync Bones</button><button class="db-btn" data-db-character-cleanup>Clean Up</button><button class="db-btn" data-db-character-commit>Force Sync</button></div></div>'+
     '</div>';
   }
 
   function sourcePage(){
-    var rig=state.activeRig,count=rig?rigObjects(rig).length:0;
-    function pointMode(value,label,help){
-      return '<label class="db-check" style="align-items:flex-start;margin-bottom:7px"><input type="radio" name="db-ingest-point-mode" value="'+value+'" data-db-point-mode="'+value+'"'+(state.pointMode===value?' checked':'')+'><span><b>'+label+'</b><br><span style="color:#7a8592">'+help+'</span></span></label>';
-    }
-    return '<div class="db-page active"><div class="db-section"><h3>Step 1 · Get Shapes</h3><p class="db-help">Draw or select vector shapes on the stage, choose an ingest mode below, then click <b>Use Stage Selection</b>. Each imported shape becomes part of this "part" and can then be rigged with bones on the Bones tab.</p><div class="db-grid3"><button class="db-btn primary" data-db-use-selection title="Convert the shapes currently selected on the stage into this part">Use Stage Selection</button><button class="db-btn" data-db-load-svg title="Import shapes from an SVG file on disk">Load SVG</button><button class="db-btn" data-db-add-dummy title="Add a simple placeholder rectangle to this part, useful for testing bones before real artwork is ready">Add Placeholder Shape</button></div><label class="db-check" style="margin-top:8px"><input type="checkbox" data-db-remove-originals'+(state.removeOriginals?' checked':'')+'> Remove selected originals after conversion</label><div class="db-grid2" style="margin-top:8px"><button class="db-btn" data-db-export-svg>Export Selection SVG</button><button class="db-btn" data-db-release-stage>Return Shapes To Stage</button></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-add-character title="Send this rigged part to the Build Character tab">Add To Character</button><button class="db-btn" data-db-cancel-edit>Cancel Part Edit</button></div></div><div class="db-section"><h3>Project Files</h3><div class="db-grid2"><button class="db-btn" data-db-save-part>Save Part</button><button class="db-btn" data-db-load-part>Load Part</button></div></div><div class="db-section"><h3>Curve Points On Ingest</h3>'+pointMode('selected','Use selected curve points','Keep native Bezier anchors/handles. Straight spans gain only collinear deformation points where needed for smooth bending.')+pointMode('uniform','Use uniform','Keep every existing point and add evenly spaced deformation points between them.')+pointMode('limb','Limb','Create the reference seven-point limb layout: outer corners plus a joint pair at 55% along the long axis.')+'</div><div class="db-section"><h3>Build Status</h3><p class="db-help">Part: '+esc(rig?rig.name:'None')+'<br>Shapes: '+count+'<br>Bones: '+(rig&&rig.bones?rig.bones.length:0)+'<br>Ingest: '+esc(state.pointMode==='limb'?'Limb':(state.pointMode==='uniform'?'Uniform':'Selected points'))+'</p></div></div>';
+    var rig=state.activeRig;
+    function pointMode(value,label){return '<label class="db-check" style="margin-right:10px"><input type="radio" name="db-ingest-point-mode" value="'+value+'" data-db-point-mode="'+value+'"'+(state.pointMode===value?' checked':'')+'><span>'+label+'</span></label>';}
+    return '<div class="db-page active">'+
+      '<div class="db-section"><h3>Step 1 · Get Shapes</h3><p class="db-help">Select stage artwork or load a file, then add bones.</p><div class="db-grid3"><button class="db-btn primary" data-db-use-selection>Use Stage Selection</button><button class="db-btn" data-db-load-svg>Load SVG</button><button class="db-btn" data-db-load-png>Load PNG</button></div><label class="db-check" style="margin-top:7px"><input type="checkbox" data-db-remove-originals'+(state.removeOriginals?' checked':'')+'> Remove selected originals after conversion</label></div>'+ 
+      '<div class="db-section"><h3>Curve Points On Ingest</h3><div style="display:flex;flex-wrap:wrap;gap:5px">'+pointMode('selected','Selected points')+pointMode('uniform','Uniform')+pointMode('limb','Limb')+'</div></div>'+ 
+      '<div class="db-section"><div class="db-grid3"><button class="db-btn primary" data-db-use-selection>Use Stage Selection</button><button class="db-btn" data-db-load-svg>Load SVG</button><button class="db-btn" data-db-add-dummy>Add Placeholder Shape</button></div><div class="db-grid2" style="margin-top:6px"><button class="db-btn" data-db-export-svg>Export Selection SVG</button><button class="db-btn" data-db-release-stage>Return Shapes To Stage</button></div><div class="db-grid2" style="margin-top:6px"><button class="db-btn primary" data-db-add-character>Add To Character</button><button class="db-btn" data-db-cancel-edit>Cancel Part Edit</button></div></div>'+ 
+      '<div class="db-section"><h3>Project Files</h3><div class="db-grid2"><button class="db-btn" data-db-save-part>Save Part</button><button class="db-btn" data-db-load-part>Load Part</button></div></div>'+ 
+      (rig?'<div class="db-help" style="padding:0 2px">'+esc(rig.name||'Part')+' · '+(rig.bones||[]).length+' bone(s)</div>':'')+'</div>';
   }
+
   function boneListHtml(){
     var rig=state.activeRig;
     if(!rig||!rig.bones||!rig.bones.length)return '<div class="db-empty">No bones yet. Drag on the stage to create the first bone.</div>';
@@ -4847,78 +4296,42 @@
   }
 
   function envelopeDisplayHtml(){
-    return '<div class="db-section"><h3>Envelope Display</h3>'+
-      '<label class="db-check"><input type="checkbox" data-db-show-envelopes'+
-      (state.showEnvelopes?' checked':'')+
-      '> Show bone envelopes on stage</label>'+
-      '<p class="db-help" style="margin-top:8px">The translucent tapered shape shows the area controlled by each bone. Adjust Envelope Head, Envelope Tail and Strength to shape the deformation area.</p></div>';
+    return '<div class="db-section"><h3>Envelopes</h3><label class="db-check"><input type="checkbox" data-db-show-envelopes'+(state.showEnvelopes?' checked':'')+'> Show envelopes and resize handles</label></div>';
   }
 
-  function bonesPage(){return '<div class="db-page active"><div class="db-section"><h3>Step 2 · Bone Creation</h3><p class="db-help">The Bones tab stays in Add Bone mode. Drag to create the first bone. After it is finished, the next click-and-drag creates a child from the selected bone tail. Click an existing bone without dragging to select it. Use the × on any bone row, or press Delete/Backspace, to remove a bone you do not want. Click <b>Bind</b> once bones are placed so artwork deforms with them.</p><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone">Bone</option><option value="lip">Lip_Bone</option><option value="frame">Frame_Bone</option></select></div><div class="db-grid3"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div></div>'+envelopeDisplayHtml()+'<div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div></div>';}
+  function bonesPage(){return '<div class="db-page active"><div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone">Bone</option><option value="lip">Lip_Bone</option><option value="frame">Frame_Bone</option></select></div><div class="db-grid3"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div></div>'+envelopeDisplayHtml()+'<div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div></div>'; }
 
-  function editBonePage(){var b=selectedBone(),rig=state.activeRig;var boneOptions=((rig&&rig.bones)||[]).map(function(x){return'<option value="'+esc(x.id)+'"'+(b&&b.id===x.id?' selected':'')+'>'+esc(x.name||'Bone')+(x.parentId?'':' (root)')+'</option>';}).join('');var parents='<option value="">No parent</option>'+((rig&&rig.bones)||[]).filter(function(x){return!b||x.id!==b.id;}).map(function(x){return'<option value="'+esc(x.id)+'"'+(b&&b.parentId===x.id?' selected':'')+'>'+esc(x.name)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Edit Bone</h3>'+((rig&&rig.bones&&rig.bones.length)?'<div class="db-row"><label>Editing</label><select data-db-edit-bone-select>'+boneOptions+'</select></div>':'')+(b?'<div class="db-row"><label>Name</label><input value="'+esc(b.name)+'" data-db-edit-bone-name></div><div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div><div class="db-row three"><label>Head X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.x)+'" data-db-bone-head-x><input type="number" value="'+round3(b.restHead.x)+'" data-db-bone-head-x-num></div><div class="db-row three"><label>Head Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.y)+'" data-db-bone-head-y><input type="number" value="'+round3(b.restHead.y)+'" data-db-bone-head-y-num></div><div class="db-row three"><label>Tail X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x><input type="number" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x-num></div><div class="db-row three"><label>Tail Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y><input type="number" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y-num></div><div class="db-row three"><label>Envelope Head</label><input type="range" min="2" max="300" value="'+round3(b.envStart||30)+'" data-db-bone-env-start><input type="number" min="2" max="300" value="'+round3(b.envStart||30)+'" data-db-bone-env-start-num></div><div class="db-row three"><label>Envelope Tail</label><input type="range" min="2" max="300" value="'+round3(b.envEnd||30)+'" data-db-bone-env-end><input type="number" min="2" max="300" value="'+round3(b.envEnd||30)+'" data-db-bone-env-end-num></div><div class="db-row three"><label>Strength</label><input type="range" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength><input type="number" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength-num></div><p class="db-help">Envelope Head, Tail and Strength update the stage live. Drag a bone\'s <b>tail</b> on stage to rotate it around its head; dragging the <b>head</b> moves/translates the whole bone instead. This applies the same way to the root bone as to every child.</p><div class="db-grid2"><button class="db-btn primary" data-db-apply-bone-edit>Apply</button><button class="db-btn danger" data-db-delete-bone>Delete Bone</button></div>':'<div class="db-empty">Select a bone in the Bones tab or on the stage.</div>')+'</div>'+envelopeDisplayHtml()+'</div>';}
+  function editBonePage(){
+    var b=selectedBone(),rig=state.activeRig;
+    var boneOptions=((rig&&rig.bones)||[]).map(function(x){return '<option value="'+esc(x.id)+'"'+(b&&b.id===x.id?' selected':'')+'>'+esc(x.name||'Bone')+'</option>';}).join('');
+    var parents='<option value="">No parent</option>'+((rig&&rig.bones)||[]).filter(function(x){return !b||x.id!==b.id;}).map(function(x){return '<option value="'+esc(x.id)+'"'+(b&&b.parentId===x.id?' selected':'')+'>'+esc(x.name||'Bone')+'</option>';}).join('');
+    return '<div class="db-page active"><div class="db-section"><h3>Edit Bone</h3>'+((rig&&rig.bones&&rig.bones.length)?'<div class="db-row"><label>Editing</label><select data-db-edit-bone-select>'+boneOptions+'</select></div>':'')+(b?'<div class="db-row"><label>Name</label><input value="'+esc(b.name)+'" data-db-edit-bone-name></div><div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div><div class="db-row three"><label>Head X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.x)+'" data-db-bone-head-x><input type="number" value="'+round3(b.restHead.x)+'" data-db-bone-head-x-num></div><div class="db-row three"><label>Head Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restHead.y)+'" data-db-bone-head-y><input type="number" value="'+round3(b.restHead.y)+'" data-db-bone-head-y-num></div><div class="db-row three"><label>Tail X</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x><input type="number" value="'+round3(b.restTail.x)+'" data-db-bone-tail-x-num></div><div class="db-row three"><label>Tail Y</label><input type="range" min="-2000" max="2000" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y><input type="number" value="'+round3(b.restTail.y)+'" data-db-bone-tail-y-num></div><div class="db-row three"><label>Env Head</label><input type="range" min="2" max="500" value="'+round3(b.envStart||30)+'" data-db-bone-env-start><input type="number" min="2" max="500" value="'+round3(b.envStart||30)+'" data-db-bone-env-start-num></div><div class="db-row three"><label>Env Tail</label><input type="range" min="2" max="500" value="'+round3(b.envEnd||30)+'" data-db-bone-env-end><input type="number" min="2" max="500" value="'+round3(b.envEnd||30)+'" data-db-bone-env-end-num></div><div class="db-row three"><label>Strength</label><input type="range" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength><input type="number" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength-num></div><div class="db-grid2"><button class="db-btn primary" data-db-apply-bone-edit>Apply</button><button class="db-btn danger" data-db-delete-bone>Delete Bone</button></div>':'<div class="db-empty">Select a bone.</div>')+'</div>'+envelopeDisplayHtml()+'</div>';
+  }
 
   function animatePage(){var b=selectedBone(),p=b?interpolatePose(b,currentTime()):{dx:0,dy:0,rotation:0,scale:1,easing:'linear'};return '<div class="db-page active"><div class="db-section"><h3>Animate Selected Bone</h3>'+(b?'<p class="db-help">'+esc(b.name)+' · Frame '+currentFrame()+'</p><div class="db-row three"><label>Move X</label><input type="range" min="-1000" max="1000" value="'+round3(p.dx)+'" data-db-pose-dx><input type="number" value="'+round3(p.dx)+'" data-db-pose-dx-num></div><div class="db-row three"><label>Move Y</label><input type="range" min="-1000" max="1000" value="'+round3(p.dy)+'" data-db-pose-dy><input type="number" value="'+round3(p.dy)+'" data-db-pose-dy-num></div><div class="db-row three"><label>Rotation</label><input type="range" min="-360" max="360" value="'+round3(p.rotation)+'" data-db-pose-rotation><input type="number" value="'+round3(p.rotation)+'" data-db-pose-rotation-num></div><div class="db-row three"><label>Scale</label><input type="range" min="0.05" max="5" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale><input type="number" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale-num></div><div class="db-row"><label>Easing</label><select data-db-pose-easing><option value="linear"'+(p.easing==='linear'?' selected':'')+'>Linear</option><option value="ease-in"'+(p.easing==='ease-in'?' selected':'')+'>Ease In</option><option value="ease-out"'+(p.easing==='ease-out'?' selected':'')+'>Ease Out</option><option value="ease-in-out"'+(p.easing==='ease-in-out'?' selected':'')+'>Ease In/Out</option><option value="hold"'+(p.easing==='hold'?' selected':'')+'>Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-bone-key>Set Key</button><button class="db-btn danger" data-db-delete-bone-key>Delete Key</button></div>':'<div class="db-empty">Select a bone first.</div>')+'</div></div>';}
 
-  function curvesPage(){var rig=state.activeRig,objs=rig?rigObjects(rig):[],o=findObjectById(state.selectedCurveId)||objs[0];if(o&&!state.selectedCurveId)state.selectedCurveId=o.id;var options=objs.map(function(x,i){return'<option value="'+esc(x.id)+'"'+(o&&o.id===x.id?' selected':'')+'>Curve '+(i+1)+'</option>';}).join('');var points=o&&o.points||[];var rows=points.map(function(p,i){return'<div class="db-point-row'+(i===state.selectedPointIndex?' active':'')+'" data-db-point-index="'+i+'"><span>'+i+'</span><input type="number" step="0.1" value="'+round3(p.x)+'" data-db-point-x="'+i+'"><input type="number" step="0.1" value="'+round3(p.y)+'" data-db-point-y="'+i+'"></div>';}).join('');var bone=selectedBone();return '<div class="db-page active"><div class="db-section"><h3>Curves</h3>'+(o?'<div class="db-note">Edit the source outline or key its points. Click <b>Add Point</b>, then click directly on a curve segment. Ctrl+click on a segment does the same thing. Shapes bound to a rig are fully bone-driven - dragging one on stage with Select/Edit will not move it; use <b>Center On Selected Bone</b> below to reposition a shape that landed in the wrong place.</div><div class="db-row"><label>Curve</label><select data-db-curve-select>'+options+'</select></div><div class="db-row"><label>Points</label><span>'+points.length+'</span></div><div class="db-grid3"><button class="db-btn'+(state.curvePointAddMode?' primary':'')+'" data-db-add-curve-point>'+(state.curvePointAddMode?'Click Curve…':'Add Point')+'</button><button class="db-btn" data-db-subdivide-curve>Subdivide All</button><button class="db-btn danger" data-db-delete-source-point>Delete Point</button></div><button class="db-btn" style="width:100%;margin-top:7px" data-db-center-on-bone title="Move this shape\'s points so it sits centred on the selected bone (or the rig\'s centre if no bone is selected)">Center On '+(bone?('Bone \u201c'+esc(bone.name||'Bone')+'\u201d'):'Rig Centre')+'</button><div class="db-point-list">'+rows+'</div><div class="db-row" style="margin-top:8px"><label>Easing</label><select data-db-point-easing><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="ease-in-out">Ease In/Out</option><option value="hold">Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-point-key>Set Curve Key</button><button class="db-btn danger" data-db-delete-point-key>Delete Curve Key</button></div>':'<div class="db-empty">Build or load a part containing editable curves.</div>')+'</div></div>';}
+  function curvesPage(){var rig=state.activeRig,objs=rig?rigObjects(rig).filter(function(x){return x&&x.type!=="image";}):[],o=findObjectById(state.selectedCurveId)||objs[0];if(o&&!state.selectedCurveId)state.selectedCurveId=o.id;var options=objs.map(function(x,i){return'<option value="'+esc(x.id)+'"'+(o&&o.id===x.id?' selected':'')+'>'+esc(x.name||('Curve '+(i+1)))+'</option>';}).join('');var points=o&&o.points||[];var rows=points.map(function(p,i){return'<div class="db-point-row'+(i===state.selectedPointIndex?' active':'')+'" data-db-point-index="'+i+'"><span>'+i+'</span><input type="number" step="0.1" value="'+round3(p.x)+'" data-db-point-x="'+i+'"><input type="number" step="0.1" value="'+round3(p.y)+'" data-db-point-y="'+i+'"></div>';}).join('');var bone=selectedBone();return '<div class="db-page active"><div class="db-section"><h3>Curves</h3>'+(o?'<div class="db-row"><label>Curve</label><select data-db-curve-select>'+options+'</select></div><div class="db-row"><label>Points</label><span>'+points.length+'</span></div><div class="db-grid3"><button class="db-btn'+(state.curvePointAddMode?' primary':'')+'" data-db-add-curve-point>'+(state.curvePointAddMode?'Click Curve…':'Add Point')+'</button><button class="db-btn" data-db-subdivide-curve>Subdivide All</button><button class="db-btn danger" data-db-delete-source-point>Delete Point</button></div><button class="db-btn" style="width:100%;margin-top:7px" data-db-center-on-bone>Center On '+(bone?esc(bone.name||'Bone'):'Rig')+'</button><div class="db-point-list" style="margin-top:7px">'+rows+'</div><div class="db-row" style="margin-top:8px"><label>Easing</label><select data-db-point-easing><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="ease-in-out">Ease In/Out</option><option value="hold">Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-point-key>Set Curve Key</button><button class="db-btn danger" data-db-delete-point-key>Delete Curve Key</button></div>':'<div class="db-empty">No editable curves in this part.</div>')+'</div></div>';}
 
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> load an SVG or use selected Luke Animate stage vectors. SVG files loaded by DemBones are automatically centred using the actual artwork bounds. The original shapes are preserved unless Remove Originals is selected.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character keeps the part where it is on stage and automatically keeps the Character Clip finished and up to date - there is no separate Commit step. Select / Move uses Luke Animate’s native Select/Edit tool. Adjust opens rest-bone/envelope editing. Animate opens bone animation. To pin, press 📌 on the child part and click a visible target bone; the current placement is preserved.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
+  function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts SVG/rig artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div><div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> use stage vectors, SVG or transparent PNG artwork.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character keeps the part where it is on stage. Select / Move uses Luke Animate’s native Select/Edit tool. Adjust opens rest-bone/envelope editing. Animate opens bone animation. To pin, press 📌 on the child part and click a visible target bone; the current placement is preserved.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
 
-  function goToTab(nextTab){
-    if(!nextTab)return;
-    if(state.tab==='character'&&nextTab!=='character'&&state.character.rootClipId&&API.getEditingClipId()===state.character.rootClipId){state.activeRig=null;state.selectedBoneId='';state.selectedCurveId='';}
-    state.tab=nextTab;
-    state.curvePointAddMode=false;
-    state.mode=state.tab==='bones'?'add-bone':'select';
-    if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}
-    renderAll();
-  }
-
-  function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();setStatus(state.status,state.statusType);}
-  var BONE_CURSOR_PATH="m 90.689095,165.32534 c -3.581694,-1.16044 -6.763294,-3.93887 -8.388372,-7.3254 -0.775996,-1.61711 -0.946884,-1.79215 -2.428398,-2.48746 -2.28929,-1.07442 -4.906973,-3.76916 -6.083834,-6.26291 -3.814185,-8.08223 1.004839,-17.97566 9.659961,-19.83185 1.908807,-0.40936 6.15606,-0.1714 7.618531,0.42685 l 1.146652,0.46905 9.779395,-9.76103 c 8.53853,-8.5225 9.76346,-9.84497 9.6538,-10.4225 -0.0691,-0.3638 -0.31074,-1.37583 -0.53702,-2.24896 -1.17839,-4.54697 0.0929,-9.269876 3.45441,-12.833246 4.37371,-4.63637 10.88584,-5.79467 16.71746,-2.97352 2.12582,1.02841 5.02908,3.96836 6.11402,6.19129 0.80653,1.65249 0.96752,1.814636 2.59953,2.618066 2.08601,1.02694 5.16337,3.9782 6.21351,5.95889 2.0912,3.94428 2.04296,9.50563 -0.11573,13.34165 -1.2063,2.14361 -2.49628,3.6087 -4.29856,4.88212 -2.41228,1.7044 -4.27449,2.31064 -7.5564,2.45996 -2.50018,0.11375 -2.98705,0.0561 -4.86628,-0.5759 l -2.08816,-0.70229 -0.65109,0.60607 c -0.3581,0.33334 -4.69157,4.73352 -9.62994,9.77816 l -8.97885,9.17209 0.5806,1.67583 c 0.7926,2.28775 0.79327,6.21977 10e-4,8.70637 -1.36102,4.27426 -5.03501,7.94679 -9.254484,9.25083 -2.416041,0.74668 -6.161092,0.69819 -8.662221,-0.11216 z m 7.443426,-6.13266 c 3.680229,-1.52486 5.635029,-5.60023 4.522269,-9.42801 -0.23857,-0.82065 -0.96729,-2.20441 -1.64747,-3.12837 l -1.219668,-1.6568 12.131968,-12.15975 c 6.67258,-6.68787 12.59632,-12.50492 13.16385,-12.92679 1.35183,-1.00486 2.25796,-0.97193 4.08761,0.14856 3.54515,2.17105 7.49373,1.71384 10.20178,-1.18129 2.00651,-2.14513 2.60612,-4.37632 1.90819,-7.10059 -0.22799,-0.88993 -0.71081,-2.0874 -1.07294,-2.66105 -2.23269,-3.53681 -7.30209,-4.5105 -10.94426,-2.10209 -0.62576,0.41379 -1.22387,0.75234 -1.32913,0.75234 -0.10526,0 -1.13752,-0.95172 -2.29391,-2.11494 l -2.10254,-2.11494 0.91812,-0.79309 c 1.27876,-1.10462 3.30786,-2.23849 4.96974,-2.777126 1.36253,-0.4416 1.39163,-0.47129 0.9453,-0.96448 -0.25328,-0.27987 -1.23016,-0.88775 -2.17085,-1.35085 -4.81661,-2.37121 -10.11523,0.38679 -11.14052,5.798796 -0.41585,2.19506 0.27023,4.50978 2.04154,6.88778 0.34878,0.46825 0.59318,0.95985 0.54311,1.09244 -0.0501,0.13259 -6.00187,6.2179 -13.22622,13.52291 l -13.135188,13.28182 -1.813777,-1.20247 c -2.946646,-1.95352 -5.506547,-2.18946 -8.487518,-0.78228 -2.830862,1.33632 -4.479365,4.23593 -4.246329,7.46901 0.186308,2.58479 1.945275,5.81379 2.601809,4.77624 0.132201,-0.20892 0.24219,-0.53208 0.244418,-0.71814 0.0072,-0.6036 1.628395,-3.59993 2.585398,-4.77846 l 0.932201,-1.148 2.189952,2.17858 2.189953,2.17857 -0.881413,1.28135 c -0.824085,1.19801 -1.45579,3.17671 -1.45579,4.55999 0,1.0271 0.741191,3.15644 1.53179,4.40062 1.879104,2.95718 6.047618,4.17378 9.458525,2.76051 z";
-
+  function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   var boneCursorCache={};
-
   function boneCursorUrl(colorHex){
-    /*
-      https://lukeo25.github.io/LukeAnimate/SVGs/Bone.svg recoloured per mode
-      - green while actively placing/dragging a new bone, blue while
-        editing an existing bone's rest pose - instead of the raw white
-        original, since that would be invisible against a light canvas.
-    */
     if(boneCursorCache[colorHex])return boneCursorCache[colorHex];
-    var svg='<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="72.467493 90.551252 75.277687 75.415604">'+
-      '<path fill="'+colorHex+'" stroke="#132018" stroke-width="1.6" stroke-linejoin="round" d="'+BONE_CURSOR_PATH+'"/>'+
-    '</svg>';
+    var svg='<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 15 15"><path d="M3 12 L12 3" stroke="'+colorHex+'" stroke-width="3" stroke-linecap="round"/><circle cx="3" cy="12" r="2.3" fill="white" stroke="'+colorHex+'" stroke-width="1.6"/><circle cx="12" cy="3" r="2.3" fill="white" stroke="'+colorHex+'" stroke-width="1.6"/></svg>';
     var encoded;
-    try{
-      encoded="data:image/svg+xml;base64,"+btoa(svg);
-    }catch(eEncode){
-      encoded="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg);
-    }
-    var css='url("'+encoded+'") 7 7, crosshair';
-    boneCursorCache[colorHex]=css;
-    return css;
+    try{encoded="data:image/svg+xml;base64,"+btoa(svg);}catch(e){encoded="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg);}
+    return boneCursorCache[colorHex]='url("'+encoded+'") 7 7, crosshair';
   }
-
   function updateStageCursor(){
-    var surface=API.overlay||API.canvas;
-    if(!surface)return;
-
-    if(!state.open){
-      surface.style.cursor="";
-      return;
-    }
-
-    if(state.tab==="bones"&&state.mode==="add-bone"){
-      surface.style.cursor=boneCursorUrl("#22c55e");
-    }else if(state.tab==="editbone"){
-      surface.style.cursor=boneCursorUrl("#2f6fed");
-    }else{
-      surface.style.cursor="";
-    }
+    var surface=API.overlay||API.canvas;if(!surface)return;
+    if(!state.open){surface.style.cursor="";return;}
+    if(state.tab==="bones"&&state.mode==="add-bone")surface.style.cursor=boneCursorUrl("#22c55e");
+    else if(state.tab==="editbone")surface.style.cursor=boneCursorUrl("#2f6fed");
+    else surface.style.cursor="";
   }
 
   function renderAll(){
@@ -4936,9 +4349,9 @@
   function bindPair(rangeSel,numSel,callback){var r=state.panel.querySelector(rangeSel),m=state.panel.querySelector(numSel);if(!r||!m)return;r.addEventListener('input',function(){m.value=r.value;callback&&callback(r.value);});m.addEventListener('input',function(){r.value=m.value;callback&&callback(m.value);});}
 
   function bindBodyEvents(){var p=state.panel;if(!p)return;
-    p.querySelectorAll('[data-db-use-selection]').forEach(function(b){b.onclick=useStageSelection;});p.querySelectorAll('[data-db-point-mode]').forEach(function(input){input.onchange=function(){if(input.checked){state.pointMode=input.value||'selected';renderAll();notify('Ingest mode set to '+(state.pointMode==='limb'?'Limb':(state.pointMode==='uniform'?'Uniform':'Selected points'))+'.',false);}};});p.querySelectorAll('[data-db-load-svg]').forEach(function(b){b.onclick=function(){state.fileInputs.svg.click();};});p.querySelectorAll('[data-db-add-dummy]').forEach(function(b){b.onclick=addDummy;});p.querySelectorAll('[data-db-export-svg]').forEach(function(b){b.onclick=function(){var o=selectedObjects().filter(supportedObject);if(!o.length&&state.activeRig)o=rigObjects(state.activeRig);if(!o.length){notify('Select shapes or build a part first.',true);return;}downloadText('LukeAnimate_Selection.svg',objectsToSvg(o),'image/svg+xml');};});
+    p.querySelectorAll('[data-db-use-selection]').forEach(function(b){b.onclick=useStageSelection;});p.querySelectorAll('[data-db-load-png]').forEach(function(b){b.onclick=function(){state.fileInputs.png.click();};});p.querySelectorAll('[data-db-step-jump]').forEach(function(step){step.onclick=function(){state.tab=step.getAttribute('data-db-step-jump')||'source';state.mode=state.tab==='bones'?'add-bone':'select';renderAll();};});p.querySelectorAll('[data-db-point-mode]').forEach(function(input){input.onchange=function(){if(input.checked){state.pointMode=input.value||'selected';renderAll();notify('Ingest mode set to '+(state.pointMode==='limb'?'Limb':(state.pointMode==='uniform'?'Uniform':'Selected points'))+'.',false);}};});p.querySelectorAll('[data-db-load-svg]').forEach(function(b){b.onclick=function(){state.fileInputs.svg.click();};});p.querySelectorAll('[data-db-add-dummy]').forEach(function(b){b.onclick=addDummy;});p.querySelectorAll('[data-db-export-svg]').forEach(function(b){b.onclick=function(){var o=selectedObjects().filter(supportedObject);if(!o.length&&state.activeRig)o=rigObjects(state.activeRig);if(!o.length){notify('Select shapes or build a part first.',true);return;}downloadText('LukeAnimate_Selection.svg',objectsToSvg(o),'image/svg+xml');};});
     var rem=p.querySelector('[data-db-remove-originals]');if(rem)rem.onchange=function(){state.removeOriginals=!!rem.checked;};p.querySelectorAll('[data-db-add-character],[data-db-character-add]').forEach(function(b){b.onclick=addBuildToCharacter;});p.querySelectorAll('[data-db-release-stage]').forEach(function(b){b.onclick=releaseRigToStage;});p.querySelectorAll('[data-db-cancel-edit]').forEach(function(b){b.onclick=function(){state.editingPartId=null;notify('Part edit cancelled.',false);};});p.querySelectorAll('[data-db-save-part]').forEach(function(b){b.onclick=savePart;});p.querySelectorAll('[data-db-load-part]').forEach(function(b){b.onclick=function(){state.fileInputs.part.click();};});
-    var cn=p.querySelector('[data-db-character-name]');if(cn)cn.oninput=function(){state.character.name=cn.value||'MyCharacter';state.character.nameConfirmed=!!(cn.value&&cn.value.trim());};p.querySelectorAll('[data-db-character-save]').forEach(function(b){b.onclick=saveCharacter;});p.querySelectorAll('[data-db-character-load]').forEach(function(b){b.onclick=function(){state.fileInputs.character.click();};});p.querySelectorAll('[data-db-character-resync]').forEach(function(b){b.onclick=resyncCharacterPlacement;});p.querySelectorAll('[data-db-character-cleanup]').forEach(function(b){b.onclick=function(){cleanUpLooseArtwork(false);};});p.querySelectorAll('[data-db-character-commit],[data-db-commit-character]').forEach(function(b){b.onclick=commitCharacter;});
+    var cn=p.querySelector('[data-db-character-name]');if(cn)cn.oninput=function(){var value=String(cn.value||'').trim();state.character.name=value||'MyCharacter';state.character.nameConfirmed=!!value;};p.querySelectorAll('[data-db-character-save]').forEach(function(b){b.onclick=saveCharacter;});p.querySelectorAll('[data-db-character-load]').forEach(function(b){b.onclick=function(){state.fileInputs.character.click();};});p.querySelectorAll('[data-db-character-commit],[data-db-commit-character]').forEach(function(b){b.onclick=commitCharacter;});p.querySelectorAll('[data-db-character-resync]').forEach(function(b){b.onclick=resyncCharacterPlacement;});p.querySelectorAll('[data-db-character-cleanup]').forEach(function(b){b.onclick=function(){cleanUpLooseArtwork(false);};});var commitName=p.querySelector('[data-db-commit-name]');if(commitName)commitName.oninput=function(){state.character.name=commitName.value||'MyCharacter';};
     p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(event){if(event&&event.target&&event.target.closest('button,input,select,textarea'))return;var part=partById(card.getAttribute('data-db-part-card'));if(part){selectCharacterPartOnStage(part);renderAll();}};});
     p.querySelectorAll('[data-db-part-toggle]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var part=partById(button.getAttribute('data-db-part-toggle'));if(part){part.collapsed=!part.collapsed;renderAll();}};});
     p.querySelectorAll('[data-db-part-name]').forEach(function(input){input.onchange=function(){var part=partById(input.getAttribute('data-db-part-name'));if(part){part.name=input.value||part.name;if(part.clipId&&clips()[part.clipId])clips()[part.clipId].name=part.name;var instance=partInstance(part);if(instance)instance.name=part.name;renderAll();API.refreshUI();}};});
@@ -4960,41 +4373,48 @@
     p.querySelectorAll('[data-db-expression-type]').forEach(function(b){b.onclick=function(){state.expressionType=b.getAttribute('data-db-expression-type');renderAll();};});var esn=p.querySelector('[data-db-expression-slot-name]');if(esn)esn.oninput=function(){state.expressionSlot=esn.value||'Default';};var ess=p.querySelector('[data-db-expression-slot]');if(ess)ess.onchange=function(){state.expressionSlot=ess.value||state.expressionSlot;};p.querySelectorAll('[data-db-import-expression]').forEach(function(b){b.onclick=function(){state.expressionSlot=(p.querySelector('[data-db-expression-slot-name]').value||'Default').trim();state.fileInputs.expression.click();};});p.querySelectorAll('[data-db-set-expression-key]').forEach(function(b){b.onclick=function(){setExpressionKey(state.expressionType,state.expressionSlot);};});p.querySelectorAll('[data-db-clear-expression-key]').forEach(function(b){b.onclick=function(){clearExpressionKey(state.expressionType);};});
   }
 
-  function createPanel(){ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){goToTab(b.getAttribute('data-db-tab'));};});var stepsHost=panel.querySelector('[data-db-steps]');if(stepsHost)stepsHost.addEventListener('click',function(event){var target=event.target&&event.target.closest('[data-db-step-jump]');if(!target)return;goToTab(target.getAttribute('data-db-step-jump'));});state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();}
-  function makeDraggable(panel,handle){handle.addEventListener('pointerdown',function(e){if(e.target.closest('button'))return;e.preventDefault();API.bringFloatingPanelToFront(panel);var r=panel.getBoundingClientRect(),ox=e.clientX-r.left,oy=e.clientY-r.top;function mv(ev){panel.style.left=(ev.clientX-ox)+'px';panel.style.top=(ev.clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto';}function up(){window.removeEventListener('pointermove',mv,true);window.removeEventListener('pointerup',up,true);API.clampFloatingPanelToViewport(panel);}window.addEventListener('pointermove',mv,true);window.addEventListener('pointerup',up,true);});}
-
-  /*
-    This achieves the same outcome as the index.html timeline filter (never
-    show Dem Bones-managed shapes as native Timeline rows), but entirely
-    from inside this plugin, with nothing else to deploy anywhere else. It
-    finds every shape this plugin currently owns (bound to a rig, or an
-    expression slot) and hides that shape's native Timeline row directly by
-    matching on the row's displayed name - the only link available, since
-    the native row markup carries no object id to match against directly.
-  */
-  function hideDemBonesTimelineRows(){
-    var tracksEl=document.getElementById("timeline-tracks");
-    if(!tracksEl)return;
-
-    var ownedNames={};
-    allObjectArrays().forEach(function(list){
-      list.forEach(function(o){
-        if(!o||!(o.demBones||o.demBonesExpression))return;
-        var label=String(o.name||"").trim();
-        if(label)ownedNames[label]=true;
-      });
-    });
-
-    tracksEl.querySelectorAll(".timeline-track-row").forEach(function(row){
-      var nameEl=row.querySelector(".timeline-track-name");
-      if(!nameEl)return;
-      var textEl=nameEl.querySelector(".wick-layer-name-text")||nameEl;
-      var text=String(textEl.textContent||"").trim().replace(/\s*\u00b7\s*NR$/,"");
-      row.style.display=ownedNames[text]?"none":"";
-    });
+  function createPanel(){
+    ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;
+    state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.png=panel.querySelector('[data-db-png]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');
+    API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;
+    panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){var nextTab=b.getAttribute('data-db-tab');if(state.tab==='character'&&nextTab!=='character'&&state.character.rootClipId&&API.getEditingClipId()===state.character.rootClipId){state.activeRig=null;state.selectedBoneId='';state.selectedCurveId='';}state.tab=nextTab;state.curvePointAddMode=false;state.mode=state.tab==='bones'?'add-bone':'select';if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}renderAll();};});
+    state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};
+    state.fileInputs.png.onchange=function(){var f=this.files&&this.files[0];if(f)loadPngFile(f);this.value='';};
+    state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};
+    makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();
   }
 
-  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);surface.addEventListener('contextmenu',function(e){var hitPart=characterRightClickHit(e);if(!hitPart)return;e.preventDefault();e.stopImmediatePropagation();showCharacterContextMenu(e.clientX,e.clientY,hitPart);},true);surface.addEventListener('dblclick',function(e){if(state.open)return;if(!(state.character.committed&&state.character.showBones))return;var hit=characterAnimationBoneHit(e);if(!hit)return;e.preventDefault();e.stopImmediatePropagation();open();activateCharacterPartMode(hit.part,'animate');state.selectedBoneId=hit.bone.id;renderAll();API.refreshUI();},true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.activeRig){syncRigDisplayGeometry(state.activeRig,currentTime());}hideDemBonesTimelineRows();if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);}
+  function makeDraggable(panel,handle){handle.addEventListener('pointerdown',function(e){if(e.target.closest('button'))return;e.preventDefault();API.bringFloatingPanelToFront(panel);var r=panel.getBoundingClientRect(),ox=e.clientX-r.left,oy=e.clientY-r.top;function mv(ev){panel.style.left=(ev.clientX-ox)+'px';panel.style.top=(ev.clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto';}function up(){window.removeEventListener('pointermove',mv,true);window.removeEventListener('pointerup',up,true);API.clampFloatingPanelToViewport(panel);}window.addEventListener('pointermove',mv,true);window.addEventListener('pointerup',up,true);});}
+
+  function hideDemBonesTimelineRows(){
+    var tracksEl=document.getElementById("timeline-tracks");if(!tracksEl)return;
+    var ownedNames={};allObjectArrays().forEach(function(list){(list||[]).forEach(function(o){if(!o||!(o.demBones||o.demBonesExpression))return;var label=String(o.name||"").trim();if(label)ownedNames[label]=true;});});
+    tracksEl.querySelectorAll(".timeline-track-row").forEach(function(row){var nameEl=row.querySelector(".timeline-track-name");if(!nameEl)return;var textEl=nameEl.querySelector(".wick-layer-name-text")||nameEl;var text=String(textEl.textContent||"").trim().replace(/\s*\u00b7\s*NR$/,'');row.style.display=ownedNames[text]?"none":"";});
+  }
+
+  function bindGlobal(){
+    if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;
+    surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);surface.addEventListener('contextmenu',function(e){var hitPart=characterRightClickHit(e);if(!hitPart)return;e.preventDefault();e.stopImmediatePropagation();showCharacterContextMenu(e.clientX,e.clientY,hitPart);},true);
+    surface.addEventListener('dblclick',function(e){
+      if(state.open)return;
+      if(state.character.committed&&state.character.showBones){
+        var bone=characterAnimationBoneHit(e),shape=bone?null:characterPartShapeHit(e),part=bone?bone.part:(shape&&shape.part);
+        if(part){e.preventDefault();e.stopImmediatePropagation();open();activateCharacterPartMode(part,'adjust');if(bone)state.selectedBoneId=bone.bone.id;renderAll();API.refreshUI();return;}
+      }
+      var loose=stageRiggedShapeHit(e);if(!loose)return;
+      e.preventDefault();e.stopImmediatePropagation();activateStandaloneRigForEdit(loose);open();renderAll();API.refreshUI();
+    },true);
+    window.addEventListener('keydown',function(e){
+      var target=e.target,typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));
+      if(!typing&&(e.key==='b'||e.key==='B'))state.bKeyDown=true;
+      if(!state.open)return;
+      if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}
+      if((e.key==='Delete'||e.key==='Backspace')&&!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}
+    },true);
+    window.addEventListener('keyup',function(e){if(e.key==='b'||e.key==='B')state.bKeyDown=false;},true);
+    window.addEventListener('blur',function(){state.bKeyDown=false;},true);
+    setInterval(function(){if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());hideDemBonesTimelineRows();if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);
+  }
 
   function open(){
     /* Capture the stage selection before changing focus or suppressing the fixed
@@ -5006,13 +4426,7 @@
     API.setSelectionInspectorSuppressed(TOOL_ID,true);
     API.setConfiguredToolActive(GROUP_ID,ITEM_ID,true);
     API.bringFloatingPanelToFront(state.panel);API.clampFloatingPanelToViewport(state.panel);
-    renderAll();
-    var orphanCount=findOrphanDemBonesObjects().length;
-    if(orphanCount){
-      notify('Found '+orphanCount+' stray shape(s) left over from an earlier session (Build Character tab > Clean Up Stray Artwork removes them). Step 1: select some vector shapes on stage, then click Use Stage Selection below to start a part.',true);
-    }else{
-      notify('Welcome to Dem Bones. Step 1: select some vector shapes on stage, then click Use Stage Selection below to start a part.',false);
-    }
+    renderAll();notify('Dem Bones ready.',false);
   }
   function close(){
     /*
@@ -5046,7 +4460,6 @@
       ITEM_ID,
       false
     );
-
     updateStageCursor();
 
     API.refreshUI();
@@ -5055,6 +4468,7 @@
   var plugin={version:TOOL_VERSION,open:open,close:close,get panel(){return state.panel;},get state(){return state;},refresh:function(){syncRigRefs(state.activeRig);renderAll();API.refreshUI();}};
   window[SINGLETON_KEY]=plugin;
   API.registerObjectEvaluator(EVALUATOR_ID,evaluator);
+  if(typeof API.registerObjectRenderer==="function")API.registerObjectRenderer(RASTER_RENDERER_ID,rasterObjectRenderer);
   API.registerStageOverlayRenderer(OVERLAY_ID,overlayRenderer);
   bindGlobal();
   open();
