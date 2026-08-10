@@ -1,6 +1,23 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v15.7
+/* Luke Animate Dem Bones + MyCharacter GPT v15.8
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
+
+   v15.8:
+   - the bone cursor icon is now half its previous size (15x15 instead of
+     30x30, hotspot adjusted to match);
+   - Edit Bone now evaluates deformation at true rest, ignoring whatever
+     frame the timeline playhead is on. Previously, editing a bone's rest
+     position/envelope was combined with any pose or point keys that already
+     existed at the current frame, which made rest edits visibly warp the
+     curves - something that should only ever happen from actually posing in
+     Animate. Bones, Curves and every other tab are unaffected;
+   - v15.5 removed left-click-reopens-DemBones entirely in favour of right-
+     click only. That went further than intended: clicking the character's
+     shape/silhouette still never reopens the panel, but clicking directly on
+     a visible bone icon/line - a much more deliberate target - once again
+     reopens DemBones straight into that bone's Animate view when the panel
+     is closed, alongside the right-click "Edit Character" menu as the other
+     way in.
 
    v15.7 adds mode-specific cursors, purely cosmetic/UX - no rig or placement
    logic touched:
@@ -141,7 +158,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "15.7";
+  var TOOL_VERSION = "15.8";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1980,8 +1997,17 @@
     }
 
     var rest=restTransformMap(rig);
-    var posed=posedTransformMap(rig,time);
-    var base=interpolatePointKey(rig,object.id,time,data.restPoints);
+    var editingRestOnly=state.tab==="editbone";
+    /*
+      Edit Bone changes the rig's rest definition, not a pose - it must never
+      be evaluated against whatever the timeline playhead happens to be
+      sitting on. If the character already has pose or point keys at the
+      current frame, blending a rest edit into that pose is exactly what
+      made bone editing appear to drag the curves around. Animate is the
+      only place time-based posing should apply.
+    */
+    var posed=editingRestOnly?rest:posedTransformMap(rig,time);
+    var base=editingRestOnly?data.restPoints:interpolatePointKey(rig,object.id,time,data.restPoints);
 
     var points=base.map(function(point,index){
       return deformPoint(point,data.weights[index],rest,posed);
@@ -3998,13 +4024,41 @@
 
   function onPointerDown(event){
     /*
-      Left click on the character should behave like normal Luke Animate
-      Select/Edit at all times, whether or not visible bones happen to sit
-      under the pointer - it must never itself pop the DemBones panel open.
-      The only way in is an explicit right-click > Edit Character (see the
-      contextmenu listener in bindGlobal).
+      Clicking the character's shape/silhouette is always plain Luke Animate
+      Select/Edit - it must never itself pop the panel open. Clicking
+      directly on a visible bone icon/line is a much more deliberate,
+      precise target, so - matching how this worked before the panel was
+      closed - it still reopens DemBones straight into that bone's Animate
+      view when the panel is currently closed. Right-click anywhere on the
+      character is the other, broader way in (see the contextmenu listener
+      in bindGlobal).
     */
     if(!state.open){
+      if(
+        state.character.committed&&
+        state.character.showBones
+      ){
+        var closedBoneHit=characterAnimationBoneHit(
+          event
+        );
+
+        if(closedBoneHit){
+          event.preventDefault();
+          event.stopImmediatePropagation();
+
+          open();
+
+          activateCharacterPartMode(
+            closedBoneHit.part,
+            "animate"
+          );
+
+          state.selectedBoneId=closedBoneHit.bone.id;
+          renderAll();
+          API.refreshUI();
+        }
+      }
+
       return;
     }
 
@@ -4634,7 +4688,7 @@
         original, since that would be invisible against a light canvas.
     */
     if(boneCursorCache[colorHex])return boneCursorCache[colorHex];
-    var svg='<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="72.467493 90.551252 75.277687 75.415604">'+
+    var svg='<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="72.467493 90.551252 75.277687 75.415604">'+
       '<path fill="'+colorHex+'" stroke="#132018" stroke-width="1.6" stroke-linejoin="round" d="'+BONE_CURSOR_PATH+'"/>'+
     '</svg>';
     var encoded;
@@ -4643,7 +4697,7 @@
     }catch(eEncode){
       encoded="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg);
     }
-    var css='url("'+encoded+'") 15 15, crosshair';
+    var css='url("'+encoded+'") 7 7, crosshair';
     boneCursorCache[colorHex]=css;
     return css;
   }
