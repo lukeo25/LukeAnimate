@@ -1,6 +1,17 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v15.11
+/* Luke Animate Dem Bones + MyCharacter GPT v15.12
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
+
+   v15.12 hides Dem Bones-managed shape rows from the native Timeline
+   entirely from inside this plugin file - no index.html change needed at
+   all, so there is nothing else to push or deploy anywhere else. It runs
+   on the same polling loop already used for stage sync, matching each
+   Timeline row's displayed name against every shape this plugin currently
+   owns (bound to a rig, or an expression slot) and hiding that row
+   directly. This is the same outcome the v15.9 index.html filter was
+   meant to give, now delivered without requiring that file to be edited or
+   pushed anywhere. Editing a bone (Bones/Edit Bone/Animate) should now only
+   ever show Bone rows in the Timeline, never the underlying shapes.
 
    v15.11 is a hotfix for a real bug v15.10 introduced: it exposed the
    objects converted by createRigFromObjects via rig.__dbLastChosenObjects -
@@ -199,7 +210,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "15.11";
+  var TOOL_VERSION = "15.12";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -4877,7 +4888,38 @@
   function createPanel(){ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){goToTab(b.getAttribute('data-db-tab'));};});var stepsHost=panel.querySelector('[data-db-steps]');if(stepsHost)stepsHost.addEventListener('click',function(event){var target=event.target&&event.target.closest('[data-db-step-jump]');if(!target)return;goToTab(target.getAttribute('data-db-step-jump'));});state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();}
   function makeDraggable(panel,handle){handle.addEventListener('pointerdown',function(e){if(e.target.closest('button'))return;e.preventDefault();API.bringFloatingPanelToFront(panel);var r=panel.getBoundingClientRect(),ox=e.clientX-r.left,oy=e.clientY-r.top;function mv(ev){panel.style.left=(ev.clientX-ox)+'px';panel.style.top=(ev.clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto';}function up(){window.removeEventListener('pointermove',mv,true);window.removeEventListener('pointerup',up,true);API.clampFloatingPanelToViewport(panel);}window.addEventListener('pointermove',mv,true);window.addEventListener('pointerup',up,true);});}
 
-  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);surface.addEventListener('contextmenu',function(e){var hitPart=characterRightClickHit(e);if(!hitPart)return;e.preventDefault();e.stopImmediatePropagation();showCharacterContextMenu(e.clientX,e.clientY,hitPart);},true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.activeRig){syncRigDisplayGeometry(state.activeRig,currentTime());}if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);}
+  /*
+    This achieves the same outcome as the index.html timeline filter (never
+    show Dem Bones-managed shapes as native Timeline rows), but entirely
+    from inside this plugin, with nothing else to deploy anywhere else. It
+    finds every shape this plugin currently owns (bound to a rig, or an
+    expression slot) and hides that shape's native Timeline row directly by
+    matching on the row's displayed name - the only link available, since
+    the native row markup carries no object id to match against directly.
+  */
+  function hideDemBonesTimelineRows(){
+    var tracksEl=document.getElementById("timeline-tracks");
+    if(!tracksEl)return;
+
+    var ownedNames={};
+    allObjectArrays().forEach(function(list){
+      list.forEach(function(o){
+        if(!o||!(o.demBones||o.demBonesExpression))return;
+        var label=String(o.name||"").trim();
+        if(label)ownedNames[label]=true;
+      });
+    });
+
+    tracksEl.querySelectorAll(".timeline-track-row").forEach(function(row){
+      var nameEl=row.querySelector(".timeline-track-name");
+      if(!nameEl)return;
+      var textEl=nameEl.querySelector(".wick-layer-name-text")||nameEl;
+      var text=String(textEl.textContent||"").trim().replace(/\s*\u00b7\s*NR$/,"");
+      row.style.display=ownedNames[text]?"none":"";
+    });
+  }
+
+  function bindGlobal(){if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);surface.addEventListener('contextmenu',function(e){var hitPart=characterRightClickHit(e);if(!hitPart)return;e.preventDefault();e.stopImmediatePropagation();showCharacterContextMenu(e.clientX,e.clientY,hitPart);},true);window.addEventListener('keydown',function(e){if(!state.open)return;if(e.key==='Escape'){state.mode='select';state.curvePointAddMode=false;state.drag=null;state.addPreview=null;renderAll();return;}if(e.key==='Delete'||e.key==='Backspace'){var target=e.target;var typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));if(!typing&&selectedBone()){e.preventDefault();e.stopPropagation();deleteBone();}}},true);setInterval(function(){if(state.activeRig){syncRigDisplayGeometry(state.activeRig,currentTime());}hideDemBonesTimelineRows();if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);}
 
   function open(){
     /* Capture the stage selection before changing focus or suppressing the fixed
