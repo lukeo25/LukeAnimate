@@ -1,6 +1,22 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v15.13
+/* Luke Animate Dem Bones + MyCharacter GPT v15.14
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
+
+   v15.14 fixes two real interaction bugs in Edit Bone and Animate:
+   - a click that missed every bone used to fall straight through to native
+     Luke Animate selection of whatever shape was underneath, instead of
+     being swallowed. That is what let clicking in Edit Bone select
+     artwork/other objects at all - now it does nothing;
+   - boneHit() did a plain nearest-search across every bone's head and tail
+     with no idea which bone the panel actually has selected. A parent's
+     tail and every child's head normally sit at the exact same point (a
+     hub), so that search could silently hand a drag to a different bone
+     than the one shown in the Edit Bone panel - which is what made the
+     root bone appear to only move on one axis some of the time, since some
+     drags were landing on an entirely different bone's handle. In Edit
+     Bone, the currently selected bone's own head/tail now get first claim
+     on a click within range before any other bone is considered, so the
+     bone you are looking at is always the bone you actually drag.
 
    v15.13:
    - Edit Bone gained an "Editing" bone picker at the top of the tab, so
@@ -228,7 +244,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "15.13";
+  var TOOL_VERSION = "15.14";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -4163,6 +4179,32 @@
     var p=selectedScenePoint(event);
     var map=state.tab==="animate"?posedTransformMap(rig,currentTime()):restTransformMap(rig);
     var best=null,bestD=scenePixels(14),lineD=scenePixels(9);
+
+    /*
+      A parent bone's tail and every child's head normally sit at the exact
+      same point (a hub) - a plain nearest-search across every bone treats
+      that as a coin flip, and can silently hand a drag to a different bone
+      than the one actually selected/shown in the Edit Bone panel. That is
+      what made the root bone intermittently behave as if one axis of
+      dragging did nothing - some drags were landing on a different bone's
+      handle entirely. In Edit Bone, once a bone is selected, its own head
+      and tail get first claim on any point within the hit radius before
+      any other bone is even considered, so the bone you are looking at is
+      always the bone you actually drag.
+    */
+    if(state.tab==="editbone"&&state.selectedBoneId){
+      var selected=boneById(state.selectedBoneId);
+      var selectedTransform=selected&&map[selected.id];
+      if(selected&&selectedTransform){
+        var ownBest=null;
+        [["head",selectedTransform.head],["tail",selectedTransform.tail]].forEach(function(pair){
+          var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);
+          if(d<bestD&&(!ownBest||d<ownBest.distance)){ownBest={bone:selected,handle:pair[0],point:p,distance:d};}
+        });
+        if(ownBest)return ownBest;
+      }
+    }
+
     (rig.bones||[]).forEach(function(b){
       var q=map[b.id];
       if(!q)return;
@@ -4277,7 +4319,21 @@
       return;
     }
 
-    if(!hit)return;
+    if(!hit){
+      if(state.tab==="editbone"||state.tab==="animate"){
+        /*
+          Edit Bone and Animate only ever operate on bone nodes - a click
+          that misses every bone must be swallowed here, not fall through
+          to native Luke Animate selection of whatever shape happens to be
+          underneath. Previously this just returned without blocking the
+          event, which is exactly what let a click select the underlying
+          artwork instead of a bone.
+        */
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+      return;
+    }
     event.preventDefault();event.stopImmediatePropagation();
     state.selectedBoneId=hit.bone.id;
 
