@@ -1,6 +1,17 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v15.10
+/* Luke Animate Dem Bones + MyCharacter GPT v15.11
    Native Luke Animate floating tool.
    Loaded from Config.json. No Wick Editor and no LukeToolsBridge.
+
+   v15.11 is a hotfix for a real bug v15.10 introduced: it exposed the
+   objects converted by createRigFromObjects via rig.__dbLastChosenObjects -
+   a property attached directly to the rig object. Every one of those
+   objects has demBones.rig pointing straight back at that same rig, so this
+   created a permanent circular reference living ON the rig itself, not just
+   for that one call. Anywhere the rig was later cloned or JSON.stringify'd -
+   saving a part, saving a character, committing - "Converting circular
+   structure to JSON" followed. The converted objects are now handed back
+   through a plain module-level variable instead, which is never itself
+   serialized, so it cannot leak a cycle into anything the rig touches.
 
    v15.10 closes a real ordering gap that could undermine the v15.9
    index.html timeline filter regardless of whether that file is up to date:
@@ -10,10 +21,7 @@
    ingested shape was completely indistinguishable from a normal, untagged
    native object. Both now convert and tag the whole batch first, then stage
    only what actually needs a fresh addDrawObject call (clones; reused
-   originals are already on stage). createRigFromObjects also now exposes
-   exactly which converted objects it produced via rig.__dbLastChosenObjects
-   so callers never have to guess whether convertToWarpPath returned the
-   same reference or a new one.
+   originals are already on stage).
 
    v15.9:
    - the wall of identical "Drawing 0" rows in the native Timeline/Layers
@@ -191,7 +199,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "15.10";
+  var TOOL_VERSION = "15.11";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -852,6 +860,8 @@
     allObjectArrays().forEach(function(list){list.forEach(function(o){if(o&&o.demBonesExpression&&o.demBonesExpression.rigId===rig.id)o.demBonesExpression.rig=rig;});});
   }
 
+  var lastCreatedRigObjects=[];
+
   function createRigFromObjects(objects,name,pointMode){
     var supplied=(objects||[]).filter(supportedWarpObject);
     if(!supplied.length){notify("No usable vector shapes were supplied.",true);return null;}
@@ -865,7 +875,17 @@
     });
     if(!chosen.length){notify("The supplied vector shapes could not be ingested.",true);return null;}
     state.activeRig=rig;state.selectedBoneId="";state.selectedCurveId=chosen[0].id;state.selectedPointIndex=0;syncRigRefs(rig);
-    rig.__dbLastChosenObjects=chosen;
+    /*
+      Hand the converted objects back through a plain module-level variable,
+      never as a property attached to the rig itself. rig.__dbLastChosenObjects
+      used to do exactly that, and because each object's demBones.rig points
+      straight back at this same rig, it created a permanent circular
+      reference living ON the rig - not just for this one call, but for
+      every later clone()/JSON.stringify of that rig (saving a part, saving
+      a character, committing). This variable is plain, transient, and never
+      itself serialized, so it can't leak a cycle into anything.
+    */
+    lastCreatedRigObjects=chosen;
     return rig;
   }
 
@@ -4049,7 +4069,7 @@
           file.name.replace(/\.[^.]+$/,"")||"SVG Part"
         );
 
-        var staged=(rig&&rig.__dbLastChosenObjects)||objects;
+        var staged=rig?lastCreatedRigObjects:objects;
 
         staged.forEach(function(o){
           API.addDrawObject(
