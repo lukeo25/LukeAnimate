@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v172: image/text layer timing parity. Image, video and text drawing layers now expose explicit timeline start-trim, end-trim and whole-block move controls plus fade-in/fade-out transparency handles. Layer fades multiply the object's normal/keyframed opacity during preview and WebM export, and persist with canonical Wick drawing frames. Existing object keyframes, layer exposure, rig-aware off-stage proxies and WebM stage cropping are preserved. -->
 <!-- LukeAnimate GPT v171: rig-aware off-stage proxies. DemBones curves that share one rigId now produce one combined editor-only proxy bounding box for the whole rig instead of one box per curve. StickRig parts resolve to one containing StickRig/root proxy while editing that rig Clip, while top-level StickRig roots remain one proxy each. Dragging a rig proxy moves every represented member through the existing transform/Auto-Keyframe system; manual + Keyframe writes a transform key to every represented member. Proxy boxes remain editor-only and never enter WebM capture. -->
 <!-- LukeAnimate GPT v169: nested Clip rulers are true editing-viewport rulers. While editing a Clip, the horizontal ruler is fixed immediately below the top toolbar from the left ruler strip to the sidebar edge, the vertical ruler is fixed against the far-left workspace edge down to the timeline, and the corner sits at their intersection. Tick values continue to follow Clip coordinates while panning/scrolling. Main-stage ruler layout remains unchanged. -->
 <!-- LukeAnimate GPT v153: native nested Clip-part animator. Selecting a parent Clip shows its child Clips as indented timeline sublayers and opens stage-styled Move, Scale and Rotate concertinas. Includes the v152 nested Clip preservation fix and all v151 Config, Scripts, SVG and Bezier fixes. -->
@@ -1297,7 +1298,57 @@
   .wick-layer-frame-label{
     position:absolute; left:5px; top:1px; right:8px;
     overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
-    font:9px/14px var(--mono); color:#163c35; pointer-events:none;
+    font:9px/14px var(--mono); color:#163c35; pointer-events:none; z-index:4;
+  }
+  /* ---------- v172 image/text layer timing + transparency handles ---------- */
+  .wick-layer-edge-handle{
+    position:absolute;
+    top:-1px;
+    bottom:-1px;
+    width:9px;
+    z-index:7;
+    cursor:ew-resize;
+    touch-action:none;
+  }
+  .wick-layer-edge-handle.left{ left:-4px; }
+  .wick-layer-edge-handle.right{ right:-4px; }
+  .wick-layer-frame.has-layer-fades .wick-layer-frame-label{
+    left:8px;
+    right:8px;
+  }
+  .wick-layer-fade-overlay{
+    position:absolute;
+    top:0;
+    bottom:0;
+    pointer-events:none;
+    border-radius:2px;
+    z-index:3;
+  }
+  .wick-layer-fade-overlay.in{
+    left:0;
+    background:linear-gradient(to right,rgba(241,242,245,.94),rgba(241,242,245,0));
+  }
+  .wick-layer-fade-overlay.out{
+    right:0;
+    background:linear-gradient(to left,rgba(241,242,245,.94),rgba(241,242,245,0));
+  }
+  .wick-object-fade-handle{
+    position:absolute;
+    top:-4px;
+    width:9px;
+    height:9px;
+    margin-left:-4.5px;
+    border-radius:50%;
+    background:#fff;
+    border:1.5px solid #0c0d0e;
+    cursor:ew-resize;
+    z-index:9;
+    touch-action:none;
+  }
+  .wick-layer-frame.blank .wick-layer-edge-handle,
+  .wick-layer-frame.blank .wick-object-fade-handle,
+  .wick-layer-frame.blank .wick-layer-fade-overlay{
+    display:none;
   }
   .wick-layer-empty-cell-hint{
     position:absolute; inset:3px 3px; border:1px dashed transparent;
@@ -15927,6 +15978,39 @@ ctx.fill();</textarea>
         }
       });
     }
+
+    /*
+      v172 layer exposure fades:
+      image/video/text layer transparency handles live on the canonical Wick
+      drawing frame, but the active projected object carries the frame bounds
+      and fade lengths so ordinary preview, nested Clip rendering and WebM
+      export all receive the same opacity multiplier.
+    */
+    if(obj){
+      const fadeInFrames=Math.max(0,Number(obj.frameFadeInFrames)||0);
+      const fadeOutFrames=Math.max(0,Number(obj.frameFadeOutFrames)||0);
+      if(fadeInFrames>0 || fadeOutFrames>0){
+        const startFrame=Math.max(0,Number(obj.frameLinkStart)||0);
+        const endFrame=Math.max(startFrame,Number(obj.frameLinkEnd)||startFrame);
+        const framePosition=Math.max(startFrame,Math.min(endFrame,Number(keyframeTime||0)*Math.max(1,getTimelineFPS())));
+        let exposureOpacity=1;
+        if(fadeInFrames>0){
+          exposureOpacity=Math.min(
+            exposureOpacity,
+            Math.max(0,Math.min(1,(framePosition-startFrame)/fadeInFrames))
+          );
+        }
+        if(fadeOutFrames>0){
+          exposureOpacity=Math.min(
+            exposureOpacity,
+            Math.max(0,Math.min(1,(endFrame-framePosition)/fadeOutFrames))
+          );
+        }
+        if(effective===obj) effective=Object.assign({},obj);
+        effective.opacity=(effective.opacity===undefined?1:Number(effective.opacity)||0)*exposureOpacity;
+        effective._layerExposureOpacity=exposureOpacity;
+      }
+    }
     return effective;
   }
 
@@ -17384,6 +17468,9 @@ ctx.fill();</textarea>
         wickUpdateCounterFromId(frame.id, 'drawing-frame-', value=>{ wickDrawingFrameCounter = Math.max(wickDrawingFrameCounter,value); });
         frame.startFrame = Math.max(0, Math.min(totalFrames, Math.round(Number(frame.startFrame) || 0)));
         frame.endFrame = Math.max(frame.startFrame, Math.min(totalFrames, Math.round(Number(frame.endFrame) || frame.startFrame)));
+        const fadeSpanFrames = Math.max(0, frame.endFrame - frame.startFrame);
+        frame.fadeInFrames = Math.max(0, Math.min(fadeSpanFrames, Math.round(Number(frame.fadeInFrames) || 0)));
+        frame.fadeOutFrames = Math.max(0, Math.min(Math.max(0, fadeSpanFrames - frame.fadeInFrames), Math.round(Number(frame.fadeOutFrames) || 0)));
         frame.blank = frame.blank === true || !frame.object;
         frame._sequence = Number.isFinite(Number(frame._sequence)) ? Number(frame._sequence) : frameIndex;
         if(frame.object && !frame.blank){
@@ -17393,6 +17480,8 @@ ctx.fill();</textarea>
           frame.object.frameLinkId = frame.id;
           frame.object.frameLinkStart = frame.startFrame;
           frame.object.frameLinkEnd = frame.endFrame;
+          frame.object.frameFadeInFrames = frame.fadeInFrames;
+          frame.object.frameFadeOutFrames = frame.fadeOutFrames;
           layer.name = frame.object.name || layer.name || objectLayerName(frame.object);
         }else{
           frame.object = null;
@@ -17412,6 +17501,28 @@ ctx.fill();</textarea>
         resolved.push(frame);
       });
       layer.frames = resolved.filter(frame=>frame.endFrame >= frame.startFrame);
+      /*
+        A later key can shorten the preceding exposure while resolving overlap.
+        Re-clamp v172 fades after that shortening so a saved fade can never
+        become longer than its new frame exposure.
+      */
+      layer.frames.forEach(frame=>{
+        const fadeSpanFrames=Math.max(0,frame.endFrame-frame.startFrame);
+        frame.fadeInFrames=Math.max(0,Math.min(fadeSpanFrames,Math.round(Number(frame.fadeInFrames)||0)));
+        frame.fadeOutFrames=Math.max(
+          0,
+          Math.min(
+            Math.max(0,fadeSpanFrames-frame.fadeInFrames),
+            Math.round(Number(frame.fadeOutFrames)||0)
+          )
+        );
+        if(frame.object){
+          frame.object.frameLinkStart=frame.startFrame;
+          frame.object.frameLinkEnd=frame.endFrame;
+          frame.object.frameFadeInFrames=frame.fadeInFrames;
+          frame.object.frameFadeOutFrames=frame.fadeOutFrames;
+        }
+      });
     });
     layersModel.sort((a,b)=>(Number(a.order)||0)-(Number(b.order)||0));
     return layersModel;
@@ -17531,6 +17642,8 @@ ctx.fill();</textarea>
             active.object.frameLinkId = active.id;
             active.object.frameLinkStart = active.startFrame;
             active.object.frameLinkEnd = active.endFrame;
+            active.object.frameFadeInFrames = Math.max(0, Math.round(Number(active.fadeInFrames) || 0));
+            active.object.frameFadeOutFrames = Math.max(0, Math.round(Number(active.fadeOutFrames) || 0));
             objects.push(active.object);
           }
         });
@@ -17807,6 +17920,8 @@ ctx.fill();</textarea>
       endFrame:Math.max(Math.max(0,Math.round(Number(startFrame)||0)),Math.min(wickTotalFrameIndex(timelineDuration),Math.round(Number(endFrame)!==Number(endFrame)?wickTotalFrameIndex(timelineDuration):Number(endFrame)))),
       blank:false,
       object,
+      fadeInFrames:0,
+      fadeOutFrames:0,
       _sequence:layer.frames.length
     };
     object.frameLinkId=frame.id;
@@ -18295,37 +18410,154 @@ ctx.fill();</textarea>
     renderTransformHandles();
   }
 
-  function wickBeginFrameBarDrag(event,layer,frame,track,span,label){
+  function wickFrameSupportsLayerFade(frame){
+    return !!(
+      frame &&
+      frame.object &&
+      frame.blank!==true &&
+      ['image','video','text'].includes(String(frame.object.type||'').toLowerCase())
+    );
+  }
+
+  function wickSyncFrameFadeMetadata(frame){
+    if(!frame) return;
+    const spanFrames=Math.max(0,Number(frame.endFrame)-Number(frame.startFrame));
+    frame.fadeInFrames=Math.max(0,Math.min(spanFrames,Math.round(Number(frame.fadeInFrames)||0)));
+    frame.fadeOutFrames=Math.max(
+      0,
+      Math.min(
+        Math.max(0,spanFrames-frame.fadeInFrames),
+        Math.round(Number(frame.fadeOutFrames)||0)
+      )
+    );
+    if(frame.object){
+      frame.object.frameLinkStart=frame.startFrame;
+      frame.object.frameLinkEnd=frame.endFrame;
+      frame.object.frameFadeInFrames=frame.fadeInFrames;
+      frame.object.frameFadeOutFrames=frame.fadeOutFrames;
+    }
+  }
+
+  function wickFrameRangeLimits(layer,frame){
+    const ordered=(layer&&Array.isArray(layer.frames)?layer.frames:[])
+      .filter(item=>item&&item!==frame)
+      .slice()
+      .sort((a,b)=>a.startFrame-b.startFrame||a.endFrame-b.endFrame);
+    const previous=ordered
+      .filter(item=>item.endFrame<frame.startFrame)
+      .sort((a,b)=>b.endFrame-a.endFrame)[0]||null;
+    const next=ordered
+      .filter(item=>item.startFrame>frame.endFrame)
+      .sort((a,b)=>a.startFrame-b.startFrame)[0]||null;
+    return {
+      minStart:previous?previous.endFrame+1:0,
+      maxEnd:next?next.startFrame-1:wickTotalFrameIndex(timelineDuration)
+    };
+  }
+
+  function wickApplyLayerFrameRange(frameId,requestedStart,requestedEnd){
+    const owner=wickFrameOwnerById(frameId);
+    if(!owner) return null;
+    const frame=owner.frame;
+    const layer=owner.layer;
+    const totalFrames=wickTotalFrameIndex(timelineDuration);
+    const limits=wickFrameRangeLimits(layer,frame);
+    let startFrame=Math.max(
+      limits.minStart,
+      Math.min(totalFrames,Math.round(Number(requestedStart)||0))
+    );
+    let endFrame=Math.max(
+      startFrame,
+      Math.min(
+        limits.maxEnd,
+        Math.round(Number(requestedEnd)!==Number(requestedEnd)?startFrame:Number(requestedEnd))
+      )
+    );
+    frame.startFrame=startFrame;
+    frame.endFrame=endFrame;
+    wickSyncFrameFadeMetadata(frame);
+    wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
+    return frame;
+  }
+
+  /*
+    v172 drawing-layer timing:
+      body drag  = move the whole exposed block
+      left edge  = move/shorten/extend the start
+      right edge = move/shorten/extend the end
+    The range cannot cross a neighbouring drawing key on the same layer.
+  */
+  function wickBeginFrameBarDrag(event,layer,frame,track,span,label,mode){
     if(event.button!==0) return;
     event.stopPropagation();
+    event.preventDefault();
     wickActiveDrawingLayerId=layer.id;
+
+    mode=mode||'move';
     const info=wickTimelineInfo();
     const rect=track.getBoundingClientRect();
-    const cellWidth=Math.max(1,rect.width/info.totalCells);
     const startX=event.clientX;
-    const originalEnd=frame.endFrame;
     const pointerId=event.pointerId;
+    const originalStart=frame.startFrame;
+    const originalEnd=frame.endFrame;
+    const originalLength=originalEnd-originalStart;
+    const limits=wickFrameRangeLimits(layer,frame);
+    const startPointerFrame=wickFrameFromTrackClientX(track,startX,info);
+    let previewStart=originalStart;
     let previewEnd=originalEnd;
     let moved=false;
     let readout=null;
 
-    const startPointerFrame=wickFrameFromTrackClientX(track,startX,info);
-    function preview(clientX){
+    function calculate(clientX){
       const pointerFrame=wickFrameFromTrackClientX(track,clientX,info);
       const deltaFrames=pointerFrame-startPointerFrame;
-      previewEnd=Math.max(frame.startFrame,Math.min(info.totalFrames,originalEnd+deltaFrames));
-      moved=previewEnd!==originalEnd;
-      if(!moved) return;
+
+      if(mode==='left'){
+        previewStart=Math.max(
+          limits.minStart,
+          Math.min(originalEnd,originalStart+deltaFrames)
+        );
+        previewEnd=originalEnd;
+      }else if(mode==='right'){
+        previewStart=originalStart;
+        previewEnd=Math.max(
+          originalStart,
+          Math.min(limits.maxEnd,originalEnd+deltaFrames)
+        );
+      }else{
+        const maxStart=Math.max(
+          limits.minStart,
+          limits.maxEnd-originalLength
+        );
+        previewStart=Math.max(
+          limits.minStart,
+          Math.min(maxStart,originalStart+deltaFrames)
+        );
+        previewEnd=previewStart+originalLength;
+      }
+
+      moved=previewStart!==originalStart||previewEnd!==originalEnd;
+    }
+
+    function paintPreview(){
       span.classList.add('dragging');
-      span.style.width=((previewEnd-frame.startFrame+1)/info.totalCells*100)+'%';
-      label.textContent=frame.startFrame===previewEnd?String(frame.startFrame+1):(frame.startFrame+1)+'–'+(previewEnd+1);
+      span.style.left=wickFrameBoundaryPercent(previewStart,info)+'%';
+      span.style.width=((previewEnd-previewStart+1)/info.totalCells*100)+'%';
+      label.textContent=previewStart===previewEnd
+        ?String(previewStart+1)
+        :(previewStart+1)+'–'+(previewEnd+1);
+
       if(!readout){
         readout=document.createElement('div');
         readout.className='wick-frame-drag-readout';
         document.body.appendChild(readout);
       }
-      readout.textContent='Frames '+(frame.startFrame+1)+'–'+(previewEnd+1);
-      readout.style.left=(rect.left+((previewEnd+1)/info.totalCells)*rect.width)+'px';
+      const action=mode==='left'?'Start':mode==='right'?'End':'Move';
+      readout.textContent=action+' · Frames '+(previewStart+1)+'–'+(previewEnd+1);
+      readout.style.left=(
+        rect.left+
+        ((mode==='left'?previewStart:previewEnd+1)/info.totalCells)*rect.width
+      )+'px';
       readout.style.top=rect.top+'px';
     }
 
@@ -18334,7 +18566,9 @@ ctx.fill();</textarea>
       window.removeEventListener('pointerup',onUp,true);
       window.removeEventListener('pointercancel',onCancel,true);
       window.removeEventListener('blur',onCancel);
-      try{ if(span.hasPointerCapture(pointerId)) span.releasePointerCapture(pointerId); }catch(_error){}
+      try{
+        if(span.hasPointerCapture(pointerId)) span.releasePointerCapture(pointerId);
+      }catch(_error){}
       document.documentElement.style.userSelect='';
       document.body.style.cursor='';
       span.classList.remove('dragging');
@@ -18344,28 +18578,168 @@ ctx.fill();</textarea>
     function onMove(moveEvent){
       if(moveEvent.pointerId!==pointerId) return;
       moveEvent.preventDefault();
-      if(!moved && Math.abs(moveEvent.clientX-startX)<3) return;
-      preview(moveEvent.clientX);
+      if(
+        previewStart===originalStart &&
+        previewEnd===originalEnd &&
+        Math.abs(moveEvent.clientX-startX)<3
+      ) return;
+      calculate(moveEvent.clientX);
+      if(moved) paintPreview();
     }
 
     function onUp(upEvent){
       if(upEvent.pointerId!==pointerId) return;
-      preview(upEvent.clientX);
+      calculate(upEvent.clientX);
       if(moved) upEvent.preventDefault();
+      cleanup();
+
+      if(moved){
+        pushUndo();
+        wickApplyLayerFrameRange(
+          frame.id,
+          previewStart,
+          previewEnd
+        );
+        syncActiveSceneFrameForTime(t,false);
+        renderTimeline();
+        renderLayerList();
+        updateInspector();
+        renderTransformHandles();
+      }else if(mode==='move'){
+        clearTimeout(span._wickSingleClickTimer);
+        span._wickSingleClickTimer=setTimeout(
+          ()=>wickSelectLayerFrame(layer,frame,true),
+          240
+        );
+      }
+    }
+
+    function onCancel(){
+      cleanup();
+      renderTimeline();
+    }
+
+    document.documentElement.style.userSelect='none';
+    document.body.style.cursor=mode==='move'?'grabbing':'ew-resize';
+    try{ span.setPointerCapture(pointerId); }catch(_error){}
+    window.addEventListener('pointermove',onMove,{capture:true,passive:false});
+    window.addEventListener('pointerup',onUp,{capture:true,passive:false});
+    window.addEventListener('pointercancel',onCancel,{capture:true,passive:false});
+    window.addEventListener('blur',onCancel,{once:true});
+  }
+
+  function wickBeginFrameFadeDrag(event,layer,frame,track,span,side){
+    if(event.button!==0 || !wickFrameSupportsLayerFade(frame)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    wickActiveDrawingLayerId=layer.id;
+
+    const info=wickTimelineInfo();
+    const pointerId=event.pointerId;
+    const startX=event.clientX;
+    const originalIn=Math.max(0,Math.round(Number(frame.fadeInFrames)||0));
+    const originalOut=Math.max(0,Math.round(Number(frame.fadeOutFrames)||0));
+    const spanFrames=Math.max(0,frame.endFrame-frame.startFrame);
+    let previewIn=originalIn;
+    let previewOut=originalOut;
+    let moved=false;
+    let readout=null;
+
+    function calculate(clientX){
+      const pointerFrame=wickFrameFromTrackClientX(track,clientX,info);
+      if(side==='in'){
+        previewIn=Math.max(
+          0,
+          Math.min(
+            Math.max(0,spanFrames-previewOut),
+            pointerFrame-frame.startFrame
+          )
+        );
+      }else{
+        previewOut=Math.max(
+          0,
+          Math.min(
+            Math.max(0,spanFrames-previewIn),
+            frame.endFrame-pointerFrame
+          )
+        );
+      }
+      moved=previewIn!==originalIn||previewOut!==originalOut;
+    }
+
+    function paintPreview(){
+      const inHandle=span.querySelector('.wick-object-fade-handle.in');
+      const outHandle=span.querySelector('.wick-object-fade-handle.out');
+      const inOverlay=span.querySelector('.wick-layer-fade-overlay.in');
+      const outOverlay=span.querySelector('.wick-layer-fade-overlay.out');
+      const denominator=Math.max(1,spanFrames);
+
+      const inPct=Math.max(0,Math.min(100,(previewIn/denominator)*100));
+      const outPct=Math.max(0,Math.min(100,(previewOut/denominator)*100));
+
+      if(inHandle) inHandle.style.left=inPct+'%';
+      if(outHandle) outHandle.style.left=(100-outPct)+'%';
+      if(inOverlay) inOverlay.style.width=inPct+'%';
+      if(outOverlay) outOverlay.style.width=outPct+'%';
+
+      if(!readout){
+        readout=document.createElement('div');
+        readout.className='wick-frame-drag-readout';
+        document.body.appendChild(readout);
+      }
+      const fps=Math.max(1,getTimelineFPS());
+      const frames=side==='in'?previewIn:previewOut;
+      readout.textContent=(
+        side==='in'?'Fade in ':'Fade out '
+      )+frames+' frame'+(frames===1?'':'s')+
+        ' · '+(frames/fps).toFixed(2)+'s';
+      const trackRect=track.getBoundingClientRect();
+      readout.style.left=clientX+'px';
+      readout.style.top=trackRect.top+'px';
+    }
+
+    function cleanup(){
+      window.removeEventListener('pointermove',onMove,true);
+      window.removeEventListener('pointerup',onUp,true);
+      window.removeEventListener('pointercancel',onCancel,true);
+      window.removeEventListener('blur',onCancel);
+      try{
+        if(span.hasPointerCapture(pointerId)) span.releasePointerCapture(pointerId);
+      }catch(_error){}
+      document.documentElement.style.userSelect='';
+      document.body.style.cursor='';
+      if(readout) readout.remove();
+    }
+
+    function onMove(moveEvent){
+      if(moveEvent.pointerId!==pointerId) return;
+      moveEvent.preventDefault();
+      if(!moved && Math.abs(moveEvent.clientX-startX)<3){
+        calculate(moveEvent.clientX);
+        if(!moved) return;
+      }else{
+        calculate(moveEvent.clientX);
+      }
+      paintPreview();
+    }
+
+    function onUp(upEvent){
+      if(upEvent.pointerId!==pointerId) return;
+      calculate(upEvent.clientX);
       cleanup();
       if(moved){
         pushUndo();
-        wickResizeLayerFrame(frame.id,previewEnd);
+        frame.fadeInFrames=previewIn;
+        frame.fadeOutFrames=previewOut;
+        wickSyncFrameFadeMetadata(frame);
+        wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
         syncActiveSceneFrameForTime(t,false);
         renderTimeline();
         renderLayerList();
         updateInspector();
         renderTransformHandles();
       }else{
-        // Delay ordinary selection very briefly so a second click can insert a
-        // drawing key without the first click rebuilding the timeline element.
-        clearTimeout(span._wickSingleClickTimer);
-        span._wickSingleClickTimer=setTimeout(()=>wickSelectLayerFrame(layer,frame,true),240);
+        renderTimeline();
       }
     }
 
@@ -18437,11 +18811,78 @@ ctx.fill();</textarea>
         span.className='wick-layer-frame'+(frame.blank?' blank':'')+(active && String(wickActiveDrawingLayerId)===String(layer.id)?' active-frame':'');
         span.style.left=wickFrameBoundaryPercent(frame.startFrame,info)+'%';
         span.style.width=((frame.endFrame-frame.startFrame+1)/info.totalCells*100)+'%';
-        span.title=(frame.blank?'Blank':'Drawing')+' frame '+(frame.startFrame+1)+' through '+(frame.endFrame+1)+' — drag the green bar to change its final frame';
+        const supportsLayerFade=wickFrameSupportsLayerFade(frame);
+        span.title=frame.blank
+          ?'Blank frame '+(frame.startFrame+1)+' through '+(frame.endFrame+1)
+          :(
+            'Frames '+(frame.startFrame+1)+'–'+(frame.endFrame+1)+
+            ' · drag the centre to move · drag either edge to shorten/extend'+
+            (supportsLayerFade?' · drag the white fade handles for transparency':'')
+          );
         const label=document.createElement('span');
         label.className='wick-layer-frame-label';
         label.textContent=frame.startFrame===frame.endFrame?String(frame.startFrame+1):(frame.startFrame+1)+'–'+(frame.endFrame+1);
         span.appendChild(label);
+
+        if(!frame.blank){
+          const startHandle=document.createElement('div');
+          startHandle.className='wick-layer-edge-handle left';
+          startHandle.title='Drag to move, shorten or extend the layer start';
+          startHandle.addEventListener('pointerdown',event=>{
+            wickBeginFrameBarDrag(event,layer,frame,track,span,label,'left');
+          });
+
+          const endHandle=document.createElement('div');
+          endHandle.className='wick-layer-edge-handle right';
+          endHandle.title='Drag to move, shorten or extend the layer end';
+          endHandle.addEventListener('pointerdown',event=>{
+            wickBeginFrameBarDrag(event,layer,frame,track,span,label,'right');
+          });
+
+          span.appendChild(startHandle);
+          span.appendChild(endHandle);
+        }
+
+        if(supportsLayerFade){
+          wickSyncFrameFadeMetadata(frame);
+          span.classList.add('has-layer-fades');
+
+          const fadeSpanFrames=Math.max(1,frame.endFrame-frame.startFrame);
+          const fadeInFrames=Math.max(0,Number(frame.fadeInFrames)||0);
+          const fadeOutFrames=Math.max(0,Number(frame.fadeOutFrames)||0);
+          const fadeInPct=Math.max(0,Math.min(100,(fadeInFrames/fadeSpanFrames)*100));
+          const fadeOutPct=Math.max(0,Math.min(100,(fadeOutFrames/fadeSpanFrames)*100));
+
+          const fadeInOverlay=document.createElement('div');
+          fadeInOverlay.className='wick-layer-fade-overlay in';
+          fadeInOverlay.style.width=fadeInPct+'%';
+
+          const fadeOutOverlay=document.createElement('div');
+          fadeOutOverlay.className='wick-layer-fade-overlay out';
+          fadeOutOverlay.style.width=fadeOutPct+'%';
+
+          const fadeInHandle=document.createElement('div');
+          fadeInHandle.className='wick-object-fade-handle in';
+          fadeInHandle.title='Drag to set layer fade-in transparency';
+          fadeInHandle.style.left=fadeInPct+'%';
+          fadeInHandle.addEventListener('pointerdown',event=>{
+            wickBeginFrameFadeDrag(event,layer,frame,track,span,'in');
+          });
+
+          const fadeOutHandle=document.createElement('div');
+          fadeOutHandle.className='wick-object-fade-handle out';
+          fadeOutHandle.title='Drag to set layer fade-out transparency';
+          fadeOutHandle.style.left=(100-fadeOutPct)+'%';
+          fadeOutHandle.addEventListener('pointerdown',event=>{
+            wickBeginFrameFadeDrag(event,layer,frame,track,span,'out');
+          });
+
+          span.appendChild(fadeInOverlay);
+          span.appendChild(fadeOutOverlay);
+          span.appendChild(fadeInHandle);
+          span.appendChild(fadeOutHandle);
+        }
+
         let lastFramePointerDownAt=0;
         span.addEventListener('pointerdown',event=>{
           const now=performance.now();
@@ -18455,8 +18896,12 @@ ctx.fill();</textarea>
             insertIndependentSceneFrame(event.shiftKey?'blank':'duplicate',targetFrame);
             return;
           }
+          if(
+            event.target.closest('.wick-layer-edge-handle') ||
+            event.target.closest('.wick-object-fade-handle')
+          ) return;
           lastFramePointerDownAt=now;
-          wickBeginFrameBarDrag(event,layer,frame,track,span,label);
+          wickBeginFrameBarDrag(event,layer,frame,track,span,label,'move');
         });
         span.addEventListener('dblclick',event=>{
           if(event.button!==0) return;
