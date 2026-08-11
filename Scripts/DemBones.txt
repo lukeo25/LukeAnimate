@@ -1,4 +1,4 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.9
+/* Luke Animate Dem Bones + MyCharacter GPT v16.10
    Native Luke Animate floating tool.
 
    v16.9 adds Load Part directly to Build Character. A saved .dembones.json
@@ -17,7 +17,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.9";
+  var TOOL_VERSION = "16.10";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -61,6 +61,7 @@
     removeOriginals:true,
     pointMode:"selected",
     fileInputs:{},
+    looseBuildParts:{},
     character:{
       version:1,
       name:"MyCharacter",
@@ -891,6 +892,7 @@
     if(!chosen.length){notify("The supplied artwork could not be ingested.",true);return null;}
     state.activeRig=rig;state.selectedBoneId="";state.selectedCurveId=chosen[0].type==="image"?"":chosen[0].id;state.selectedPointIndex=0;syncRigRefs(rig);
     lastCreatedRigObjects=chosen;
+    registerLooseBuildRig(rig,chosen,[]);
     return rig;
   }
 
@@ -2193,6 +2195,59 @@
     return{app:"LukeAnimateDemBonesPart",version:3,name:rig.name||"Part",rig:serializeRig(rig),objects:targets,expressionObjects:expressions};
   }
 
+  function uniqueBuildPartObjects(list){
+    var seenIds={},seenRefs=[],out=[];
+    (list||[]).forEach(function(object){
+      if(!object)return;
+      var id=object.id!=null?String(object.id):"";
+      if(id){
+        if(seenIds[id])return;
+        seenIds[id]=true;
+      }else{
+        if(seenRefs.indexOf(object)>=0)return;
+        seenRefs.push(object);
+      }
+      out.push(object);
+    });
+    return out;
+  }
+
+  function registerLooseBuildRig(rig,objects,expressionObjects){
+    if(!rig||rig.id==null)return null;
+    var rigId=String(rig.id);
+    if(sourceRigIdAlreadyInCharacter(rigId))return null;
+    var entry=state.looseBuildParts[rigId]||{
+      rigId:rigId,
+      rig:null,
+      objects:[],
+      expressionObjects:[]
+    };
+    entry.rig=rig;
+    entry.objects=uniqueBuildPartObjects((entry.objects||[]).concat(objects||[]).filter(function(object){
+      return !!(object&&object.demBones&&String(object.demBones.rigId)===rigId);
+    }));
+    entry.expressionObjects=uniqueBuildPartObjects((entry.expressionObjects||[]).concat(expressionObjects||[]).filter(function(object){
+      return !!(object&&object.demBonesExpression&&String(object.demBonesExpression.rigId)===rigId);
+    }));
+    state.looseBuildParts[rigId]=entry;
+    return entry;
+  }
+
+  function unregisterLooseBuildRig(rigId){
+    rigId=String(rigId==null?"":rigId);
+    if(!rigId)return false;
+    if(state.looseBuildParts&&state.looseBuildParts[rigId]){
+      delete state.looseBuildParts[rigId];
+      return true;
+    }
+    return false;
+  }
+
+  function registeredLooseBuildRig(rigId){
+    rigId=String(rigId==null?"":rigId);
+    return rigId&&state.looseBuildParts?state.looseBuildParts[rigId]||null:null;
+  }
+
   function mainSceneObjectsForPartPicker(){
     var objects=[];
     try{
@@ -2243,27 +2298,60 @@
 
   function availableBuildPartCandidates(){
     var groups={};
+
+    function ensureGroup(rigId){
+      rigId=String(rigId==null?"":rigId);
+      if(!rigId)return null;
+      return groups[rigId]||(groups[rigId]={rigId:rigId,rig:null,objects:[],expressionObjects:[]});
+    }
+
+    /* First use the real main-stage objects when Luke Animate can enumerate
+       them. This remains the best source for current live object references. */
     mainSceneObjectsForPartPicker().forEach(function(object){
       if(!object)return;
       var data=object.demBones||object.demBonesExpression;
       var rigId=data&&data.rigId!=null?String(data.rigId):"";
       if(!rigId||sourceRigIdAlreadyInCharacter(rigId))return;
-      var group=groups[rigId];
-      if(!group){
-        group=groups[rigId]={rigId:rigId,rig:null,objects:[],expressionObjects:[]};
-      }
+      var group=ensureGroup(rigId);
+      if(!group)return;
       if(data&&data.rig&&!group.rig)group.rig=data.rig;
       if(object.demBones)group.objects.push(object);
       else if(object.demBonesExpression)group.expressionObjects.push(object);
     });
 
+    /* v16.10: merge the explicit loose-rig registry. The second imported part
+       used to disappear from Add Part because entering Build Character calls
+       returnToCharacterRoot(), which intentionally clears state.activeRig.
+       The imported artwork still existed, but the picker could then have no
+       reliable live rig object to associate with it. The registry survives
+       that context switch and is keyed by the unique rig id, not the name. */
+    Object.keys(state.looseBuildParts||{}).forEach(function(rigId){
+      if(sourceRigIdAlreadyInCharacter(rigId)){
+        unregisterLooseBuildRig(rigId);
+        return;
+      }
+      var entry=registeredLooseBuildRig(rigId);
+      if(!entry||!entry.rig)return;
+      var group=ensureGroup(rigId);
+      if(!group)return;
+      if(!group.rig)group.rig=entry.rig;
+      group.objects=group.objects.concat(entry.objects||[]);
+      group.expressionObjects=group.expressionObjects.concat(entry.expressionObjects||[]);
+    });
+
     var candidates=[];
     Object.keys(groups).forEach(function(rigId){
       var group=groups[rigId];
-      if(!group||!group.objects.length)return;
+      if(!group)return;
+      group.objects=uniqueBuildPartObjects(group.objects);
+      group.expressionObjects=uniqueBuildPartObjects(group.expressionObjects);
+      if(!group.objects.length)return;
       var rig=group.rig;
       if(!rig&&state.activeRig&&String(state.activeRig.id)===String(rigId))rig=state.activeRig;
+      var registry=registeredLooseBuildRig(rigId);
+      if(!rig&&registry&&registry.rig)rig=registry.rig;
       if(!rig)return;
+      registerLooseBuildRig(rig,group.objects,group.expressionObjects);
       var bounds=combinedBounds(group.objects);
       var name=String(rig.name||"Part");
       candidates.push({
@@ -2391,7 +2479,7 @@
     objects.forEach(function(o){if(o.demBones)o.demBones.rig=rig;});
     var expressionObjects=(data.expressionObjects||[]).map(function(raw){var o=clone(raw);o.id=uid("db-expression-object");if(o.demBonesExpression){o.demBonesExpression.rigId=rig.id;o.demBonesExpression.rig=rig;}return o;});
     if(placeOnStage!==false){API.pushUndo();objects.concat(expressionObjects).forEach(function(o){API.addDrawObject(o,"animate");});}
-    state.activeRig=rig;state.selectedBoneId=rig.bones&&rig.bones[0]?rig.bones[0].id:"";state.selectedCurveId=objects[0]?objects[0].id:"";state.selectedPointIndex=0;syncRigRefs(rig);renderAll();API.refreshUI();return{rig:rig,objects:objects,expressionObjects:expressionObjects};
+    state.activeRig=rig;state.selectedBoneId=rig.bones&&rig.bones[0]?rig.bones[0].id:"";state.selectedCurveId=objects[0]?objects[0].id:"";state.selectedPointIndex=0;syncRigRefs(rig);if(placeOnStage!==false)registerLooseBuildRig(rig,objects,expressionObjects);renderAll();API.refreshUI();return{rig:rig,objects:objects,expressionObjects:expressionObjects};
   }
 
   function shiftRig(rig,dx,dy){
@@ -2781,7 +2869,12 @@
       API.enterClip(root.id);
     }
 
-    /* Navigation only. No Character child reconstruction is allowed here. */
+    /* Navigation only. No Character child reconstruction is allowed here.
+       Preserve any loose build rig before clearing the active editing rig so
+       the Add Part picker can still offer a newly imported second/later part. */
+    if(state.activeRig&&!characterPartForRigId(state.activeRig.id)){
+      registerLooseBuildRig(state.activeRig,sourceObjectsForRig(state.activeRig),[]);
+    }
     state.activeRig=null;
     state.selectedBoneId="";
     state.selectedCurveId="";
@@ -3152,6 +3245,7 @@
 
     var installedInstance=installCharacterPartInstance(part);
     finaliseCharacterOnStage(true);
+    if(sourceRigId)unregisterLooseBuildRig(sourceRigId);
     installedInstance=partInstance(part)||installedInstance;
 
     renderAll();
@@ -4177,7 +4271,7 @@
   function deleteCurvePointKey(){var rig=state.activeRig,o=findObjectById(state.selectedCurveId);if(!rig||!o)return;var list=(rig.pointKeys&&rig.pointKeys[o.id])||[],t=currentTime(),before=list.length;rig.pointKeys[o.id]=list.filter(function(k){return Math.abs(k.time-t)>=.0005;});notify(before!==rig.pointKeys[o.id].length?"Curve key deleted.":"No curve key on this frame.",false);renderAll();}
 
   function importExpressionSvg(text,type,slot){
-    var rig=state.activeRig;if(!rig){notify("Build or load a part first.",true);return;}var objects=svgTextToObjects(text);if(!objects.length){notify("No supported SVG shapes were found.",true);return;}var b=combinedBounds(objects),anchor=selectedBone();var tx=anchor?anchor.restHead.x-b.cx:0,ty=anchor?anchor.restHead.y-b.cy:0;objects.forEach(function(o){shiftObject(o,tx,ty);o.demBonesExpression={rigId:rig.id,rig:rig,type:type,slot:slot,baseOpacity:n(o.opacity,1)};API.addDrawObject(o,"animate");});rig.expressions[type].slots[slot]={name:slot,objectIds:objects.map(function(o){return o.id;})};syncRigRefs(rig);API.refreshUI();renderAll();notify(type+" expression slot "+slot+" imported.",false);
+    var rig=state.activeRig;if(!rig){notify("Build or load a part first.",true);return;}var objects=svgTextToObjects(text);if(!objects.length){notify("No supported SVG shapes were found.",true);return;}var b=combinedBounds(objects),anchor=selectedBone();var tx=anchor?anchor.restHead.x-b.cx:0,ty=anchor?anchor.restHead.y-b.cy:0;objects.forEach(function(o){shiftObject(o,tx,ty);o.demBonesExpression={rigId:rig.id,rig:rig,type:type,slot:slot,baseOpacity:n(o.opacity,1)};API.addDrawObject(o,"animate");});rig.expressions[type].slots[slot]={name:slot,objectIds:objects.map(function(o){return o.id;})};syncRigRefs(rig);if(!characterPartForRigId(rig.id))registerLooseBuildRig(rig,rigObjects(rig),objects);API.refreshUI();renderAll();notify(type+" expression slot "+slot+" imported.",false);
   }
   function setExpressionKey(type,slot){var rig=state.activeRig;if(!rig)return;var bucket=rig.expressions[type],t=currentTime(),key=(bucket.keys||[]).filter(function(k){return Math.abs(k.time-t)<.0005;})[0];if(key)key.slot=slot;else bucket.keys.push({time:t,slot:slot});bucket.keys.sort(function(a,b){return a.time-b.time;});API.refreshUI();renderAll();notify("Expression key set on frame "+currentFrame()+".",false);}
   function clearExpressionKey(type){var rig=state.activeRig;if(!rig)return;var bucket=rig.expressions[type],t=currentTime();bucket.keys=bucket.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});API.refreshUI();renderAll();}
@@ -4850,7 +4944,7 @@
       ?'<div class="db-add-picker">'+
           (candidates.length
             ?'<select data-db-character-part-choice>'+candidateOptions+'</select><button class="db-btn primary" style="width:100%;margin-top:7px" data-db-character-add-selected>Add Selected Part</button>'
-            :'<div class="db-empty">No unadded Build Parts are on the main stage.</div>')+
+            :'<div class="db-empty">No unadded Build Parts are available.</div>')+
         '</div>'
       :'';
     var cards=state.character.parts.length
