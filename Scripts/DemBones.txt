@@ -1,20 +1,23 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.5
+/* Luke Animate Dem Bones + MyCharacter GPT v16.7
    Native Luke Animate floating tool.
 
-   v16.5 keeps the v16.4 placement Adjust behaviour and makes the visible
-   stage bones authoritative animation controls for their artwork. Dragging or
-   keying a bone on the main stage updates the same live rig used by the nested
-   Character renderer, so vectors and transparent PNGs deform immediately and
-   continue deforming while the main timeline plays. Pinned parts remain pinned
-   and inherit their target bone motion. Requires Luke Animate Plugin API v114
-   for exact nested main-timeline synchronisation.
+   v16.7 makes Character part addition explicit and identity-based. The
+   Character Add Part control lists every loose DemBones build part that is
+   still on the main scene and has not already been added. The user chooses
+   the exact rig by its rig id-backed list entry rather than DemBones guessing
+   from a stale active rig or a duplicate part name. Duplicate names are
+   distinguished by stage position. A source rig that is already in the
+   Character cannot be added a second time. Edit Bone, Animate, Adjust, live
+   stage-bone deformation, pinned placement and all-part visibility are
+   preserved. Requires Luke Animate Plugin API v115 so loose main-scene build
+   parts can be enumerated while the Character root is being edited.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.6";
+  var TOOL_VERSION = "16.7";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -73,6 +76,8 @@
       originY:0,
       originSet:false,
       nameConfirmed:false,
+      addPickerOpen:false,
+      addCandidateRigId:"",
       parts:[]
     },
     editingPartId:null,
@@ -2143,9 +2148,215 @@
   }
 
   function serializeBuildPart(){
-    var rig=state.activeRig;if(!rig)return null;var targets=rigObjects(rig).map(function(o){var c=clone(o);if(c.demBones){delete c.demBones.rig;}return c;});
-    var expressions=[];allObjectArrays().forEach(function(list){list.forEach(function(o){if(o&&o.demBonesExpression&&o.demBonesExpression.rigId===rig.id){var c=clone(o);delete c.demBonesExpression.rig;expressions.push(c);}});});
+    var rig=state.activeRig;
+    if(!rig)return null;
+    var targets=rigObjects(rig).map(function(o){
+      var c=clone(o);
+      if(c.demBones)delete c.demBones.rig;
+      return c;
+    });
+    if(!targets.length)return null;
+    var expressions=[];
+    allObjectArrays().forEach(function(list){
+      list.forEach(function(o){
+        if(o&&o.demBonesExpression&&String(o.demBonesExpression.rigId)===String(rig.id)){
+          var c=clone(o);
+          delete c.demBonesExpression.rig;
+          expressions.push(c);
+        }
+      });
+    });
     return{app:"LukeAnimateDemBonesPart",version:3,name:rig.name||"Part",rig:serializeRig(rig),objects:targets,expressionObjects:expressions};
+  }
+
+  function mainSceneObjectsForPartPicker(){
+    var objects=[];
+    try{
+      if(typeof API.getMainSceneDrawObjects==="function"){
+        objects=API.getMainSceneDrawObjects()||[];
+      }else if(!API.getEditingClipId()){
+        objects=sceneObjects();
+      }
+    }catch(ignoreMainScenePartPicker){}
+    var seenIds={},seenRefs=[],out=[];
+    (objects||[]).forEach(function(object){
+      if(!object)return;
+      var id=object.id!=null?String(object.id):"";
+      if(id){
+        if(seenIds[id])return;
+        seenIds[id]=true;
+      }else{
+        if(seenRefs.indexOf(object)>=0)return;
+        seenRefs.push(object);
+      }
+      out.push(object);
+    });
+    return out;
+  }
+
+  function sourceObjectsForRig(rig){
+    if(!rig||rig.id==null)return [];
+    var rigId=String(rig.id);
+    function belongs(object){
+      return !!(object&&((object.demBones&&String(object.demBones.rigId)===rigId)||(object.demBonesExpression&&String(object.demBonesExpression.rigId)===rigId)));
+    }
+    var current=(sceneObjects()||[]).filter(belongs);
+    if(current.length)return current;
+    return mainSceneObjectsForPartPicker().filter(belongs);
+  }
+
+  function sourceRigIdAlreadyInCharacter(rigId){
+    rigId=String(rigId==null?"":rigId);
+    if(!rigId)return null;
+    for(var i=0;i<state.character.parts.length;i++){
+      var part=state.character.parts[i];
+      if(!part)continue;
+      if(String(part.buildSourceRigId||"")===rigId)return part;
+      if(part.source&&part.source.rig&&String(part.source.rig.id||"")===rigId)return part;
+    }
+    return null;
+  }
+
+  function availableBuildPartCandidates(){
+    var groups={};
+    mainSceneObjectsForPartPicker().forEach(function(object){
+      if(!object)return;
+      var data=object.demBones||object.demBonesExpression;
+      var rigId=data&&data.rigId!=null?String(data.rigId):"";
+      if(!rigId||sourceRigIdAlreadyInCharacter(rigId))return;
+      var group=groups[rigId];
+      if(!group){
+        group=groups[rigId]={rigId:rigId,rig:null,objects:[],expressionObjects:[]};
+      }
+      if(data&&data.rig&&!group.rig)group.rig=data.rig;
+      if(object.demBones)group.objects.push(object);
+      else if(object.demBonesExpression)group.expressionObjects.push(object);
+    });
+
+    var candidates=[];
+    Object.keys(groups).forEach(function(rigId){
+      var group=groups[rigId];
+      if(!group||!group.objects.length)return;
+      var rig=group.rig;
+      if(!rig&&state.activeRig&&String(state.activeRig.id)===String(rigId))rig=state.activeRig;
+      if(!rig)return;
+      var bounds=combinedBounds(group.objects);
+      var name=String(rig.name||"Part");
+      candidates.push({
+        rigId:rigId,
+        rig:rig,
+        name:name,
+        objects:group.objects.slice(),
+        expressionObjects:group.expressionObjects.slice(),
+        bounds:bounds,
+        label:name+' · x '+Math.round(n(bounds.cx,0))+' y '+Math.round(n(bounds.cy,0))
+      });
+    });
+
+    candidates.sort(function(a,b){
+      var nameCompare=String(a.name).localeCompare(String(b.name));
+      if(nameCompare)return nameCompare;
+      var yCompare=n(a.bounds&&a.bounds.cy,0)-n(b.bounds&&b.bounds.cy,0);
+      if(Math.abs(yCompare)>.001)return yCompare;
+      return n(a.bounds&&a.bounds.cx,0)-n(b.bounds&&b.bounds.cx,0);
+    });
+    return candidates;
+  }
+
+  function availableBuildPartCandidateByRigId(rigId){
+    rigId=String(rigId==null?"":rigId);
+    var list=availableBuildPartCandidates();
+    for(var i=0;i<list.length;i++){
+      if(String(list[i].rigId)===rigId)return list[i];
+    }
+    return null;
+  }
+
+  function selectedAvailableBuildPartCandidate(){
+    var list=availableBuildPartCandidates();
+    if(!list.length){
+      state.character.addCandidateRigId="";
+      return null;
+    }
+    var wanted=String(state.character.addCandidateRigId||"");
+    var activeId=state.activeRig&&state.activeRig.id!=null?String(state.activeRig.id):"";
+    var selected=null;
+    list.some(function(candidate){
+      if(wanted&&String(candidate.rigId)===wanted){selected=candidate;return true;}
+      return false;
+    });
+    if(!selected&&activeId){
+      list.some(function(candidate){
+        if(String(candidate.rigId)===activeId){selected=candidate;return true;}
+        return false;
+      });
+    }
+    if(!selected)selected=list[0];
+    state.character.addCandidateRigId=String(selected.rigId);
+    return selected;
+  }
+
+  function buildFromAvailableCandidate(candidate){
+    if(!candidate||!candidate.rig||!candidate.objects||!candidate.objects.length)return null;
+    var rig=candidate.rig;
+    var targets=candidate.objects.map(function(object){
+      var c=clone(object);
+      if(c.demBones)delete c.demBones.rig;
+      return c;
+    });
+    var expressions=(candidate.expressionObjects||[]).map(function(object){
+      var c=clone(object);
+      if(c.demBonesExpression)delete c.demBonesExpression.rig;
+      return c;
+    });
+    return{
+      app:"LukeAnimateDemBonesPart",
+      version:3,
+      name:rig.name||candidate.name||"Part",
+      rig:serializeRig(rig),
+      objects:targets,
+      expressionObjects:expressions
+    };
+  }
+
+  function addAvailableCandidateToCharacter(rigId){
+    var candidate=availableBuildPartCandidateByRigId(rigId);
+    if(!candidate){
+      notify("That build part is no longer available on the main stage.",true);
+      state.character.addCandidateRigId="";
+      renderAll();
+      return null;
+    }
+    var existing=sourceRigIdAlreadyInCharacter(candidate.rigId);
+    if(existing){
+      state.character.selectedPartId=existing.id;
+      state.character.addPickerOpen=false;
+      selectCharacterPartOnStage(existing);
+      renderAll();
+      notify('"'+existing.name+'" is already in this Character.',true);
+      return existing;
+    }
+    var build=buildFromAvailableCandidate(candidate);
+    if(!build){
+      notify("The selected build part could not be read.",true);
+      return null;
+    }
+    state.activeRig=candidate.rig;
+    var added=addBuildToCharacter({
+      __dbInternalOptions:true,
+      build:build,
+      sourceRig:candidate.rig,
+      sourceObjectIds:candidate.objects.concat(candidate.expressionObjects||[]).map(function(object){return object.id;}),
+      sourceContextId:"",
+      silent:true
+    });
+    if(added){
+      state.character.addPickerOpen=false;
+      state.character.addCandidateRigId="";
+      notify('Added "'+added.name+'" to MyCharacter.',false);
+    }
+    renderAll();
+    return added;
   }
 
   function loadBuildPart(data,placeOnStage){
@@ -2809,7 +3020,7 @@
   function addBuildToCharacter(options){
     options=options&&options.__dbInternalOptions?options:{};
 
-    var build=serializeBuildPart();
+    var build=options.build||serializeBuildPart();
 
     if(!build){
       if(!options.silent)notify("Build or import a part first.",true);
@@ -2825,16 +3036,30 @@
       return null;
     }
 
+    var sourceRig=options.sourceRig||state.activeRig;
+    var sourceRigId=sourceRig&&sourceRig.id!=null?String(sourceRig.id):"";
     var part=state.editingPartId
       ?partById(state.editingPartId)
       :null;
+
+    if(!part&&sourceRigId){
+      var existingSourcePart=sourceRigIdAlreadyInCharacter(sourceRigId);
+      if(existingSourcePart){
+        state.character.selectedPartId=existingSourcePart.id;
+        if(!options.keepTab)state.tab="character";
+        if(!options.skipStageSelect)selectCharacterPartOnStage(existingSourcePart);
+        renderAll();
+        if(!options.silent)notify('"'+existingSourcePart.name+'" is already in this Character.',true);
+        return existingSourcePart;
+      }
+    }
 
     if(!part){
       var nextId=state.character.nextPartId++;
 
       part={
         id:nextId,
-        name:(state.activeRig&&state.activeRig.name)||("Part "+nextId),
+        name:(build&&build.name)||(sourceRig&&sourceRig.name)||(state.activeRig&&state.activeRig.name)||("Part "+nextId),
         clipId:"",
         source:null,
         rig:null,
@@ -2857,35 +3082,21 @@
       its own independent copy, so these loose source objects can be removed
       safely when the Character is finalised.
     */
-    var sourceRig=state.activeRig;
-
-    part.buildSourceIds=sourceRig
-      ?sceneObjects().filter(function(object){
-          return !!(
-            object&&
-            (
-              (
-                object.demBones&&
-                String(object.demBones.rigId)===String(sourceRig.id)
-              )||
-              (
-                object.demBonesExpression&&
-                String(object.demBonesExpression.rigId)===String(sourceRig.id)
-              )
-            )
-          );
-        }).map(function(object){
+    part.buildSourceIds=Array.isArray(options.sourceObjectIds)
+      ?options.sourceObjectIds.slice()
+      :(sourceRig
+      ?sourceObjectsForRig(sourceRig).map(function(object){
           return object.id;
         })
-      :[];
+      :[]);
 
     part.buildSourceRigId=sourceRig
       ?sourceRig.id
       :"";
 
-    part.buildSourceContextId=typeof API.getEditingClipId==="function"
-      ?(API.getEditingClipId()||"")
-      :"";
+    part.buildSourceContextId=options.sourceContextId!==undefined
+      ?String(options.sourceContextId||"")
+      :(typeof API.getEditingClipId==="function"?(API.getEditingClipId()||""):"");
 
     createPartClip(part,build);
     state.character.selectedPartId=part.id;
@@ -3153,6 +3364,8 @@
       originY:n(data.character.originY,0),
       originSet:!!data.character.originSet,
       nameConfirmed:data.character.nameConfirmed!==false,
+      addPickerOpen:false,
+      addCandidateRigId:"",
       parts:data.character.parts.map(function(raw){
         return{
           id:n(raw.id,0),
@@ -4488,7 +4701,7 @@
       ".la-dembones-full{position:fixed;left:28px;top:18px;width:374px;max-width:calc(100vw - 16px);height:min(720px,calc(100vh - 36px));display:none;flex-direction:column;background:#f1f3f6;border:1px solid #bfc6cf;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden;color:#27313d;font-family:Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;z-index:10000}",
       ".la-dembones-full.open{display:flex}.db-head{display:flex;align-items:center;gap:9px;padding:8px 10px;background:#fff;border-bottom:1px solid #d3d8df;cursor:move;user-select:none}.db-head img{width:27px;height:27px;filter:grayscale(1) brightness(.72)}.db-title{flex:1}.db-title strong{display:block;font-size:14px;color:#29434a}.db-title span{font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:#7b8491}.db-frame{border:1px solid #bbc3cd;border-radius:999px;padding:5px 9px;background:#fff;font-size:10px}.db-frame b{color:#0e9c86}.db-close{width:32px;height:32px;border:1px solid #bbc3cd;border-radius:8px;background:#fff;font-size:20px;color:#566270;cursor:pointer}",
       ".db-tabs{padding:7px;background:#e4e7eb;border-bottom:1px solid #cbd1d8}.db-tab-group{margin-bottom:5px}.db-tab-group:last-child{margin-bottom:0}.db-tab-group-label{display:block;font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#818b96;margin:0 0 3px 1px}.db-tabs-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}.db-tabs-row.two{grid-template-columns:repeat(2,minmax(0,1fr))}.db-tab{height:25px;border:1px solid #aeb7c2;border-radius:6px;background:#626a74;color:#fff;font-size:9px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 3px}.db-tab.active{background:#0e9c86;border-color:#0b8574;font-weight:700}.db-steps{display:flex;align-items:center;padding:7px 10px;background:#eef1f4;border-bottom:1px solid #cbd1d8;font-size:8.5px;color:#7b8491}.db-step{display:flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer}.db-step-dot{width:14px;height:14px;border-radius:50%;background:#c7cdd4;color:#fff;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;flex-shrink:0}.db-step.done .db-step-dot,.db-step.current .db-step-dot{background:#0e9c86}.db-step.current .db-step-label{color:#0e9c86;font-weight:700}.db-step-sep{flex:1;height:1px;background:#cbd1d8;margin:0 5px;min-width:7px}",
-      ".db-body{flex:1;min-height:0;overflow:auto;padding:8px 7px 46px}.db-page{display:none}.db-page.active{display:block}.db-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:8px;margin-bottom:7px}.db-section h3{margin:0 0 8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#66717e}.db-help{font-size:9.5px;line-height:1.35;color:#6b7582;margin:0 0 8px}.db-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.db-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.db-btn{border:1px solid #b8c0ca;border-radius:8px;background:#eceff2;color:#4b5766;padding:6px 5px;font-size:9px;cursor:pointer}.db-btn:hover{border-color:#0e9c86}.db-btn.primary,.db-btn.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}.db-btn.danger{color:#ad4d4d;border-color:#ddbcbc}.db-btn:disabled{opacity:.45}.db-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:7px;align-items:center;margin-bottom:7px}.db-row.three{grid-template-columns:92px minmax(0,1fr) 70px}.db-row label{font-size:11px;color:#63707e}.db-row input,.db-row select,.db-row textarea{width:100%;min-width:0;border:1px solid #c7ced7;border-radius:7px;background:#f4f5f7;color:#27313d;padding:7px;font-size:11px}.db-row input[type=range]{padding:0;accent-color:#0e9c86}.db-check{display:flex;align-items:center;gap:7px;font-size:11px;color:#63707e}.db-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto}.db-card{border:1px solid #ccd2da;border-radius:9px;background:#f7f8fa;padding:8px}.db-card.active{border-color:#0e9c86;background:#e8f6f3}.db-card-head{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;gap:6px;align-items:center}.db-character-card .db-card-head{grid-template-columns:28px 28px minmax(0,1fr) 28px}.db-pin-mini{font-size:14px;line-height:1}.db-pin-mini.active{background:#0e9c86;border-color:#0e9c86;color:#fff}.db-part-summary{margin-top:7px;padding:6px 7px;border:1px solid #d7dce2;border-radius:7px;background:#fff;color:#66717e;font-size:10px;line-height:1.35}.db-pin-status{margin-top:7px;padding:7px;border:1px solid #d2d8df;border-radius:7px;background:#f3f5f7;font-size:10px;color:#626e7b}.db-pin-status.pinned{border-color:#9bcfc5;background:#eaf7f4;color:#237768}.db-card-head input{width:100%;min-width:0;border:1px solid #c6cdd6;border-radius:6px;padding:6px}.db-mini{width:28px;height:28px;border:1px solid #b9c1cb;border-radius:6px;background:#fff;cursor:pointer}.db-card-body{margin-top:7px}.db-bone-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:6px;align-items:center;border:1px solid #cfd5dc;border-radius:7px;padding:7px;background:#f5f6f8;cursor:pointer}.db-bone-row.active{border-color:#0e9c86;background:#e5f6f2}.db-dot{width:11px;height:11px;border-radius:50%;background:#6f7781}.db-bone-row.active .db-dot{background:#0e9c86}.db-status{position:absolute;left:7px;right:7px;bottom:7px;min-height:26px;max-height:42px;overflow:auto;border:1px solid #cbd2da;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596573}.db-status.good{border-color:#0e9c86;color:#117d6d}.db-status.bad{border-color:#c66a6a;color:#a33d3d}.db-hidden{display:none}.db-pill{display:inline-block;border:1px solid #c7ced7;border-radius:999px;padding:3px 7px;font-size:9px;color:#64707e;background:#fff}.db-empty{border:1px dashed #bbc3cd;border-radius:9px;padding:14px;text-align:center;color:#78828e;font-size:11px}.db-point-list{max-height:190px;overflow:auto;border:1px solid #d0d6dd;border-radius:8px;background:#fafbfc}.db-point-row{display:grid;grid-template-columns:34px 1fr 1fr;gap:6px;padding:5px;border-bottom:1px solid #e1e4e8}.db-point-row:last-child{border-bottom:0}.db-point-row.active{background:#e4f5f1}.db-point-row input{width:100%;min-width:0;border:1px solid #c9d0d8;border-radius:5px;padding:5px}.db-subtabs{display:flex;gap:6px;margin-bottom:8px}.db-subtab{flex:1;border:1px solid #b9c1cb;border-radius:7px;background:#e9ecef;padding:7px;font-size:10px}.db-subtab.active{background:#3fae9b;color:#fff;border-color:#0e9c86}",
+      ".db-body{flex:1;min-height:0;overflow:auto;padding:8px 7px 46px}.db-page{display:none}.db-page.active{display:block}.db-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:8px;margin-bottom:7px}.db-section h3{margin:0 0 8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#66717e}.db-help{font-size:9.5px;line-height:1.35;color:#6b7582;margin:0 0 8px}.db-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.db-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.db-btn{border:1px solid #b8c0ca;border-radius:8px;background:#eceff2;color:#4b5766;padding:6px 5px;font-size:9px;cursor:pointer}.db-btn:hover{border-color:#0e9c86}.db-btn.primary,.db-btn.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}.db-btn.danger{color:#ad4d4d;border-color:#ddbcbc}.db-btn:disabled{opacity:.45}.db-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:7px;align-items:center;margin-bottom:7px}.db-row.three{grid-template-columns:92px minmax(0,1fr) 70px}.db-row label{font-size:11px;color:#63707e}.db-row input,.db-row select,.db-row textarea{width:100%;min-width:0;border:1px solid #c7ced7;border-radius:7px;background:#f4f5f7;color:#27313d;padding:7px;font-size:11px}.db-row input[type=range]{padding:0;accent-color:#0e9c86}.db-check{display:flex;align-items:center;gap:7px;font-size:11px;color:#63707e}.db-list{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto}.db-card{border:1px solid #ccd2da;border-radius:9px;background:#f7f8fa;padding:8px}.db-card.active{border-color:#0e9c86;background:#e8f6f3}.db-card-head{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;gap:6px;align-items:center}.db-character-card .db-card-head{grid-template-columns:28px 28px minmax(0,1fr) 28px}.db-pin-mini{font-size:14px;line-height:1}.db-pin-mini.active{background:#0e9c86;border-color:#0e9c86;color:#fff}.db-part-summary{margin-top:7px;padding:6px 7px;border:1px solid #d7dce2;border-radius:7px;background:#fff;color:#66717e;font-size:10px;line-height:1.35}.db-pin-status{margin-top:7px;padding:7px;border:1px solid #d2d8df;border-radius:7px;background:#f3f5f7;font-size:10px;color:#626e7b}.db-pin-status.pinned{border-color:#9bcfc5;background:#eaf7f4;color:#237768}.db-card-head input{width:100%;min-width:0;border:1px solid #c6cdd6;border-radius:6px;padding:6px}.db-mini{width:28px;height:28px;border:1px solid #b9c1cb;border-radius:6px;background:#fff;cursor:pointer}.db-card-body{margin-top:7px}.db-bone-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:6px;align-items:center;border:1px solid #cfd5dc;border-radius:7px;padding:7px;background:#f5f6f8;cursor:pointer}.db-bone-row.active{border-color:#0e9c86;background:#e5f6f2}.db-dot{width:11px;height:11px;border-radius:50%;background:#6f7781}.db-bone-row.active .db-dot{background:#0e9c86}.db-status{position:absolute;left:7px;right:7px;bottom:7px;min-height:26px;max-height:42px;overflow:auto;border:1px solid #cbd2da;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596573}.db-status.good{border-color:#0e9c86;color:#117d6d}.db-status.bad{border-color:#c66a6a;color:#a33d3d}.db-hidden{display:none}.db-pill{display:inline-block;border:1px solid #c7ced7;border-radius:999px;padding:3px 7px;font-size:9px;color:#64707e;background:#fff}.db-empty{border:1px dashed #bbc3cd;border-radius:9px;padding:14px;text-align:center;color:#78828e;font-size:11px}.db-point-list{max-height:190px;overflow:auto;border:1px solid #d0d6dd;border-radius:8px;background:#fafbfc}.db-point-row{display:grid;grid-template-columns:34px 1fr 1fr;gap:6px;padding:5px;border-bottom:1px solid #e1e4e8}.db-point-row:last-child{border-bottom:0}.db-point-row.active{background:#e4f5f1}.db-point-row input{width:100%;min-width:0;border:1px solid #c9d0d8;border-radius:5px;padding:5px}.db-subtabs{display:flex;gap:6px;margin-bottom:8px}.db-subtab{flex:1;border:1px solid #b9c1cb;border-radius:7px;background:#e9ecef;padding:7px;font-size:10px}.db-subtab.active{background:#3fae9b;color:#fff;border-color:#0e9c86}.db-add-picker{margin-top:7px;padding:7px;border:1px solid #cfd5dc;border-radius:8px;background:#f7f8fa}.db-add-picker select{width:100%;min-width:0;border:1px solid #c7ced7;border-radius:7px;background:#fff;color:#27313d;padding:7px;font-size:10px}",
       "@media(max-width:560px){.la-dembones-full{left:8px;top:8px;width:calc(100vw - 16px);height:calc(100vh - 16px)}.db-row,.db-row.three{grid-template-columns:78px minmax(0,1fr)}.db-row.three>*:last-child{grid-column:2}.db-grid3{grid-template-columns:repeat(2,minmax(0,1fr))}}"
     ].join("\n");document.head.appendChild(s);
   }
@@ -4515,6 +4728,18 @@
 
   function characterPage(){
     /* PANEL RENDER IS READ-ONLY: never rewrite stage geometry here. */
+    var candidates=availableBuildPartCandidates();
+    var chosen=selectedAvailableBuildPartCandidate();
+    var candidateOptions=candidates.map(function(candidate){
+      return '<option value="'+esc(candidate.rigId)+'"'+(chosen&&String(chosen.rigId)===String(candidate.rigId)?' selected':'')+'>'+esc(candidate.label)+'</option>';
+    }).join('');
+    var addPicker=state.character.addPickerOpen
+      ?'<div class="db-add-picker">'+
+          (candidates.length
+            ?'<select data-db-character-part-choice>'+candidateOptions+'</select><button class="db-btn primary" style="width:100%;margin-top:7px" data-db-character-add-selected>Add Selected Part</button>'
+            :'<div class="db-empty">No unadded Build Parts are on the main stage.</div>')+
+        '</div>'
+      :'';
     var cards=state.character.parts.length
       ?state.character.parts.map(function(part){
           var active=Number(state.character.selectedPartId)===Number(part.id);
@@ -4558,8 +4783,9 @@
       '<div class="db-section">'+
         '<h3>MyCharacter</h3>'+
         '<div class="db-row"><label>Name</label><input value="'+(state.character.nameConfirmed?esc(state.character.name):'')+'" placeholder="Name character" data-db-character-name></div>'+
-        '<div class="db-grid3"><button class="db-btn primary" data-db-character-add>Add Current Part</button><button class="db-btn" data-db-character-save>Save</button><button class="db-btn" data-db-character-load>Load</button></div>'+
-        '<p class="db-help" style="margin-top:8px">Add parts, place them with Adjust, or animate while the whole Character stays visible.</p>'+
+        '<div class="db-grid3"><button class="db-btn primary" data-db-character-add-picker>'+(state.character.addPickerOpen?'Close Add Part':'Add Part')+'</button><button class="db-btn" data-db-character-save>Save</button><button class="db-btn" data-db-character-load>Load</button></div>'+
+        addPicker+
+        '<p class="db-help" style="margin-top:8px">Choose the exact unadded part, then place it with Adjust or animate it.</p>'+
       '</div>'+
       '<div class="db-section"><h3>Parts</h3><div class="db-list">'+cards+'</div></div>'+
       '<div class="db-section"><h3>Maintenance</h3><div class="db-grid3"><button class="db-btn" data-db-character-resync>Resync Bones</button><button class="db-btn" data-db-character-cleanup>Clean Up</button><button class="db-btn" data-db-character-commit>Force Sync</button></div></div>'+
@@ -4607,7 +4833,7 @@
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts SVG/rig artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div><div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> use stage vectors, SVG or transparent PNG artwork.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Adjust moves, rotates or scales the whole part and its bones without adding animation keys. It also works while pinned and keeps the pin. Animate and Edit Bone work on the selected part while all other Character parts remain visible. To pin, press 📌 on the child part and click a visible target bone.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> use stage vectors, SVG or transparent PNG artwork.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add Part lists the unadded loose build rigs so you choose the exact part, even when names repeat. Adjust moves, rotates or scales the whole part and its bones without adding animation keys. It also works while pinned and keeps the pin. Animate and Edit Bone work on the selected part while all other Character parts remain visible. To pin, press 📌 on the child part and click a visible target bone.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   var boneCursorCache={};
@@ -4642,7 +4868,12 @@
 
   function bindBodyEvents(){var p=state.panel;if(!p)return;
     p.querySelectorAll('[data-db-use-selection]').forEach(function(b){b.onclick=useStageSelection;});p.querySelectorAll('[data-db-load-png]').forEach(function(b){b.onclick=function(){state.fileInputs.png.click();};});p.querySelectorAll('[data-db-step-jump]').forEach(function(step){step.onclick=function(){state.tab=step.getAttribute('data-db-step-jump')||'source';state.mode=state.tab==='bones'?'add-bone':'select';renderAll();};});p.querySelectorAll('[data-db-point-mode]').forEach(function(input){input.onchange=function(){if(input.checked){state.pointMode=input.value||'selected';renderAll();notify('Ingest mode set to '+(state.pointMode==='limb'?'Limb':(state.pointMode==='uniform'?'Uniform':'Selected points'))+'.',false);}};});p.querySelectorAll('[data-db-load-svg]').forEach(function(b){b.onclick=function(){state.fileInputs.svg.click();};});p.querySelectorAll('[data-db-add-dummy]').forEach(function(b){b.onclick=addDummy;});p.querySelectorAll('[data-db-export-svg]').forEach(function(b){b.onclick=function(){var o=selectedObjects().filter(supportedObject);if(!o.length&&state.activeRig)o=rigObjects(state.activeRig);if(!o.length){notify('Select shapes or build a part first.',true);return;}downloadText('LukeAnimate_Selection.svg',objectsToSvg(o),'image/svg+xml');};});
-    var rem=p.querySelector('[data-db-remove-originals]');if(rem)rem.onchange=function(){state.removeOriginals=!!rem.checked;};p.querySelectorAll('[data-db-add-character],[data-db-character-add]').forEach(function(b){b.onclick=addBuildToCharacter;});p.querySelectorAll('[data-db-release-stage]').forEach(function(b){b.onclick=releaseRigToStage;});p.querySelectorAll('[data-db-cancel-edit]').forEach(function(b){b.onclick=function(){state.editingPartId=null;notify('Part edit cancelled.',false);};});p.querySelectorAll('[data-db-save-part]').forEach(function(b){b.onclick=savePart;});p.querySelectorAll('[data-db-load-part]').forEach(function(b){b.onclick=function(){state.fileInputs.part.click();};});
+    var rem=p.querySelector('[data-db-remove-originals]');if(rem)rem.onchange=function(){state.removeOriginals=!!rem.checked;};
+    p.querySelectorAll('[data-db-add-character]').forEach(function(b){b.onclick=addBuildToCharacter;});
+    p.querySelectorAll('[data-db-character-add-picker]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}state.character.addPickerOpen=!state.character.addPickerOpen;if(state.character.addPickerOpen)selectedAvailableBuildPartCandidate();renderAll();};});
+    p.querySelectorAll('[data-db-character-part-choice]').forEach(function(select){select.onchange=function(){state.character.addCandidateRigId=String(select.value||"");};});
+    p.querySelectorAll('[data-db-character-add-selected]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var choice=p.querySelector('[data-db-character-part-choice]');var rigId=choice?String(choice.value||""):String(state.character.addCandidateRigId||"");addAvailableCandidateToCharacter(rigId);};});
+    p.querySelectorAll('[data-db-release-stage]').forEach(function(b){b.onclick=releaseRigToStage;});p.querySelectorAll('[data-db-cancel-edit]').forEach(function(b){b.onclick=function(){state.editingPartId=null;notify('Part edit cancelled.',false);};});p.querySelectorAll('[data-db-save-part]').forEach(function(b){b.onclick=savePart;});p.querySelectorAll('[data-db-load-part]').forEach(function(b){b.onclick=function(){state.fileInputs.part.click();};});
     var cn=p.querySelector('[data-db-character-name]');if(cn)cn.oninput=function(){var value=String(cn.value||'').trim();state.character.name=value||'MyCharacter';state.character.nameConfirmed=!!value;};p.querySelectorAll('[data-db-character-save]').forEach(function(b){b.onclick=saveCharacter;});p.querySelectorAll('[data-db-character-load]').forEach(function(b){b.onclick=function(){state.fileInputs.character.click();};});p.querySelectorAll('[data-db-character-commit],[data-db-commit-character]').forEach(function(b){b.onclick=commitCharacter;});p.querySelectorAll('[data-db-character-resync]').forEach(function(b){b.onclick=resyncCharacterPlacement;});p.querySelectorAll('[data-db-character-cleanup]').forEach(function(b){b.onclick=function(){cleanUpLooseArtwork(false);};});var commitName=p.querySelector('[data-db-commit-name]');if(commitName)commitName.oninput=function(){state.character.name=commitName.value||'MyCharacter';};
     p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(event){if(event&&event.target&&event.target.closest('button,input,select,textarea'))return;var part=partById(card.getAttribute('data-db-part-card'));if(part){if(state.adjustingPartId&&Number(state.adjustingPartId)!==Number(part.id))finishPartPlacementAdjust(true);selectCharacterPartOnStage(part);renderAll();}};});
     p.querySelectorAll('[data-db-part-toggle]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var part=partById(button.getAttribute('data-db-part-toggle'));if(part){part.collapsed=!part.collapsed;renderAll();}};});
