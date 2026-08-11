@@ -1,14 +1,14 @@
-
 <!-- LukeAnimate GPT v172: image/text layer timing parity. Image, video and text drawing layers now expose explicit timeline start-trim, end-trim and whole-block move controls plus fade-in/fade-out transparency handles. Layer fades multiply the object's normal/keyframed opacity during preview and WebM export, and persist with canonical Wick drawing frames. Existing object keyframes, layer exposure, rig-aware off-stage proxies and WebM stage cropping are preserved. -->
 <!-- LukeAnimate GPT v171: rig-aware off-stage proxies. DemBones curves that share one rigId now produce one combined editor-only proxy bounding box for the whole rig instead of one box per curve. StickRig parts resolve to one containing StickRig/root proxy while editing that rig Clip, while top-level StickRig roots remain one proxy each. Dragging a rig proxy moves every represented member through the existing transform/Auto-Keyframe system; manual + Keyframe writes a transform key to every represented member. Proxy boxes remain editor-only and never enter WebM capture. -->
 <!-- LukeAnimate GPT v169: nested Clip rulers are true editing-viewport rulers. While editing a Clip, the horizontal ruler is fixed immediately below the top toolbar from the left ruler strip to the sidebar edge, the vertical ruler is fixed against the far-left workspace edge down to the timeline, and the corner sits at their intersection. Tick values continue to follow Clip coordinates while panning/scrolling. Main-stage ruler layout remains unchanged. -->
 <!-- LukeAnimate GPT v153: native nested Clip-part animator. Selecting a parent Clip shows its child Clips as indented timeline sublayers and opens stage-styled Move, Scale and Rotate concertinas. Includes the v152 nested Clip preservation fix and all v151 Config, Scripts, SVG and Bezier fixes. -->
+<!-- LukeAnimate GPT v177: keeps the v176 unclipped Clip-edit workspace and adds DemBones bone animation rows to the main timeline for assembled Character Clips. Bone keys can be dragged to retime, right-clicked to delete, and switched between interpolation types. -->
 <!DOCTYPE html>
 <!-- LukeAnimate GPT v148: Flowing Line layers can use animated dashes, built-in shapes, custom text or an uploaded image as the moving path item. -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v173</title>
+<title>Luke Animate v177</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -2188,6 +2188,7 @@
     box-shadow:none !important;
     max-width:none;
     max-height:none;
+    overflow:visible !important;
     background:transparent;
   }
 
@@ -3657,6 +3658,78 @@ ctx.fill();</textarea>
     return editingClipId ? clipEditViewOffset : { x:0, y:0 };
   }
 
+  // v176: while editing a nested Clip the canvas is an editor workspace, not
+  // the export-stage crop. Keep logical project dimensions W/H unchanged and
+  // use the actual edit canvas extent only for screen-space mapping.
+  function editCanvasLogicalWidth(){
+    return editingClipId ? Math.max(1, Number(canvas.width)||W) : W;
+  }
+
+  function editCanvasLogicalHeight(){
+    return editingClipId ? Math.max(1, Number(canvas.height)||H) : H;
+  }
+
+  function desiredClipEditCanvasExtent(){
+    const wrap=document.getElementById('stage-wrap');
+    const wrapRect=wrap ? wrap.getBoundingClientRect() : {width:W,height:H};
+    const zoom=Math.max(.05,Number(stageZoom)||1);
+    const visibleW=Math.max(W,Math.ceil(Math.max(1,wrapRect.width)/zoom));
+    const visibleH=Math.max(H,Math.ceil(Math.max(1,wrapRect.height)/zoom));
+
+    // Give the Clip at least one full stage of editable room on every side,
+    // and at least one viewport of extra room around the current view.
+    return {
+      width:Math.max(W*3,visibleW*2),
+      height:Math.max(H*3,visibleH*2)
+    };
+  }
+
+  function centreClipWorkspaceScroll(){
+    if(!editingClipId)return;
+    requestAnimationFrame(()=>{
+      const wrap=document.getElementById('stage-wrap');
+      const workspace=document.getElementById('stage-workspace');
+      if(!wrap||!workspace)return;
+      const maxLeft=Math.max(0,workspace.scrollWidth-wrap.clientWidth);
+      const maxTop=Math.max(0,workspace.scrollHeight-wrap.clientHeight);
+      wrap.scrollLeft=maxLeft/2;
+      wrap.scrollTop=maxTop/2;
+      requestAnimationFrame(updateRulersAndGuides);
+    });
+  }
+
+  function syncClipEditCanvasExtent(recentre){
+    if(!editingClipId){
+      if(canvas.width!==W)canvas.width=W;
+      if(canvas.height!==H)canvas.height=H;
+      applyZoom();
+      return;
+    }
+
+    const size=desiredClipEditCanvasExtent();
+    const changed=canvas.width!==size.width||canvas.height!==size.height;
+    if(canvas.width!==size.width)canvas.width=size.width;
+    if(canvas.height!==size.height)canvas.height=size.height;
+
+    const shell=document.getElementById('canvas-shell');
+    const zoom=Math.max(.05,Number(stageZoom)||1);
+    const cssW=Math.round(size.width*zoom);
+    const cssH=Math.round(size.height*zoom);
+    canvas.style.maxWidth='none';
+    canvas.style.maxHeight='none';
+    canvas.style.width=cssW+'px';
+    canvas.style.height=cssH+'px';
+    if(shell){
+      shell.style.maxWidth='none';
+      shell.style.maxHeight='none';
+      shell.style.width=cssW+'px';
+      shell.style.height=cssH+'px';
+    }
+
+    if((changed||recentre)&&clips[editingClipId])centreClipEditView(clips[editingClipId]);
+    if(changed||recentre)centreClipWorkspaceScroll();
+  }
+
   function sceneToStagePoint(point){
     const offset = currentClipEditOffset();
     return { x:Number(point.x || 0) + offset.x, y:Number(point.y || 0) + offset.y };
@@ -3669,7 +3742,7 @@ ctx.fill();</textarea>
 
   function centreClipEditView(clip){
     const pivot = ensureClipPivot(clip);
-    clipEditViewOffset = { x:W / 2 - pivot.x, y:H / 2 - pivot.y };
+    clipEditViewOffset = { x:editCanvasLogicalWidth() / 2 - pivot.x, y:editCanvasLogicalHeight() / 2 - pivot.y };
   }
 
   function rotateScaleDelta(dx, dy, scale, rotation){
@@ -3930,6 +4003,8 @@ ctx.fill();</textarea>
   // or set obj.panelId directly when creating their object.
   const objectPanelOwners = Object.create(null);
   const objectEvaluators = new Map();
+  // v174 adds mainTimelineTime to the public API so nested DemBones parts use
+  // the same clock as their visible stage bones.
   // v173: custom object renderers let tools such as Dem Bones draw a deformed
   // transparent raster in the normal stage renderer. Because this hook lives
   // inside renderOneDrawObject it is also used for Clip rendering and export.
@@ -5071,8 +5146,8 @@ ctx.fill();</textarea>
       const el = document.createElement('div');
       const displayPoint = sceneToStagePoint(p);
       el.className = 'pt pt-path' + (i===0 ? ' first' : '');
-      el.style.left = (displayPoint.x/W*100) + '%';
-      el.style.top = (displayPoint.y/H*100) + '%';
+      el.style.left = (displayPoint.x/editCanvasLogicalWidth()*100) + '%';
+      el.style.top = (displayPoint.y/editCanvasLogicalHeight()*100) + '%';
       el.dataset.idx = i;
       overlay.appendChild(el);
     });
@@ -5080,8 +5155,8 @@ ctx.fill();</textarea>
       const el = document.createElement('div');
       const displayPoint = sceneToStagePoint(pt);
       el.className = 'pt-target';
-      el.style.left = (displayPoint.x/W*100) + '%';
-      el.style.top = (displayPoint.y/H*100) + '%';
+      el.style.left = (displayPoint.x/editCanvasLogicalWidth()*100) + '%';
+      el.style.top = (displayPoint.y/editCanvasLogicalHeight()*100) + '%';
       el.dataset.pointId = pt.id;
       overlay.appendChild(el);
     });
@@ -5090,8 +5165,8 @@ ctx.fill();</textarea>
   function canvasCoords(clientX, clientY){
     const rect = canvas.getBoundingClientRect();
     return stageToScenePoint({
-      x: (clientX - rect.left) / rect.width * W,
-      y: (clientY - rect.top) / rect.height * H
+      x: (clientX - rect.left) / rect.width * editCanvasLogicalWidth(),
+      y: (clientY - rect.top) / rect.height * editCanvasLogicalHeight()
     });
   }
 
@@ -5121,7 +5196,7 @@ ctx.fill();</textarea>
 
   function guideSnapThreshold(axis){
     const rect=canvas.getBoundingClientRect();
-    const scale=axis==='x'?(rect.width/Math.max(1,W)):(rect.height/Math.max(1,H));
+    const scale=axis==='x'?(rect.width/Math.max(1,editCanvasLogicalWidth())):(rect.height/Math.max(1,editCanvasLogicalHeight()));
     return GUIDE_SNAP_PIXELS/Math.max(.0001,scale);
   }
 
@@ -5314,8 +5389,8 @@ ctx.fill();</textarea>
       verticalHeight
     );
 
-    const xScale=rect.width/W;
-    const yScale=rect.height/H;
+    const xScale=rect.width/editCanvasLogicalWidth();
+    const yScale=rect.height/editCanvasLogicalHeight();
 
     /*
       Main stage rulers begin at the canvas edge.
@@ -5572,8 +5647,8 @@ ctx.fill();</textarea>
 
   function guidePositionFromClient(type,clientX,clientY){
     const rect=canvas.getBoundingClientRect();
-    const stageX=Math.max(0,Math.min(W,(clientX-rect.left)/Math.max(1,rect.width)*W));
-    const stageY=Math.max(0,Math.min(H,(clientY-rect.top)/Math.max(1,rect.height)*H));
+    const stageX=Math.max(0,Math.min(editCanvasLogicalWidth(),(clientX-rect.left)/Math.max(1,rect.width)*editCanvasLogicalWidth()));
+    const stageY=Math.max(0,Math.min(editCanvasLogicalHeight(),(clientY-rect.top)/Math.max(1,rect.height)*editCanvasLogicalHeight()));
     const scene=stageToScenePoint({x:stageX,y:stageY});
     return type==='vertical'?scene.x:scene.y;
   }
@@ -5606,9 +5681,9 @@ ctx.fill();</textarea>
     ['vertical','horizontal'].forEach(type=>{
       stageGuides[type].forEach((position,index)=>{
         const display=type==='vertical'?sceneToStagePoint({x:position,y:0}).x:sceneToStagePoint({x:0,y:position}).y;
-        if(display<0||display>(type==='vertical'?W:H))return;
+        if(display<0||display>(type==='vertical'?editCanvasLogicalWidth():editCanvasLogicalHeight()))return;
         const guide=document.createElement('div');guide.className='stage-guide '+type;
-        if(type==='vertical')guide.style.left=(display/W*100)+'%';else guide.style.top=(display/H*100)+'%';
+        if(type==='vertical')guide.style.left=(display/editCanvasLogicalWidth()*100)+'%';else guide.style.top=(display/editCanvasLogicalHeight()*100)+'%';
         guide.title=(type==='vertical'?'Vertical':'Horizontal')+' guide '+Math.round(position*100)/100+' — drag to move; Ctrl-drag to duplicate; right-click to delete';
         guide.addEventListener('mousedown',event=>{
           if(event.ctrlKey||event.metaKey){
@@ -6902,6 +6977,7 @@ ctx.fill();</textarea>
     contextStack.push({ data: captureMainSceneAsContext(), clipId: editingClipId, viewOffset:{ x:clipEditViewOffset.x, y:clipEditViewOffset.y } });
     editingClipId = clipId;
     ensureClipPivot(clip);
+    syncClipEditCanvasExtent(true);
     centreClipEditView(clip);
     applyContext({
       points: clip.points, closed: clip.closed, targetPoints: clip.targetPoints,
@@ -6939,6 +7015,7 @@ ctx.fill();</textarea>
     const prev = contextStack.pop();
     editingClipId = prev.clipId;
     clipEditViewOffset = prev.viewOffset || { x:0, y:0 };
+    syncClipEditCanvasExtent(false);
     applyContext(prev.data);
     updateClipBreadcrumb();
     renderClipLibrary();
@@ -7232,14 +7309,14 @@ ctx.fill();</textarea>
     const b=sceneToStagePoint(objectLocalPointToScene(obj,localB,t));
     const length=Math.hypot(b.x-a.x,b.y-a.y),angle=Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI;
     const line=document.createElement('div');line.className='pen-edit-line';
-    line.style.left=(a.x/W*100)+'%';line.style.top=(a.y/H*100)+'%';line.style.width=(length/W*100)+'%';line.style.transform='rotate('+angle+'deg)';
+    line.style.left=(a.x/editCanvasLogicalWidth()*100)+'%';line.style.top=(a.y/editCanvasLogicalHeight()*100)+'%';line.style.width=(length/editCanvasLogicalWidth()*100)+'%';line.style.transform='rotate('+angle+'deg)';
     overlay.appendChild(line);
   }
 
   function addPenDragHandle(className,localPoint,obj,title,onMove,onStart,onEnd){
     const scene=objectLocalPointToScene(obj,localPoint,t),display=sceneToStagePoint(scene);
     const element=document.createElement('div');element.className=className;element.title=title;
-    element.style.left=(display.x/W*100)+'%';element.style.top=(display.y/H*100)+'%';
+    element.style.left=(display.x/editCanvasLogicalWidth()*100)+'%';element.style.top=(display.y/editCanvasLogicalHeight()*100)+'%';
     element.addEventListener('mousedown',event=>{
       event.preventDefault();event.stopPropagation();
       if(onStart)onStart();
@@ -7641,7 +7718,7 @@ ctx.fill();</textarea>
   function applyStyleToStageTextEditor(style){
     const editor = stageTextEditorElement();
     const canvasRect = canvas.getBoundingClientRect();
-    const scale = canvasRect.width / W;
+    const scale = canvasRect.width / editCanvasLogicalWidth();
     editor.style.fontFamily = `"${style.fontFamily}", sans-serif`;
     editor.style.fontSize = Math.max(1, style.fontSize * scale) + 'px';
     editor.style.lineHeight = '1.2';
@@ -7662,8 +7739,8 @@ ctx.fill();</textarea>
     const editor = stageTextEditorElement();
     const canvasRect = canvas.getBoundingClientRect();
     const shellRect = document.getElementById('canvas-shell').getBoundingClientRect();
-    const scaleX = canvasRect.width / W;
-    const scaleY = canvasRect.height / H;
+    const scaleX = canvasRect.width / editCanvasLogicalWidth();
+    const scaleY = canvasRect.height / editCanvasLogicalHeight();
     const stageAnchor = sceneToStagePoint(stageTextEdit);
     const anchorScreenX = canvasRect.left + stageAnchor.x * scaleX;
     const style = textPanelStyle();
@@ -8924,6 +9001,11 @@ ctx.fill();</textarea>
   function renderOffstageObjectProxies(){
     if(!offstageProxyLayer) return;
 
+    if(editingClipId){
+      clearOffstageObjectProxies(true);
+      return;
+    }
+
     if(exportPlayback.active){
       clearOffstageObjectProxies(true);
       return;
@@ -9500,7 +9582,7 @@ ctx.fill();</textarea>
       const display=sceneToStagePoint(scene);
       const el=document.createElement('div');
       el.className='shape-point-handle'+(index===shapePointSelectedIndex?' active':'');
-      el.style.left=(display.x/W*100)+'%';el.style.top=(display.y/H*100)+'%';
+      el.style.left=(display.x/editCanvasLogicalWidth()*100)+'%';el.style.top=(display.y/editCanvasLogicalHeight()*100)+'%';
       el.title='Point '+index+' — drag to move; right-click to delete';
       el.addEventListener('mousedown',event=>{
         event.preventDefault();event.stopPropagation();
@@ -9719,11 +9801,11 @@ ctx.fill();</textarea>
   function createBezierHandleLine(fromScene,toScene){
     const a=sceneToStagePoint(fromScene),b=sceneToStagePoint(toScene);
     const canvasRect=canvas.getBoundingClientRect();
-    const dx=(b.x-a.x)/W*canvasRect.width;
-    const dy=(b.y-a.y)/H*canvasRect.height;
+    const dx=(b.x-a.x)/editCanvasLogicalWidth()*canvasRect.width;
+    const dy=(b.y-a.y)/editCanvasLogicalHeight()*canvasRect.height;
     const element=document.createElement('div');
     element.className='bezier-handle-line';
-    element.style.left=(a.x/W*100)+'%'; element.style.top=(a.y/H*100)+'%';
+    element.style.left=(a.x/editCanvasLogicalWidth()*100)+'%'; element.style.top=(a.y/editCanvasLogicalHeight()*100)+'%';
     element.style.width=Math.hypot(dx,dy)+'px';
     element.style.transform='rotate('+Math.atan2(dy,dx)+'rad)';
     overlay.appendChild(element);
@@ -9796,7 +9878,7 @@ ctx.fill();</textarea>
       const display=sceneToStagePoint(controlScene);
       const control=document.createElement('div');
       control.className='bezier-control-handle';
-      control.style.left=(display.x/W*100)+'%'; control.style.top=(display.y/H*100)+'%';
+      control.style.left=(display.x/editCanvasLogicalWidth()*100)+'%'; control.style.top=(display.y/editCanvasLogicalHeight()*100)+'%';
       control.title=(which==='in'?'Incoming':'Outgoing')+' Bezier handle — drag to bend';
       control.addEventListener('mousedown',event=>dragBezierControl(obj,bezierSelectedAnchorIndex,which,event));
       overlay.appendChild(control);
@@ -9805,7 +9887,7 @@ ctx.fill();</textarea>
       const display=sceneToStagePoint(objectLocalPointToScene(obj,point,t));
       const anchor=document.createElement('div');
       anchor.className='bezier-anchor-handle'+(index===bezierSelectedAnchorIndex?' active':'');
-      anchor.style.left=(display.x/W*100)+'%'; anchor.style.top=(display.y/H*100)+'%';
+      anchor.style.left=(display.x/editCanvasLogicalWidth()*100)+'%'; anchor.style.top=(display.y/editCanvasLogicalHeight()*100)+'%';
       anchor.title='Bezier anchor '+(index+1)+' — drag to move';
       anchor.addEventListener('mousedown',event=>dragBezierAnchor(obj,index,event));
       anchor.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();bezierSelectedAnchorIndex=index;renderBezierCurveHandles();updateCurveSettingsPanel();});
@@ -10077,8 +10159,8 @@ ctx.fill();</textarea>
       const el = document.createElement('div');
       const displayCorner = sceneToStagePoint(c);
       el.className = 'xform-handle';
-      el.style.left = (displayCorner.x/W*100) + '%';
-      el.style.top = (displayCorner.y/H*100) + '%';
+      el.style.left = (displayCorner.x/editCanvasLogicalWidth()*100) + '%';
+      el.style.top = (displayCorner.y/editCanvasLogicalHeight()*100) + '%';
       el.title = 'Drag to scale uniformly';
       el.addEventListener('mousedown', (e)=>{
         e.stopPropagation(); e.preventDefault();
@@ -10120,7 +10202,7 @@ ctx.fill();</textarea>
       const display=sceneToStagePoint(scene);
       const el=document.createElement('div');
       el.className='xform-axis-handle';el.dataset.axis=handle.axis;
-      el.style.left=(display.x/W*100)+'%';el.style.top=(display.y/H*100)+'%';el.title=handle.title;
+      el.style.left=(display.x/editCanvasLogicalWidth()*100)+'%';el.style.top=(display.y/editCanvasLogicalHeight()*100)+'%';el.title=handle.title;
       el.addEventListener('mousedown',event=>{
         event.stopPropagation();event.preventDefault();pushUndo();inspectorDragging=true;
         const effStart=getEffectiveObj(obj,t),liveStart=getLiveTransform(obj,effStart),axesStart=getObjectScaleAxes(obj,effStart);
@@ -10165,8 +10247,8 @@ ctx.fill();</textarea>
     const rEl = document.createElement('div');
     const displayRotate = sceneToStagePoint(rotPos);
     rEl.className = 'xform-rotate-handle';
-    rEl.style.left = (displayRotate.x/W*100) + '%';
-    rEl.style.top = (displayRotate.y/H*100) + '%';
+    rEl.style.left = (displayRotate.x/editCanvasLogicalWidth()*100) + '%';
+    rEl.style.top = (displayRotate.y/editCanvasLogicalHeight()*100) + '%';
     rEl.title = 'Drag to rotate';
     rEl.addEventListener('mousedown', (e)=>{
       e.stopPropagation(); e.preventDefault();
@@ -10242,8 +10324,8 @@ ctx.fill();</textarea>
     }
     const pivot = ensureClipPivot(clip);
     const display = sceneToStagePoint(pivot);
-    cross.style.left = (display.x / W * 100) + '%';
-    cross.style.top = (display.y / H * 100) + '%';
+    cross.style.left = (display.x / editCanvasLogicalWidth() * 100) + '%';
+    cross.style.top = (display.y / editCanvasLogicalHeight() * 100) + '%';
   }
 
   function getSelectedSingleObject(){
@@ -11342,7 +11424,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 113,
+    version: 115,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -11350,6 +11432,15 @@ ctx.fill();</textarea>
     get width(){ return W; },
     get height(){ return H; },
     get time(){ return t; },
+    // v174: while rendering nested Clips, DemBones needs the original main
+    // timeline clock so stage-visible bone keys and the nested character
+    // artwork are evaluated at exactly the same time. Outside nested rendering
+    // this is simply the current local time.
+    get mainTimelineTime(){
+      return nativeClipPartMainRenderTime !== null && Number.isFinite(Number(nativeClipPartMainRenderTime))
+        ? Number(nativeClipPartMainRenderTime)
+        : t;
+    },
     get fps(){
       return Math.max(1, Math.min(120, parseInt(document.getElementById('inp-fps').value, 10) || 30));
     },
@@ -11403,6 +11494,31 @@ ctx.fill();</textarea>
     getClipPivot(clipId){ const clip = clips[clipId]; return clip ? Object.assign({}, ensureClipPivot(clip)) : null; },
     setClipPivot(clipId, x, y){ return moveClipPivotPreserveStage(clipId, x, y); },
     getDrawObjects(){ syncActiveSceneFrameForTime(t, false); return drawObjects; },
+    // v175: lets tools such as DemBones enumerate loose build-part artwork on
+    // the main scene even while the user is editing a nested Character Clip.
+    // Returned objects are the live scene objects, deduplicated across held
+    // independent-scene frames. Tools must not mutate them unless performing
+    // an explicit user action.
+    getMainSceneDrawObjects(){
+      const out=[];
+      const seenRefs=new Set();
+      const seenIds=new Set();
+      mainSceneDrawObjectArrays().forEach(list=>{
+        (list||[]).forEach(object=>{
+          if(!object) return;
+          const id=object.id===undefined || object.id===null ? '' : String(object.id);
+          if(id){
+            if(seenIds.has(id)) return;
+            seenIds.add(id);
+          }else{
+            if(seenRefs.has(object)) return;
+            seenRefs.add(object);
+          }
+          out.push(object);
+        });
+      });
+      return out;
+    },
     getSceneFrames(){ return sceneFrames; },
     getActiveSceneFrame(){ return activeIndependentSceneFrame(); },
     insertBlankFrame(frame){
@@ -13225,10 +13341,13 @@ ctx.fill();</textarea>
     if(recordHistory && (newWidth !== W || newHeight !== H)) pushUndo();
     W = newWidth;
     H = newHeight;
-    canvas.width = W;
-    canvas.height = H;
-    if(editingClipId && clips[editingClipId]) centreClipEditView(clips[editingClipId]);
-    applyZoom();
+    if(editingClipId){
+      syncClipEditCanvasExtent(true);
+    }else{
+      canvas.width = W;
+      canvas.height = H;
+      applyZoom();
+    }
     syncStageSettingsUI();
     renderPoints();
     if(selectShapesMode) renderTransformHandles();
@@ -13324,6 +13443,7 @@ ctx.fill();</textarea>
   window.addEventListener('resize', ()=>{
     clampFloatingPanelToViewport(stageSettingsPanel);
     clampFloatingPanelToViewport(document.getElementById('text-settings-panel'));
+    if(editingClipId)syncClipEditCanvasExtent(false);
     requestAnimationFrame(updateRulersAndGuides);
   });
 
@@ -13331,7 +13451,20 @@ ctx.fill();</textarea>
   function applyZoom(){
     const canvasEl = document.getElementById('fx-canvas');
     const shell = document.getElementById('canvas-shell');
-    if(Math.abs(stageZoom - 1) < 0.001){
+
+    if(editingClipId){
+      const logicalW=editCanvasLogicalWidth();
+      const logicalH=editCanvasLogicalHeight();
+      const w=Math.round(logicalW*stageZoom),h=Math.round(logicalH*stageZoom);
+      canvasEl.style.maxWidth='none';
+      canvasEl.style.maxHeight='none';
+      canvasEl.style.width=w+'px';
+      canvasEl.style.height=h+'px';
+      shell.style.maxWidth='none';
+      shell.style.maxHeight='none';
+      shell.style.width=w+'px';
+      shell.style.height=h+'px';
+    }else if(Math.abs(stageZoom - 1) < 0.001){
       // back to responsive "fit whatever space is available" mode
       canvasEl.style.width = '';
       canvasEl.style.height = '';
@@ -13366,8 +13499,12 @@ ctx.fill();</textarea>
   document.getElementById('btn-zoom-reset').addEventListener('click', ()=>{
     setZoom(1);
     const wrap = document.getElementById('stage-wrap');
-    wrap.scrollLeft = 0;
-    wrap.scrollTop = 0;
+    if(editingClipId){
+      centreClipWorkspaceScroll();
+    }else{
+      wrap.scrollLeft = 0;
+      wrap.scrollTop = 0;
+    }
   });
   document.getElementById('stage-wrap').addEventListener('wheel', (e)=>{
     if(!e.ctrlKey && !e.metaKey) return; // plain scroll still pans normally; Ctrl/Cmd+scroll zooms
@@ -14477,30 +14614,101 @@ ctx.fill();</textarea>
     });
   }
 
+  function demBonesTimelineObjectsForClip(clip){
+    const objects = [];
+    const seen = new Set();
+    const add = object=>{
+      if(!object || seen.has(object)) return;
+      seen.add(object);
+      objects.push(object);
+    };
+    if(!clip) return objects;
+    allSceneFrameObjectArrays(clip.sceneFrames, clip.drawObjects || []).forEach(list=>{
+      (list || []).forEach(add);
+    });
+    (clip.drawingLayers || []).forEach(layer=>{
+      (layer && layer.frames || []).forEach(frame=>add(frame && frame.object));
+    });
+    return objects;
+  }
+
+  function collectDemBonesTimelineRigEntries(){
+    const entries = [];
+    const seenRigIds = new Set();
+    const visitedObjects = new Set();
+    const clipStack = new Set();
+
+    function addRig(rig, label){
+      if(!rig || !Array.isArray(rig.bones)) return;
+      const key = String(rig.id || '') || rig;
+      if(seenRigIds.has(key)) return;
+      seenRigIds.add(key);
+      entries.push({
+        rig,
+        label:String(label || rig.name || 'Part').trim() || 'Part'
+      });
+    }
+
+    function visitObject(object, inheritedLabel, depth){
+      if(!object || depth > 12 || visitedObjects.has(object)) return;
+      visitedObjects.add(object);
+
+      const ownRig = object.demBones && object.demBones.rig;
+      if(ownRig) addRig(ownRig, inheritedLabel || ownRig.name || object.name);
+
+      if(object.type === 'group' && Array.isArray(object.children)){
+        object.children.forEach(child=>visitObject(child, inheritedLabel, depth + 1));
+      }
+
+      if(object.type !== 'clipinstance' || !object.clipId) return;
+      const clip = clips && clips[object.clipId];
+      if(!clip) return;
+      const clipKey = String(clip.id || object.clipId);
+      if(clipStack.has(clipKey)) return;
+
+      const nextLabel = object.__dbPartId !== undefined
+        ? String(object.name || clip.name || inheritedLabel || 'Part')
+        : String(inheritedLabel || object.name || clip.name || 'Part');
+
+      clipStack.add(clipKey);
+      demBonesTimelineObjectsForClip(clip).forEach(child=>visitObject(child, nextLabel, depth + 1));
+      clipStack.delete(clipKey);
+    }
+
+    (drawObjects || []).forEach(object=>visitObject(object, '', 0));
+    return entries;
+  }
+
   function addDemBonesTimelineRows(tracksEl){
-    const seenRigs = new Set();
-    drawObjects.forEach(object=>{
-      const rig = object && object.demBones && object.demBones.rig;
-      if(!rig || !Array.isArray(rig.bones) || seenRigs.has(rig.id || rig)) return;
-      seenRigs.add(rig.id || rig);
+    const entries = collectDemBonesTimelineRigEntries();
+    entries.forEach(entry=>{
+      const rig = entry.rig;
+      const partLabel = entry.label;
       rig.bones.forEach((bone,boneIndex)=>{
         if(!Array.isArray(bone.keys)) bone.keys = [];
         const row = document.createElement('div');
-        row.className = 'timeline-track-row';
+        row.className = 'timeline-track-row dembones-bone-timeline-row';
+        row.dataset.demBonesRigId = String(rig.id || '');
+        row.dataset.demBonesBoneId = String(bone.id || boneIndex);
+
         const name = document.createElement('div');
         name.className = 'timeline-track-name';
-        name.textContent = 'Bone ' + (bone.name || (boneIndex + 1));
-        name.title = 'Dem Bones animation keys';
+        const boneLabel = String(bone.name || ('bone ' + (boneIndex + 1)));
+        name.textContent = partLabel ? (partLabel + ' · ' + boneLabel) : ('Bone ' + boneLabel);
+        name.title = 'Dem Bones animation keys · drag keys to move them · right-click a key to delete it or change interpolation type';
+
         const track = document.createElement('div');
         track.className = 'timeline-track';
         const span = document.createElement('div');
         span.className = 'timeline-object-span';
         span.style.opacity = '.42';
         span.title = bone.keys.length
-          ? `${bone.keys.length} Dem Bones keyframe(s) · right-click anywhere on this row to add another key`
+          ? `${bone.keys.length} Dem Bones keyframe(s) · drag a key to retime it · right-click a key to delete or change interpolation type`
           : 'No Dem Bones keys · right-click anywhere on this row to add a key';
         track.appendChild(span);
+
         track.addEventListener('contextmenu', event=>{
+          if(event.target && event.target.classList && event.target.classList.contains('timeline-key-dot')) return;
           const keyTime = timelineTimeFromTrackClientX(track, event.clientX);
           openKeyframeContextMenu(event, {
             addKey:()=>{
@@ -14510,24 +14718,28 @@ ctx.fill();</textarea>
             addKeyHint:`Add a Dem Bones key at ${timelineFrameLabelAtTime(keyTime)}`
           });
         });
+
         bone.keys.forEach(key=>{
           const dot = document.createElement('div');
           const easing = normalizeKeyframeEasing(key.easing);
           dot.className = 'timeline-key-dot';
           dot.dataset.easing = easing;
           dot.style.left = timelinePercentForTime(key.time) + '%';
-          dot.title = `Frame ${frameIndexForTime(key.time,timelineDuration)+1} · ${Number(key.time).toFixed(3)}s · ${keyframeEasingLabel(easing)} — drag to retime, right-click for key commands and interpolation`;
+          dot.title = `Frame ${frameIndexForTime(key.time,timelineDuration)+1} · ${Number(key.time).toFixed(3)}s · ${keyframeEasingLabel(easing)} — drag to move key · right-click to delete or change interpolation type`;
           dot.addEventListener('contextmenu', event=> openKeyframeContextMenu(event, {
             getEasing:()=>normalizeKeyframeEasing(key.easing),
             setEasing:value=>{ key.easing = normalizeKeyframeEasing(value); },
             addKey:()=>addDemBonesKeyAtPlayhead(bone,key),
-            deleteKey:()=>deleteDemBonesKey(bone,key)
+            deleteKey:()=>deleteDemBonesKey(bone,key),
+            deleteKeyHint:`Delete ${partLabel ? partLabel + ' · ' : ''}${boneLabel} key at ${timelineFrameLabelAtTime(key.time)}`
           }));
+
           let moved = false;
           let startX = 0;
           let startTime = Number(key.time) || 0;
           dot.addEventListener('mousedown', event=>{
             if(event.button !== 0) return;
+            event.preventDefault();
             event.stopPropagation();
             closeKeyframeContextMenu();
             pushUndo();
@@ -14535,6 +14747,7 @@ ctx.fill();</textarea>
             startTime = Number(key.time) || 0;
             const trackWidth = track.getBoundingClientRect().width || 1;
             function onMove(moveEvent){
+              if(!moved && Math.abs(moveEvent.clientX - startX) < 2) return;
               moved = true;
               const dt = ((moveEvent.clientX - startX) / trackWidth) * timelineDuration;
               key.time = snapTimeToFrame(startTime + dt);
@@ -14549,12 +14762,14 @@ ctx.fill();</textarea>
                 t = Number(key.time) || 0;
                 updateInspector();
               }
+              renderTimeline();
             }
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
           });
           track.appendChild(dot);
         });
+
         row.appendChild(name);
         row.appendChild(track);
         tracksEl.appendChild(row);
@@ -15761,7 +15976,7 @@ ctx.fill();</textarea>
   }
 
   function demBonesPoseAtTime(bone, time){
-    const base = Object.assign({dx:0,dy:0,rotation:0,easing:'linear'}, bone && bone.basePose ? bone.basePose : {});
+    const base = Object.assign({dx:0,dy:0,rotation:0,scale:1,easing:'linear'}, bone && bone.basePose ? bone.basePose : {});
     const keys = ((bone && bone.keys) || []).slice().sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
     if(!keys.length) return base;
     if(time <= Number(keys[0].time || 0)){
@@ -15771,6 +15986,7 @@ ctx.fill();</textarea>
         dx:(Number(base.dx)||0)+((Number(keys[0].dx)||0)-(Number(base.dx)||0))*ratio,
         dy:(Number(base.dy)||0)+((Number(keys[0].dy)||0)-(Number(base.dy)||0))*ratio,
         rotation:(Number(base.rotation)||0)+((Number(keys[0].rotation)||0)-(Number(base.rotation)||0))*ratio,
+        scale:(Number(base.scale)||1)+((Number(keys[0].scale)||1)-(Number(base.scale)||1))*ratio,
         easing:normalizeKeyframeEasing(keys[0].easing)
       };
     }
@@ -15783,6 +15999,7 @@ ctx.fill();</textarea>
           dx:(Number(a.dx)||0)+((Number(b.dx)||0)-(Number(a.dx)||0))*ratio,
           dy:(Number(a.dy)||0)+((Number(b.dy)||0)-(Number(a.dy)||0))*ratio,
           rotation:(Number(a.rotation)||0)+((Number(b.rotation)||0)-(Number(a.rotation)||0))*ratio,
+          scale:(Number(a.scale)||1)+((Number(b.scale)||1)-(Number(a.scale)||1))*ratio,
           easing:normalizeKeyframeEasing(a.easing)
         };
       }
@@ -15802,6 +16019,7 @@ ctx.fill();</textarea>
       dx:Number(pose.dx)||0,
       dy:Number(pose.dy)||0,
       rotation:Number(pose.rotation)||0,
+      scale:Math.max(0.01, Number(pose.scale)||1),
       easing:normalizeKeyframeEasing(sourceKey && sourceKey.easing ? sourceKey.easing : pose.easing)
     };
     if(key) Object.assign(key,next);
@@ -17058,20 +17276,23 @@ ctx.fill();</textarea>
     }
 
     const persist = trailFade/100; // 0 = no trail, up to 0.95 = long trail
+    const renderW=editCanvasLogicalWidth(),renderH=editCanvasLogicalHeight();
     if(persist <= 0){
-      ctx.clearRect(0,0,W,H);
-      if(bgMode === 'color'){
+      ctx.clearRect(0,0,renderW,renderH);
+      // A nested Clip editor is a transparent workspace rather than the stage
+      // crop, so content can be seen and manipulated on either side of it.
+      if(!editingClipId && bgMode === 'color'){
         ctx.fillStyle = stageColor;
         ctx.fillRect(0,0,W,H);
       }
-    } else if(bgMode === 'color'){
+    } else if(!editingClipId && bgMode === 'color'){
       const stageRgb = hexToRgb(stageColor);
       ctx.fillStyle = `rgba(${stageRgb.r},${stageRgb.g},${stageRgb.b},${1-persist})`;
       ctx.fillRect(0,0,W,H);
     } else {
       ctx.globalCompositeOperation = 'destination-out';
       ctx.fillStyle = `rgba(0,0,0,${1-persist})`;
-      ctx.fillRect(0,0,W,H);
+      ctx.fillRect(0,0,renderW,renderH);
       ctx.globalCompositeOperation = 'source-over';
     }
 
