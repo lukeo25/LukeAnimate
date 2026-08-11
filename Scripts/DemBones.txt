@@ -1,21 +1,20 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.4
+/* Luke Animate Dem Bones + MyCharacter GPT v16.5
    Native Luke Animate floating tool.
 
-   v16.4 keeps the v16.3 PNG/live-bone work and changes MyCharacter Adjust
-   into a true non-animated placement mode. Adjust now relocates, rotates and
-   scales the whole selected part together with its bones. Pinned parts can be
-   adjusted the same way without being unpinned; their pin offset/rotation/scale
-   is rewritten to preserve the new placement. Auto Keyframe is forced off only
-   while Adjust is active and restored afterwards. B+click/double-click still
-   opens Edit Bone, not placement Adjust. Requires Luke Animate Plugin API v113
-   for PNG rendering.
+   v16.5 keeps the v16.4 placement Adjust behaviour and makes the visible
+   stage bones authoritative animation controls for their artwork. Dragging or
+   keying a bone on the main stage updates the same live rig used by the nested
+   Character renderer, so vectors and transparent PNGs deform immediately and
+   continue deforming while the main timeline plays. Pinned parts remain pinned
+   and inherit their target bone motion. Requires Luke Animate Plugin API v114
+   for exact nested main-timeline synchronisation.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.4";
+  var TOOL_VERSION = "16.6";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -663,6 +662,64 @@
     allObjectArrays().forEach(function(list){list.forEach(function(o){if(o&&o.demBonesExpression&&o.demBonesExpression.rigId===rig.id)o.demBonesExpression.rig=rig;});});
   }
 
+  function characterPartForRigId(rigId){
+    if(rigId===undefined||rigId===null||rigId==='')return null;
+    var parts=state.character&&Array.isArray(state.character.parts)?state.character.parts:[];
+    for(var i=0;i<parts.length;i++){
+      var part=parts[i];
+      if(part&&part.rig&&String(part.rig.id)===String(rigId))return part;
+    }
+    return null;
+  }
+
+  function liveRigById(rigId,fallbackRig){
+    if(state.activeRig&&String(state.activeRig.id)===String(rigId))return state.activeRig;
+    var part=characterPartForRigId(rigId);
+    if(part&&part.rig)return part.rig;
+    return fallbackRig||null;
+  }
+
+  function liveRigForDemBonesData(data){
+    if(!data)return null;
+    var rig=liveRigById(data.rigId,data.rig);
+    if(rig&&data.rig!==rig)data.rig=rig;
+    return rig;
+  }
+
+  function demBonesEvaluationTime(data,fallbackTime,api){
+    var time=n(fallbackTime,currentTime());
+    var part=data?characterPartForRigId(data.rigId):null;
+    if(part&&api&&isFinite(Number(api.mainTimelineTime))){
+      return Number(api.mainTimelineTime);
+    }
+    return time;
+  }
+
+  function syncCharacterPartRigRefs(part){
+    if(!part||!part.rig||!part.clipId)return false;
+    var clip=clips()[part.clipId];
+    if(!clip)return false;
+    var rig=part.rig,changed=false;
+    function visit(object){
+      if(!object)return;
+      if(object.demBones&&String(object.demBones.rigId)===String(rig.id)){
+        if(object.demBones.rig!==rig){object.demBones.rig=rig;changed=true;}
+      }
+      if(object.demBonesExpression&&String(object.demBonesExpression.rigId)===String(rig.id)){
+        if(object.demBonesExpression.rig!==rig){object.demBonesExpression.rig=rig;changed=true;}
+      }
+      if(object.type==='group'&&Array.isArray(object.children))object.children.forEach(visit);
+    }
+    (clip.drawObjects||[]).forEach(visit);
+    (clip.sceneFrames||[]).forEach(function(frame){(frame&&frame.objects||[]).forEach(visit);});
+    (clip.drawingLayers||[]).forEach(function(layer){(layer&&layer.frames||[]).forEach(function(frame){if(frame&&frame.object)visit(frame.object);});});
+    return changed;
+  }
+
+  function syncAllCharacterRigRefs(){
+    (state.character&&state.character.parts||[]).forEach(syncCharacterPartRigRefs);
+  }
+
   function isRasterWarpObject(o){
     return !!(o&&o.type==="image"&&o.src);
   }
@@ -741,11 +798,14 @@
   }
 
   function rasterObjectRenderer(ctx,object,effective,api){
-    if(!object||object.type!=="image"||!object.demBones||!object.demBones.raster||!object.demBones.rig)return false;
+    if(!object||object.type!=="image"||!object.demBones||!object.demBones.raster)return false;
+    var data=object.demBones;
+    var liveRig=liveRigForDemBonesData(data);
+    if(!liveRig)return false;
     var image=rasterImageForSource(effective&&effective.src!==undefined?effective.src:object.src);
     if(!image||!image.complete||!image.naturalWidth||!image.naturalHeight)return true;
-    var data=object.demBones;
-    var geometry=deformedObjectGeometry(object,n(api&&api.time,currentTime()));
+    var evalTime=demBonesEvaluationTime(data,n(api&&api.time,currentTime()),api);
+    var geometry=deformedObjectGeometry(object,evalTime);
     if(!geometry||!Array.isArray(geometry.points))return true;
     var cols=Math.max(1,Math.round(n(data.rasterCols,8))),rows=Math.max(1,Math.round(n(data.rasterRows,8)));
     var expected=(cols+1)*(rows+1);
@@ -1941,10 +2001,11 @@
   }
 
   function deformedObjectGeometry(object,time){
-    if(!object||!object.demBones||!object.demBones.rig)return null;
+    if(!object||!object.demBones)return null;
 
     var data=object.demBones;
-    var rig=data.rig;
+    var rig=liveRigForDemBonesData(data);
+    if(!rig)return null;
 
     if(!Array.isArray(data.restPoints)||!data.restPoints.length)return null;
 
@@ -2016,7 +2077,7 @@
     return changed;
   }
 
-  function evaluator(object,time,effective){
+  function evaluator(object,time,effective,api){
     if(object&&object.__dbPartId){
       var part=partById(object.__dbPartId);
       if(!part)return effective;
@@ -2044,9 +2105,12 @@
       return result;
     }
 
-    if(object&&object.demBonesExpression&&object.demBonesExpression.rig){
+    if(object&&object.demBonesExpression){
       var ex=object.demBonesExpression;
-      var slot=activeExpressionSlot(ex.rig,ex.type,time);
+      ex.rig=liveRigById(ex.rigId,ex.rig);
+      if(!ex.rig)return effective;
+      var exTime=demBonesEvaluationTime({rigId:ex.rigId},time,api);
+      var slot=activeExpressionSlot(ex.rig,ex.type,exTime);
       var r=Object.assign({},effective);
       r.opacity=slot===ex.slot?n(ex.baseOpacity,1):0;
       return r;
@@ -2057,7 +2121,10 @@
       rasterOut.tx=0;rasterOut.ty=0;rasterOut.tscale=1;rasterOut.tscaleX=1;rasterOut.tscaleY=1;rasterOut.trotation=0;
       return rasterOut;
     }
-    var geometry=deformedObjectGeometry(object,time);
+    var geometryTime=object&&object.demBones
+      ?demBonesEvaluationTime(object.demBones,time,api)
+      :time;
+    var geometry=deformedObjectGeometry(object,geometryTime);
     if(!geometry)return effective;
 
     var out=Object.assign({},effective);
@@ -2275,6 +2342,7 @@
       part,
       clip
     );
+    syncCharacterPartRigRefs(part);
 
     return clip;
   }
@@ -2699,11 +2767,21 @@
     }
 
     if(state.adjustingPartId)finishPartPlacementAdjust(true);
-    selectCharacterPartOnStage(part);
-    API.enterClip(part.clipId);
+
+    /*
+      Character part editing and animation stay in the Character root Clip so
+      every other part remains visible while the chosen rig is being edited.
+      The selected part's own rig becomes active, but we do not enter the
+      child part Clip here.
+    */
+    if(!selectCharacterPartOnStage(part)){
+      notify("Could not select this character part on the stage.",true);
+      return;
+    }
 
     state.character.selectedPartId=part.id;
     state.activeRig=part.rig;
+    syncCharacterPartRigRefs(part);
 
     if(state.activeRig){
       syncRigRefs(state.activeRig);
@@ -2722,8 +2800,8 @@
 
     notify(
       mode==="animate"
-        ?'Animating "'+part.name+'".'
-        :'Editing bones for "'+part.name+'".',
+        ?'Animating "'+part.name+'" while all other Character parts stay visible.'
+        :'Editing bones for "'+part.name+'" while all other Character parts stay visible.',
       false
     );
   }
@@ -3099,6 +3177,7 @@
     state.character.parts.forEach(function(part){
       if(part.source)createPartClip(part,part.source);
     });
+    syncAllCharacterRigRefs();
 
     returnToCharacterRoot();
 
@@ -3335,6 +3414,7 @@
     }
 
     syncAllUnpinnedCharacterTransforms();
+    syncAllCharacterRigRefs();
     ensureCharacterRoot();
     updateCharacterInstances();
 
@@ -3698,6 +3778,7 @@
     var time=currentTime(),key=exactBoneKey(b,time);
     if(!key){API.pushUndo();key=ensureBoneKeyForDrag(b,time);}
     Object.assign(key,readPoseInputs());
+    syncRigDisplayGeometry(state.activeRig,time);
     API.refreshUI();
   }
   function previewSelectedBoneEnvelope(){
@@ -3716,8 +3797,8 @@
     API.refreshUI();
   }
 
-  function setBoneKey(){var b=selectedBone();if(!b){notify("Select a bone first.",true);return;}API.pushUndo();var pose=readPoseInputs(),time=currentTime(),key=exactBoneKey(b,time);if(key)Object.assign(key,pose);else b.keys.push(Object.assign({time:time},pose));b.keys.sort(function(a,b){return a.time-b.time;});API.refreshUI();renderAll();notify("Bone key set on frame "+currentFrame()+".",false);}
-  function deleteBoneKey(){var b=selectedBone();if(!b)return;var t=currentTime(),before=b.keys.length;b.keys=b.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});API.refreshUI();renderAll();notify(before!==b.keys.length?"Bone key deleted.":"No bone key on this frame.",false);}
+  function setBoneKey(){var b=selectedBone();if(!b){notify("Select a bone first.",true);return;}API.pushUndo();var pose=readPoseInputs(),time=currentTime(),key=exactBoneKey(b,time);if(key)Object.assign(key,pose);else b.keys.push(Object.assign({time:time},pose));b.keys.sort(function(a,b){return a.time-b.time;});syncRigDisplayGeometry(state.activeRig,time);API.refreshUI();renderAll();notify("Bone key set on frame "+currentFrame()+".",false);}
+  function deleteBoneKey(){var b=selectedBone();if(!b)return;var t=currentTime(),before=b.keys.length;b.keys=b.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});syncRigDisplayGeometry(state.activeRig,t);API.refreshUI();renderAll();notify(before!==b.keys.length?"Bone key deleted.":"No bone key on this frame.",false);}
 
   function normaliseWeightList(list){
     var total=0;(list||[]).forEach(function(w){total+=Math.max(0,n(w.weight,0));});
@@ -4092,6 +4173,8 @@
       if(state.drag.handle==="tail"||state.drag.bone.parentId||state.drag.handle==="line"){
         var desired=Math.atan2(lp.y-state.drag.startTransform.head.y,lp.x-state.drag.startTransform.head.x),delta=(desired-state.drag.startTransform.angle)*180/Math.PI;while(delta>180)delta-=360;while(delta<-180)delta+=360;ckey.rotation=round3(n(cpose.rotation,0)+delta);if(state.drag.bone.parentId){ckey.dx=0;ckey.dy=0;}
       }else{ckey.dx=round3(n(cpose.dx,0)+(lp.x-state.drag.startPointer.x));ckey.dy=round3(n(cpose.dy,0)+(lp.y-state.drag.startPointer.y));}
+      syncCharacterPartRigRefs(state.drag.part);
+      syncRigDisplayGeometry(state.drag.part.rig,currentTime());
       API.refreshUI();return;
     }
     if(state.drag.kind==="closed-active-rig-bone"){
@@ -4099,6 +4182,7 @@
       if(state.drag.handle==="tail"||state.drag.bone.parentId||state.drag.handle==="line"){
         var ldesired=Math.atan2(p.y-state.drag.startTransform.head.y,p.x-state.drag.startTransform.head.x),ldelta=(ldesired-state.drag.startTransform.angle)*180/Math.PI;while(ldelta>180)ldelta-=360;while(ldelta<-180)ldelta+=360;lkey.rotation=round3(n(lpose.rotation,0)+ldelta);if(state.drag.bone.parentId){lkey.dx=0;lkey.dy=0;}
       }else{lkey.dx=round3(n(lpose.dx,0)+(p.x-state.drag.startPointer.x));lkey.dy=round3(n(lpose.dy,0)+(p.y-state.drag.startPointer.y));}
+      syncRigDisplayGeometry(state.activeRig,currentTime());
       API.refreshUI();return;
     }
     if(!state.open)return;
@@ -4129,6 +4213,7 @@
       if(state.drag.handle==="tail"||state.drag.bone.parentId||state.drag.handle==="line"){
         var desired2=Math.atan2(p.y-state.drag.startTransform.head.y,p.x-state.drag.startTransform.head.x),delta2=(desired2-state.drag.startTransform.angle)*180/Math.PI;while(delta2>180)delta2-=360;while(delta2<-180)delta2+=360;key.rotation=round3(n(startPose.rotation,0)+delta2);if(state.drag.bone.parentId){key.dx=0;key.dy=0;}
       }else{key.dx=round3(n(startPose.dx,0)+(p.x-state.drag.startPointer.x));key.dy=round3(n(startPose.dy,0)+(p.y-state.drag.startPointer.y));}
+      syncRigDisplayGeometry(state.activeRig,currentTime());
       API.refreshUI();return;
     }
   }
@@ -4141,7 +4226,8 @@
     else if(finished.kind==="edit-rest"){bindRig(false);notify("Rest bone updated.",false);}
     else if(finished.kind==="resize-envelope"){rebuildRigSkinData(state.activeRig);notify("Envelope resized.",false);}
     else if(finished.kind==="animate-bone"){API.refreshUI();notify("Bone pose keyed on frame "+currentFrame()+".",false);}
-    else if(finished.kind==="closed-animate-bone"||finished.kind==="closed-active-rig-bone"){API.refreshUI();}
+    else if(finished.kind==="closed-animate-bone"){syncCharacterPartRigRefs(finished.part);syncRigDisplayGeometry(finished.part.rig,currentTime());API.refreshUI();}
+    else if(finished.kind==="closed-active-rig-bone"){syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();}
     state.drag=null;state.addPreview=null;
     if(state.open){state.mode=state.tab==="bones"?"add-bone":"select";if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());renderAll();}
     else API.refreshUI();
@@ -4473,7 +4559,7 @@
         '<h3>MyCharacter</h3>'+
         '<div class="db-row"><label>Name</label><input value="'+(state.character.nameConfirmed?esc(state.character.name):'')+'" placeholder="Name character" data-db-character-name></div>'+
         '<div class="db-grid3"><button class="db-btn primary" data-db-character-add>Add Current Part</button><button class="db-btn" data-db-character-save>Save</button><button class="db-btn" data-db-character-load>Load</button></div>'+
-        '<p class="db-help" style="margin-top:8px">Add parts, place them with Adjust, or animate.</p>'+
+        '<p class="db-help" style="margin-top:8px">Add parts, place them with Adjust, or animate while the whole Character stays visible.</p>'+
       '</div>'+
       '<div class="db-section"><h3>Parts</h3><div class="db-list">'+cards+'</div></div>'+
       '<div class="db-section"><h3>Maintenance</h3><div class="db-grid3"><button class="db-btn" data-db-character-resync>Resync Bones</button><button class="db-btn" data-db-character-cleanup>Clean Up</button><button class="db-btn" data-db-character-commit>Force Sync</button></div></div>'+
@@ -4521,7 +4607,7 @@
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts SVG/rig artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div><div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> use stage vectors, SVG or transparent PNG artwork.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Adjust moves, rotates or scales the whole part and its bones without adding animation keys. It also works while pinned and keeps the pin. Animate edits bone animation. To pin, press 📌 on the child part and click a visible target bone.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> use stage vectors, SVG or transparent PNG artwork.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Adjust moves, rotates or scales the whole part and its bones without adding animation keys. It also works while pinned and keeps the pin. Animate and Edit Bone work on the selected part while all other Character parts remain visible. To pin, press 📌 on the child part and click a visible target bone.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   var boneCursorCache={};
