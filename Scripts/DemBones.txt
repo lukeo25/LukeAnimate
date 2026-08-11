@@ -1,4 +1,4 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.12
+/* Luke Animate Dem Bones + MyCharacter GPT v16.13
    Native Luke Animate floating tool.
 
    v16.12 adds whole-Character edit entry by double-click. Double-clicking any
@@ -27,7 +27,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.12";
+  var TOOL_VERSION = "16.13";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1957,15 +1957,53 @@
     if(!part||!bone)return;
     var g=characterAllEditEnvelopeGeometry(part,bone,currentTime());
     if(!g)return;
+
+    var h=stagePointFromScene(g.head),t=stagePointFromScene(g.tail);
     var hp=stagePointFromScene(g.hPlus),hm=stagePointFromScene(g.hMinus);
     var tp=stagePointFromScene(g.tPlus),tm=stagePointFromScene(g.tMinus);
+    var hr=Math.max(2,(Math.hypot(hp.x-h.x,hp.y-h.y)+Math.hypot(hm.x-h.x,hm.y-h.y))*.5);
+    var tr=Math.max(2,(Math.hypot(tp.x-t.x,tp.y-t.y)+Math.hypot(tm.x-t.x,tm.y-t.y))*.5);
+
     ctx.save();
     ctx.fillStyle="rgba(14,156,134,.16)";
     ctx.strokeStyle="rgba(14,156,134,.78)";
     ctx.lineWidth=2;
-    ctx.beginPath();ctx.moveTo(hp.x,hp.y);ctx.lineTo(tp.x,tp.y);ctx.lineTo(tm.x,tm.y);ctx.lineTo(hm.x,hm.y);ctx.closePath();ctx.fill();ctx.stroke();
-    ctx.fillStyle="#ffffff";ctx.strokeStyle="#0e9c86";ctx.lineWidth=2;
-    [hp,hm,tp,tm].forEach(function(p){ctx.beginPath();ctx.rect(p.x-5,p.y-5,10,10);ctx.fill();ctx.stroke();});
+
+    /*
+      v16.13: the Character-wide Edit Bone view used to draw only the four
+      envelope side points. With an upright bone that produced a square or
+      rectangular box, even though the actual DemBones influence region has
+      rounded head and tail falloff. Draw the same tapered capsule used by the
+      normal single-rig envelope view: side quad plus circular end caps.
+    */
+    ctx.beginPath();
+    ctx.moveTo(hp.x,hp.y);
+    ctx.lineTo(tp.x,tp.y);
+    ctx.lineTo(tm.x,tm.y);
+    ctx.lineTo(hm.x,hm.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(h.x,h.y,hr,0,Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(t.x,t.y,tr,0,Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle="#ffffff";
+    ctx.strokeStyle="#0e9c86";
+    ctx.lineWidth=2;
+    [hp,hm,tp,tm].forEach(function(p){
+      ctx.beginPath();
+      ctx.rect(p.x-5,p.y-5,10,10);
+      ctx.fill();
+      ctx.stroke();
+    });
     ctx.restore();
   }
 
