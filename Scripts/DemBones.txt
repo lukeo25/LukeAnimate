@@ -1,28 +1,23 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.8
+/* Luke Animate Dem Bones + MyCharacter GPT v16.9
    Native Luke Animate floating tool.
 
-   v16.8 simplifies Build Parts so Step 1 contains only Get Shapes. The old
-   duplicate ingest/export/placeholder/return/add/cancel/load-part controls and
-   their panel event connections are removed. Save Part now appears only on
-   the Bones page after at least one bone exists.
+   v16.9 adds Load Part directly to Build Character. A saved .dembones.json
+   part is loaded as a loose main-scene Build Part, then the Character Add Part
+   picker opens with that exact rig selected. Loading never guesses by part
+   name, and it does not silently add the file to the Character.
 
-   Character assembly is also hardened for the second and later parts. Part
-   instances are discovered across drawingLayers, sceneFrames and drawObjects
-   instead of stopping after the first canonical source, and finalisation
-   verifies that every Character part has a real child Clip instance before
-   pruning construction data. This fixes the case where the first part was
-   present but a later part could be lost during Character finalisation.
-
-   Explicit rig-id based Add Part selection, duplicate-name handling, Edit
-   Bone, Animate, Adjust, live stage-bone deformation, pinned placement and
-   all-part visibility are preserved. Requires Luke Animate Plugin API v115.
+   Build Parts stays simplified to Get Shapes only, with Save Part available
+   after bones exist. The v16.8 second/later-part instance fixes, explicit
+   rig-id Add Part selection, duplicate-name handling, Edit Bone, Animate,
+   Adjust, live stage-bone deformation, pinned placement and all-part visibility
+   are preserved. Requires Luke Animate Plugin API v115.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.8";
+  var TOOL_VERSION = "16.9";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -4261,7 +4256,67 @@
   }
 
   function savePart(){var data=serializeBuildPart();if(!data){notify("Build a part first.",true);return;}downloadText((data.name||"DemBonesPart")+".dembones.json",JSON.stringify(data,null,2),"application/json");notify("Saved part.",false);}
-  function loadJsonFile(file,kind){if(!file)return;var reader=new FileReader();reader.onload=function(){try{var data=JSON.parse(reader.result);if(kind==="character")loadCharacterData(data);else throw new Error("Unsupported project file type.");}catch(e){notify("Load failed: "+(e.message||e),true);}};reader.readAsText(file);}
+
+  function loadSavedPartForCharacter(data){
+    if(!data||data.app!=="LukeAnimateDemBonesPart"||!data.rig||!Array.isArray(data.objects)){
+      throw new Error("Not a Dem Bones part file.");
+    }
+
+    /*
+      Load Part in Build Character must create a loose Build Part on the main
+      scene. If the Character root/part is currently being edited, temporarily
+      leave nested Clip editing, load the saved part on Main Scene, then restore
+      the Character root so all existing Character parts remain visible.
+    */
+    var originalEditingClipId=null;
+    try{originalEditingClipId=API.getEditingClipId?API.getEditingClipId():null;}catch(ignoreReadEditingClip){}
+
+    var guard=0;
+    try{
+      while(API.getEditingClipId&&API.getEditingClipId()&&guard<24){
+        if(!API.exitClip())break;
+        guard++;
+      }
+    }catch(ignoreExitToMain){}
+
+    var loaded=loadBuildPart(data,true);
+    if(!loaded||!loaded.rig)throw new Error("The saved part could not be loaded.");
+
+    state.activeRig=loaded.rig;
+    state.character.addCandidateRigId=String(loaded.rig.id);
+    state.character.addPickerOpen=true;
+    state.tab="character";
+    state.mode="select";
+
+    /* Existing Character parts should remain visible while choosing the newly
+       loaded loose part. Restore the Character root when it already exists. */
+    if(state.character.parts.length&&state.character.rootClipId&&clips()[state.character.rootClipId]){
+      try{API.enterClip(state.character.rootClipId);}catch(ignoreRestoreCharacterRoot){}
+    }else if(originalEditingClipId&&clips()[originalEditingClipId]&&!state.character.rootClipId){
+      try{API.enterClip(originalEditingClipId);}catch(ignoreRestoreOriginalClip){}
+    }
+
+    renderAll();
+    API.refreshUI();
+    notify('Loaded "'+String(loaded.rig.name||data.name||"Part")+'". Choose Add Selected Part to add that exact part to the Character.',false);
+    return loaded;
+  }
+
+  function loadJsonFile(file,kind){
+    if(!file)return;
+    var reader=new FileReader();
+    reader.onload=function(){
+      try{
+        var data=JSON.parse(reader.result);
+        if(kind==="character")loadCharacterData(data);
+        else if(kind==="part")loadSavedPartForCharacter(data);
+        else throw new Error("Unsupported project file type.");
+      }catch(e){
+        notify("Load failed: "+(e.message||e),true);
+      }
+    };
+    reader.readAsText(file);
+  }
 
   function releaseRigToStage(){
     var rig=state.activeRig;if(!rig)return;
@@ -4778,6 +4833,7 @@
       '<div data-db-steps>'+workflowStepsHtml()+'</div><div class="db-body" data-db-body></div>'+ 
       '<input class="db-hidden" type="file" accept=".svg,image/svg+xml" data-db-svg>'+ 
       '<input class="db-hidden" type="file" accept=".png,image/png" data-db-png>'+ 
+      '<input class="db-hidden" type="file" accept="application/json,.json,.dembones.json" data-db-part-file>'+ 
       '<input class="db-hidden" type="file" accept="application/json,.json,.mycharacter" data-db-character-file>'+ 
       '<input class="db-hidden" type="file" accept=".svg,image/svg+xml" data-db-expression-file>'+ 
       '<div class="db-status" data-db-status>'+esc(state.status)+'</div>';
@@ -4840,7 +4896,8 @@
       '<div class="db-section">'+
         '<h3>MyCharacter</h3>'+
         '<div class="db-row"><label>Name</label><input value="'+(state.character.nameConfirmed?esc(state.character.name):'')+'" placeholder="Name character" data-db-character-name></div>'+
-        '<div class="db-grid3"><button class="db-btn primary" data-db-character-add-picker>'+(state.character.addPickerOpen?'Close Add Part':'Add Part')+'</button><button class="db-btn" data-db-character-save>Save</button><button class="db-btn" data-db-character-load>Load</button></div>'+
+        '<div class="db-grid2"><button class="db-btn primary" data-db-character-add-picker>'+(state.character.addPickerOpen?'Close Add Part':'Add Part')+'</button><button class="db-btn" data-db-character-load-part>Load Part</button></div>'+
+        '<div class="db-grid2" style="margin-top:7px"><button class="db-btn" data-db-character-save>Save Character</button><button class="db-btn" data-db-character-load>Load Character</button></div>'+
         addPicker+
         '<p class="db-help" style="margin-top:8px">Choose the exact unadded part, then place it with Adjust or animate it.</p>'+
       '</div>'+
@@ -4933,6 +4990,7 @@
     p.querySelectorAll('[data-db-character-add-picker]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}state.character.addPickerOpen=!state.character.addPickerOpen;if(state.character.addPickerOpen)selectedAvailableBuildPartCandidate();renderAll();};});
     p.querySelectorAll('[data-db-character-part-choice]').forEach(function(select){select.onchange=function(){state.character.addCandidateRigId=String(select.value||"");};});
     p.querySelectorAll('[data-db-character-add-selected]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var choice=p.querySelector('[data-db-character-part-choice]');var rigId=choice?String(choice.value||""):String(state.character.addCandidateRigId||"");addAvailableCandidateToCharacter(rigId);};});
+    p.querySelectorAll('[data-db-character-load-part]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.fileInputs.part)state.fileInputs.part.click();};});
     p.querySelectorAll('[data-db-save-part]').forEach(function(b){b.onclick=savePart;});
     var cn=p.querySelector('[data-db-character-name]');if(cn)cn.oninput=function(){var value=String(cn.value||'').trim();state.character.name=value||'MyCharacter';state.character.nameConfirmed=!!value;};p.querySelectorAll('[data-db-character-save]').forEach(function(b){b.onclick=saveCharacter;});p.querySelectorAll('[data-db-character-load]').forEach(function(b){b.onclick=function(){state.fileInputs.character.click();};});p.querySelectorAll('[data-db-character-commit],[data-db-commit-character]').forEach(function(b){b.onclick=commitCharacter;});p.querySelectorAll('[data-db-character-resync]').forEach(function(b){b.onclick=resyncCharacterPlacement;});p.querySelectorAll('[data-db-character-cleanup]').forEach(function(b){b.onclick=function(){cleanUpLooseArtwork(false);};});var commitName=p.querySelector('[data-db-commit-name]');if(commitName)commitName.oninput=function(){state.character.name=commitName.value||'MyCharacter';};
     p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(event){if(event&&event.target&&event.target.closest('button,input,select,textarea'))return;var part=partById(card.getAttribute('data-db-part-card'));if(part){if(state.adjustingPartId&&Number(state.adjustingPartId)!==Number(part.id))finishPartPlacementAdjust(true);selectCharacterPartOnStage(part);renderAll();}};});
@@ -4958,11 +5016,12 @@
 
   function createPanel(){
     ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;
-    state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.png=panel.querySelector('[data-db-png]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');
+    state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.png=panel.querySelector('[data-db-png]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');
     API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;
     panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){var nextTab=b.getAttribute('data-db-tab');if(state.adjustingPartId&&nextTab!=='character')finishPartPlacementAdjust(true);if(state.tab==='character'&&nextTab!=='character'&&state.character.rootClipId&&API.getEditingClipId()===state.character.rootClipId){state.activeRig=null;state.selectedBoneId='';state.selectedCurveId='';}state.tab=nextTab;state.curvePointAddMode=false;state.mode=state.tab==='bones'?'add-bone':'select';if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}renderAll();};});
     state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};
     state.fileInputs.png.onchange=function(){var f=this.files&&this.files[0];if(f)loadPngFile(f);this.value='';};
+    state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};
     state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};
     makeDraggable(panel,panel.querySelector('[data-db-drag]'));renderAll();
   }
