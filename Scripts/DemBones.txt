@@ -1,5 +1,14 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.13
+/* Luke Animate Dem Bones + MyCharacter GPT v16.14
    Native Luke Animate floating tool.
+
+   v16.14 makes Character part selection stable:
+   - opening/selecting one part automatically closes every other part card;
+   - Adjust always operates on the live projected Character part instance;
+   - part transforms are mirrored back to every canonical Character representation;
+   - the selected part is re-selected after mouse/pointer release so the native
+     move/scale/rotate bounding box stays visible and operational;
+   - pinned-part Adjust preserves the pin while using the same persistent handles.
+
 
    v16.12 adds whole-Character edit entry by double-click. Double-clicking any
    visible Character part opens MyCharacter in its root editing context, keeps
@@ -27,7 +36,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.13";
+  var TOOL_VERSION = "16.14";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1555,8 +1564,79 @@
     return found;
   }
 
+  function focusCharacterPartCard(part){
+    if(!part)return false;
+    state.character.selectedPartId=part.id;
+    (state.character.parts||[]).forEach(function(candidate){
+      if(!candidate)return;
+      candidate.collapsed=Number(candidate.id)!==Number(part.id);
+    });
+    return true;
+  }
+
+  function currentCharacterPartInstance(part){
+    if(!part)return null;
+    var current=sceneObjects();
+    for(var i=0;i<current.length;i++){
+      var object=current[i];
+      if(object&&Number(object.__dbPartId)===Number(part.id))return object;
+    }
+    return null;
+  }
+
+  function allCharacterPartRepresentations(part){
+    if(!part||!state.character.rootClipId)return [];
+    var root=clips()[state.character.rootClipId];
+    if(!root)return [];
+    var found=[];
+    function add(object){
+      if(!object||Number(object.__dbPartId)!==Number(part.id))return;
+      if(found.indexOf(object)<0)found.push(object);
+    }
+    sceneObjects().forEach(add);
+    (root.drawObjects||[]).forEach(add);
+    (root.sceneFrames||[]).forEach(function(frame){
+      (frame&&frame.objects||[]).forEach(add);
+    });
+    (root.drawingLayers||[]).forEach(function(layer){
+      (layer&&layer.frames||[]).forEach(function(frame){
+        if(frame&&frame.object)add(frame.object);
+      });
+    });
+    return found;
+  }
+
+  function copyCharacterPartPlacement(source,target){
+    if(!source||!target||source===target)return;
+    ["x","y","scale","scaleX","scaleY","rotation","opacity"].forEach(function(key){
+      if(source[key]!==undefined)target[key]=source[key];
+    });
+    if(Array.isArray(source.keyframes)){
+      target.keyframes=clone(source.keyframes);
+    }
+  }
+
+  function syncCharacterPartRepresentations(part,source){
+    if(!part)return false;
+    source=source||currentCharacterPartInstance(part)||null;
+    if(!source)return false;
+    allCharacterPartRepresentations(part).forEach(function(target){
+      copyCharacterPartPlacement(source,target);
+    });
+    return true;
+  }
+
   function partInstance(part){
     if(!part||!state.character.rootClipId)return null;
+
+    /*
+      Always prefer the live projected instance when the Character root is the
+      active editing context. That is the exact object Luke Animate's native
+      transform box is manipulating.
+    */
+    var live=currentCharacterPartInstance(part);
+    if(live)return live;
+
     var root=clips()[state.character.rootClipId];
     if(!root)return null;
 
@@ -3111,19 +3191,28 @@
   function selectCharacterPartOnStage(part){
     if(!part)return false;
 
-    state.character.selectedPartId=part.id;
+    focusCharacterPartCard(part);
 
     if(!returnToCharacterRoot())return false;
 
-    var instance=sceneObjects().filter(function(object){
-      return object&&Number(object.__dbPartId)===Number(part.id);
-    })[0]||partInstance(part);
+    var instance=currentCharacterPartInstance(part)||partInstance(part);
 
     if(!instance)return false;
 
     API.selectDrawObject(instance);
     API.refreshUI();
 
+    return true;
+  }
+
+  function keepAdjustedPartSelected(){
+    var part=partById(state.adjustingPartId);
+    if(!part)return false;
+    focusCharacterPartCard(part);
+    var instance=currentCharacterPartInstance(part)||partInstance(part);
+    if(!instance)return false;
+    API.selectDrawObject(instance);
+    API.refreshUI();
     return true;
   }
 
@@ -3152,7 +3241,7 @@
 
   function liveAdjustedPartTransform(part){
     if(!part)return normalisePartTransform(null);
-    var instance=partInstance(part);
+    var instance=currentCharacterPartInstance(part)||partInstance(part);
     if(!instance)return normalisePartTransform(part.transform);
     var source=instance;
     if(typeof API.getEffectiveObject==="function"){
@@ -3208,8 +3297,18 @@
     var part=partById(state.adjustingPartId);
     if(!part)return false;
 
+    /*
+      Read from the live projected object first, before any UI refresh can
+      rebuild the Character projection. Then mirror that exact native transform
+      and key track to every canonical representation of this part.
+    */
+    var live=currentCharacterPartInstance(part)||partInstance(part);
     var transform=liveAdjustedPartTransform(part);
     part.transform=normalisePartTransform(transform);
+
+    if(live){
+      syncCharacterPartRepresentations(part,live);
+    }
 
     if(part.pin){
       rewritePinForAdjustedPlacement(part,part.transform);
@@ -3256,7 +3355,9 @@
       return false;
     }
 
-    var instance=partInstance(part);
+    focusCharacterPartCard(part);
+
+    var instance=currentCharacterPartInstance(part)||partInstance(part);
     if(!instance){
       notify("This character part has no stage instance.",true);
       return false;
@@ -3277,6 +3378,7 @@
       instance.rotation=solved.rotation;
       instance.opacity=solved.opacity;
       part.transform=normalisePartTransform(solved);
+      syncCharacterPartRepresentations(part,instance);
     }
 
     state.adjustingPartId=part.id;
@@ -3295,6 +3397,7 @@
     API.selectDrawObject(instance);
     API.refreshUI();
     renderAll();
+    keepAdjustedPartSelected();
     notify('Adjusting "'+part.name+'". Move, rotate or scale the whole part; no animation keys are added.',false);
     return true;
   }
@@ -3325,7 +3428,7 @@
     if(!part)return false;
 
     var changed=Number(state.character.selectedPartId)!==Number(part.id);
-    state.character.selectedPartId=part.id;
+    focusCharacterPartCard(part);
 
     if(Number(state.adjustingPartId)===Number(part.id)){
       part.transform=liveAdjustedPartTransform(part);
@@ -3356,7 +3459,7 @@
       return;
     }
 
-    state.character.selectedPartId=part.id;
+    focusCharacterPartCard(part);
     state.activeRig=part.rig;
     syncCharacterPartRigRefs(part);
 
@@ -3465,7 +3568,7 @@
       :(typeof API.getEditingClipId==="function"?(API.getEditingClipId()||""):"");
 
     createPartClip(part,build);
-    state.character.selectedPartId=part.id;
+    focusCharacterPartCard(part);
     state.editingPartId=null;
 
     ensureCharacterRoot();
@@ -5443,14 +5546,14 @@
     p.querySelectorAll('[data-db-character-load-part]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.fileInputs.part)state.fileInputs.part.click();};});
     p.querySelectorAll('[data-db-save-part]').forEach(function(b){b.onclick=savePart;});
     var cn=p.querySelector('[data-db-character-name]');if(cn)cn.oninput=function(){var value=String(cn.value||'').trim();state.character.name=value||'MyCharacter';state.character.nameConfirmed=!!value;};p.querySelectorAll('[data-db-character-save]').forEach(function(b){b.onclick=saveCharacter;});p.querySelectorAll('[data-db-character-load]').forEach(function(b){b.onclick=function(){state.fileInputs.character.click();};});p.querySelectorAll('[data-db-character-commit],[data-db-commit-character]').forEach(function(b){b.onclick=commitCharacter;});p.querySelectorAll('[data-db-character-resync]').forEach(function(b){b.onclick=resyncCharacterPlacement;});p.querySelectorAll('[data-db-character-cleanup]').forEach(function(b){b.onclick=function(){cleanUpLooseArtwork(false);};});var commitName=p.querySelector('[data-db-commit-name]');if(commitName)commitName.oninput=function(){state.character.name=commitName.value||'MyCharacter';};
-    p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(event){if(event&&event.target&&event.target.closest('button,input,select,textarea'))return;var part=partById(card.getAttribute('data-db-part-card'));if(part){if(state.adjustingPartId&&Number(state.adjustingPartId)!==Number(part.id))finishPartPlacementAdjust(true);selectCharacterPartOnStage(part);renderAll();}};});
-    p.querySelectorAll('[data-db-part-toggle]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var part=partById(button.getAttribute('data-db-part-toggle'));if(part){part.collapsed=!part.collapsed;renderAll();}};});
+    p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(event){if(event&&event.target&&event.target.closest('button,input,select,textarea'))return;var part=partById(card.getAttribute('data-db-part-card'));if(part){if(state.adjustingPartId&&Number(state.adjustingPartId)!==Number(part.id))finishPartPlacementAdjust(true);focusCharacterPartCard(part);selectCharacterPartOnStage(part);renderAll();}};});
+    p.querySelectorAll('[data-db-part-toggle]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var part=partById(button.getAttribute('data-db-part-toggle'));if(part){var wasOpen=!part.collapsed;(state.character.parts||[]).forEach(function(candidate){if(candidate)candidate.collapsed=true;});part.collapsed=wasOpen;state.character.selectedPartId=part.id;renderAll();}};});
     p.querySelectorAll('[data-db-part-name]').forEach(function(input){input.onchange=function(){var part=partById(input.getAttribute('data-db-part-name'));if(part){part.name=input.value||part.name;if(part.clipId&&clips()[part.clipId])clips()[part.clipId].name=part.name;var instance=partInstance(part);if(instance)instance.name=part.name;renderAll();API.refreshUI();}};});
     p.querySelectorAll('[data-db-part-delete]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}deleteCharacterPart(partById(button.getAttribute('data-db-part-delete')));};});
-    p.querySelectorAll('[data-db-part-select]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);var part=partById(button.getAttribute('data-db-part-select'));selectCharacterPartOnStage(part);renderAll();notify('Selected '+(part?part.name:'part')+'.',false);};});
-    p.querySelectorAll('[data-db-part-adjust]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}beginPartPlacementAdjust(partById(button.getAttribute('data-db-part-adjust')));};});
-    p.querySelectorAll('[data-db-part-animate]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);activateCharacterPartMode(partById(button.getAttribute('data-db-part-animate')),'animate');};});
-    p.querySelectorAll('[data-db-part-pin]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);startPartPinPick(partById(button.getAttribute('data-db-part-pin')));};});
+    p.querySelectorAll('[data-db-part-select]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);var part=partById(button.getAttribute('data-db-part-select'));if(part)focusCharacterPartCard(part);selectCharacterPartOnStage(part);renderAll();if(part){var live=currentCharacterPartInstance(part)||partInstance(part);if(live){API.selectDrawObject(live);API.refreshUI();}}notify('Selected '+(part?part.name:'part')+'.',false);};});
+    p.querySelectorAll('[data-db-part-adjust]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var part=partById(button.getAttribute('data-db-part-adjust'));if(part)focusCharacterPartCard(part);beginPartPlacementAdjust(part);};});
+    p.querySelectorAll('[data-db-part-animate]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);var part=partById(button.getAttribute('data-db-part-animate'));if(part)focusCharacterPartCard(part);activateCharacterPartMode(part,'animate');};});
+    p.querySelectorAll('[data-db-part-pin]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);var part=partById(button.getAttribute('data-db-part-pin'));if(part)focusCharacterPartCard(part);startPartPinPick(part);};});
     p.querySelectorAll('[data-db-clear-pin]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);clearPartPin(partById(button.getAttribute('data-db-clear-pin')),false);renderAll();};});
     p.querySelectorAll('[data-db-part-up]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}movePart(partById(button.getAttribute('data-db-part-up')),-1);};});
     p.querySelectorAll('[data-db-part-down]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}movePart(partById(button.getAttribute('data-db-part-down')),1);};});
@@ -5509,9 +5612,18 @@
     },true);
     window.addEventListener('keyup',function(e){if(e.key==='b'||e.key==='B')state.bKeyDown=false;},true);
     window.addEventListener('blur',function(){state.bKeyDown=false;},true);
-    window.addEventListener('mouseup',function(){if(!state.adjustingPartId)return;setTimeout(function(){if(state.adjustingPartId){syncAdjustedPartPlacement();renderBody();API.refreshUI();}},0);},true);
-    window.addEventListener('pointerup',function(){if(!state.adjustingPartId)return;setTimeout(function(){if(state.adjustingPartId){syncAdjustedPartPlacement();renderBody();API.refreshUI();}},0);},true);
-    setInterval(function(){if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());hideDemBonesTimelineRows();if(state.adjustingPartId){setAdjustAutoKeyframe(false);}if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);
+    function finishNativeAdjustPointer(){
+      if(!state.adjustingPartId)return;
+      setTimeout(function(){
+        if(!state.adjustingPartId)return;
+        syncAdjustedPartPlacement();
+        renderBody();
+        keepAdjustedPartSelected();
+      },0);
+    }
+    window.addEventListener('mouseup',finishNativeAdjustPointer,true);
+    window.addEventListener('pointerup',finishNativeAdjustPointer,true);
+    setInterval(function(){if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());hideDemBonesTimelineRows();if(state.adjustingPartId){setAdjustAutoKeyframe(false);var adjustingPart=partById(state.adjustingPartId);if(adjustingPart)focusCharacterPartCard(adjustingPart);}if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);
   }
 
   function open(){
