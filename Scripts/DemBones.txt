@@ -1,18 +1,21 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.3
+/* Luke Animate Dem Bones + MyCharacter GPT v16.4
    Native Luke Animate floating tool.
 
-   v16.3 builds the requested PNG/live-bone work on the current v15.14 behaviour:
-   compact workflow layout, transparent PNG mesh deformation, visible
-   envelope resize handles, reliable leaf-bone editing, B+click/double-click
-   reopening from a rigged character, and live bone manipulation while the
-   panel is closed. Requires Luke Animate Plugin API v113 for PNG rendering.
+   v16.4 keeps the v16.3 PNG/live-bone work and changes MyCharacter Adjust
+   into a true non-animated placement mode. Adjust now relocates, rotates and
+   scales the whole selected part together with its bones. Pinned parts can be
+   adjusted the same way without being unpinned; their pin offset/rotation/scale
+   is rewritten to preserve the new placement. Auto Keyframe is forced off only
+   while Adjust is active and restored afterwards. B+click/double-click still
+   opens Edit Bone, not placement Adjust. Requires Luke Animate Plugin API v113
+   for PNG rendering.
 */
 (function(){
   "use strict";
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.3";
+  var TOOL_VERSION = "16.4";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -74,6 +77,8 @@
       parts:[]
     },
     editingPartId:null,
+    adjustingPartId:null,
+    adjustRestoreAutoKeyframe:null,
     expressionType:"lip",
     expressionSlot:"Default",
     status:"Ready.",
@@ -1532,9 +1537,25 @@
     visited[part.id]=true;
 
     var instance=partInstance(part);
+    var adjusting=Number(state.adjustingPartId)===Number(part.id);
     var base=part.pin
       ?normalisePartTransform(part.transform)
       :transformFromPartInstance(instance,part.transform);
+
+    /*
+      Adjust is a placement edit, not animation. While it is active, the native
+      Luke Animate Clip instance is the authority even if this part is pinned.
+      That makes the artwork and every displayed bone travel, rotate and scale
+      together under the normal stage transform gizmo.
+    */
+    if(adjusting){
+      var liveSource=instance;
+      if(instance&&typeof API.getEffectiveObject==="function"){
+        try{liveSource=API.getEffectiveObject(instance,time)||instance;}catch(ignoreAdjustedEffective){}
+      }
+      delete visited[part.id];
+      return transformFromPartInstance(liveSource,part.transform);
+    }
 
     if(!part.pin||!part.pin.targetPartId||!part.pin.boneId){
       delete visited[part.id];
@@ -2000,6 +2021,11 @@
       var part=partById(object.__dbPartId);
       if(!part)return effective;
 
+      /* Placement Adjust must never be overwritten by the pin evaluator. */
+      if(Number(state.adjustingPartId)===Number(part.id)){
+        return effective;
+      }
+
       if(!part.pin){
         return effective;
       }
@@ -2458,6 +2484,177 @@
     return true;
   }
 
+  function setAdjustAutoKeyframe(enabled){
+    enabled=!!enabled;
+    try{
+      if(typeof API.setAutoKeyframe==="function"){
+        API.setAutoKeyframe(enabled);
+        return true;
+      }
+    }catch(ignoreApiAutoKey){}
+
+    try{
+      if(typeof API.getAutoKeyframe==="function"&&!!API.getAutoKeyframe()===enabled){
+        return true;
+      }
+      var button=document.getElementById("btn-auto-keyframe");
+      if(button){
+        button.click();
+        return true;
+      }
+    }catch(ignoreButtonAutoKey){}
+
+    return false;
+  }
+
+  function liveAdjustedPartTransform(part){
+    if(!part)return normalisePartTransform(null);
+    var instance=partInstance(part);
+    if(!instance)return normalisePartTransform(part.transform);
+    var source=instance;
+    if(typeof API.getEffectiveObject==="function"){
+      try{source=API.getEffectiveObject(instance,currentTime())||instance;}catch(ignoreLiveAdjusted){}
+    }
+    return transformFromPartInstance(source,part.transform);
+  }
+
+  function rewritePinForAdjustedPlacement(part,childTransform){
+    if(!part||!part.pin)return false;
+
+    var target=partById(part.pin.targetPartId);
+    if(!target||!target.rig)return false;
+
+    var bone=(target.rig.bones||[]).filter(function(candidate){
+      return String(candidate.id)===String(part.pin.boneId);
+    })[0];
+    if(!bone)return false;
+
+    var parentTransform=resolvedPartTransform(target,currentTime(),{});
+    var boneMap=posedTransformMap(target.rig,currentTime());
+    var pose=boneMap[bone.id];
+    if(!pose)return false;
+
+    var headWorld=partLocalPointToCharacterScene(parentTransform,pose.head);
+    var tailWorld=partLocalPointToCharacterScene(parentTransform,pose.tail);
+    var attachPoint=part.pin.attachPoint==="head"?"head":"tail";
+    var anchor=attachPoint==="head"?headWorld:tailWorld;
+    var boneAngle=Math.atan2(tailWorld.y-headWorld.y,tailWorld.x-headWorld.x)*180/Math.PI;
+    var stageOffset={x:childTransform.x-anchor.x,y:childTransform.y-anchor.y};
+    var unrotated=rotateVector(stageOffset.x,stageOffset.y,-boneAngle*Math.PI/180);
+    var parentScale=Math.max(.0001,n(parentTransform.scale,1));
+
+    part.pin.offsetLocal={
+      x:unrotated.x/parentScale,
+      y:unrotated.y/parentScale
+    };
+    part.pin.parentScaleAtPin=parentScale;
+    part.pin.childScaleAtPin=Math.max(.01,n(childTransform.scale,1));
+    part.pin.childScaleXAtPin=Math.max(.01,n(childTransform.scaleX,1));
+    part.pin.childScaleYAtPin=Math.max(.01,n(childTransform.scaleY,1));
+
+    if(part.pin.inheritRotation===false){
+      part.pin.fixedRotation=n(childTransform.rotation,0);
+    }else{
+      part.pin.rotationOffset=n(childTransform.rotation,0)-boneAngle;
+    }
+
+    return true;
+  }
+
+  function syncAdjustedPartPlacement(){
+    var part=partById(state.adjustingPartId);
+    if(!part)return false;
+
+    var transform=liveAdjustedPartTransform(part);
+    part.transform=normalisePartTransform(transform);
+
+    if(part.pin){
+      rewritePinForAdjustedPlacement(part,part.transform);
+    }
+
+    return true;
+  }
+
+  function finishPartPlacementAdjust(silent){
+    var part=partById(state.adjustingPartId);
+    if(part)syncAdjustedPartPlacement();
+
+    state.adjustingPartId=null;
+    state.mode="select";
+
+    if(state.adjustRestoreAutoKeyframe!==null){
+      setAdjustAutoKeyframe(!!state.adjustRestoreAutoKeyframe);
+    }
+    state.adjustRestoreAutoKeyframe=null;
+
+    API.refreshUI();
+
+    if(!silent&&part){
+      renderAll();
+      notify('Adjusted "'+part.name+'" placement. Bones and pin move with the part.',false);
+    }
+
+    return !!part;
+  }
+
+  function beginPartPlacementAdjust(part){
+    if(!part||!part.clipId||!clips()[part.clipId]){
+      notify("This character part has no editable Clip.",true);
+      return false;
+    }
+
+    if(state.adjustingPartId&&Number(state.adjustingPartId)!==Number(part.id)){
+      finishPartPlacementAdjust(true);
+    }
+
+    if(!selectCharacterPartOnStage(part)){
+      notify("Could not select this character part on the stage.",true);
+      return false;
+    }
+
+    var instance=partInstance(part);
+    if(!instance){
+      notify("This character part has no stage instance.",true);
+      return false;
+    }
+
+    /*
+      A pinned instance is normally evaluator-driven. Seed its real native
+      transform with the currently solved placement before temporarily allowing
+      the native transform gizmo to control it.
+    */
+    if(part.pin){
+      var solved=resolvedPartTransform(part,currentTime(),{});
+      instance.x=solved.x;
+      instance.y=solved.y;
+      instance.scale=solved.scale;
+      instance.scaleX=solved.scaleX;
+      instance.scaleY=solved.scaleY;
+      instance.rotation=solved.rotation;
+      instance.opacity=solved.opacity;
+      part.transform=normalisePartTransform(solved);
+    }
+
+    state.adjustingPartId=part.id;
+    state.character.selectedPartId=part.id;
+    state.activeRig=null;
+    state.selectedBoneId="";
+    state.selectedCurveId="";
+    state.tab="character";
+    state.mode="adjust-part";
+
+    if(state.adjustRestoreAutoKeyframe===null){
+      try{state.adjustRestoreAutoKeyframe=typeof API.getAutoKeyframe==="function"?!!API.getAutoKeyframe():false;}catch(ignoreReadAutoKey){state.adjustRestoreAutoKeyframe=false;}
+    }
+    setAdjustAutoKeyframe(false);
+
+    API.selectDrawObject(instance);
+    API.refreshUI();
+    renderAll();
+    notify('Adjusting "'+part.name+'". Move, rotate or scale the whole part; no animation keys are added.',false);
+    return true;
+  }
+
   function syncCharacterSelectionFromStage(){
     if(
       !state.open||
@@ -2486,7 +2683,9 @@
     var changed=Number(state.character.selectedPartId)!==Number(part.id);
     state.character.selectedPartId=part.id;
 
-    if(!part.pin){
+    if(Number(state.adjustingPartId)===Number(part.id)){
+      part.transform=liveAdjustedPartTransform(part);
+    }else if(!part.pin){
       part.transform=transformFromPartInstance(instance,part.transform);
     }
 
@@ -2499,6 +2698,7 @@
       return;
     }
 
+    if(state.adjustingPartId)finishPartPlacementAdjust(true);
     selectCharacterPartOnStage(part);
     API.enterClip(part.clipId);
 
@@ -2523,7 +2723,7 @@
     notify(
       mode==="animate"
         ?'Animating "'+part.name+'".'
-        :'Adjusting "'+part.name+'". Move bone heads/tails and edit envelopes directly.',
+        :'Editing bones for "'+part.name+'".',
       false
     );
   }
@@ -2707,6 +2907,7 @@
 
   function deleteCharacterPart(part){
     if(!part)return;
+    if(state.adjustingPartId)finishPartPlacementAdjust(true);
 
     if(state.character.rootClipId){
       returnToCharacterRoot();
@@ -2753,6 +2954,7 @@
   }
 
   function movePart(part,dir){
+    if(state.adjustingPartId)finishPartPlacementAdjust(true);
     var i=state.character.parts.indexOf(part);
     var j=i+dir;
     if(i<0||j<0||j>=state.character.parts.length)return;
@@ -3127,6 +3329,7 @@
   }
 
   function finaliseCharacterOnStage(silent){
+    if(state.adjustingPartId)finishPartPlacementAdjust(true);
     if(!state.character.parts.length){
       return false;
     }
@@ -3229,6 +3432,7 @@
 
   function clearPartPin(part,silent){
     if(!part||!part.pin)return;
+    if(state.adjustingPartId)finishPartPlacementAdjust(true);
 
     var solved=resolvedPartTransform(part,currentTime(),{});
 
@@ -3259,6 +3463,7 @@
 
   function startPartPinPick(part){
     if(!part)return;
+    if(state.adjustingPartId)finishPartPlacementAdjust(true);
 
     syncAllUnpinnedCharacterTransforms();
     selectCharacterPartOnStage(part);
@@ -3800,7 +4005,7 @@
         if(state.character.committed&&state.character.showBones){
           var shapeHit=characterPartShapeHit(event);
           if(shapeHit){
-            event.preventDefault();event.stopImmediatePropagation();open();activateCharacterPartMode(shapeHit.part,"adjust");
+            event.preventDefault();event.stopImmediatePropagation();open();activateCharacterPartMode(shapeHit.part,"editbone");
             var nearest=characterAnimationBoneHit(event);if(nearest&&nearest.part===shapeHit.part)state.selectedBoneId=nearest.bone.id;
             renderAll();API.refreshUI();return;
           }
@@ -4227,8 +4432,9 @@
     var cards=state.character.parts.length
       ?state.character.parts.map(function(part){
           var active=Number(state.character.selectedPartId)===Number(part.id);
+          var adjusting=Number(state.adjustingPartId)===Number(part.id);
           var pinPicking=Number(state.character.pinPickSourceId)===Number(part.id);
-          var transform=normalisePartTransform(part.transform);
+          var transform=adjusting?liveAdjustedPartTransform(part):normalisePartTransform(part.transform);
 
           return '<div class="db-card db-character-card'+
             (active?' active':'')+
@@ -4242,8 +4448,8 @@
               (!part.collapsed
                 ?'<div class="db-card-body">'+
                   '<div class="db-grid3">'+
-                    '<button class="db-btn'+(active?' active':'')+'" data-db-part-select="'+part.id+'">Select / Move</button>'+
-                    '<button class="db-btn" data-db-part-adjust="'+part.id+'">Adjust</button>'+
+                    '<button class="db-btn'+(active&&!adjusting?' active':'')+'" data-db-part-select="'+part.id+'">Select / Move</button>'+
+                    '<button class="db-btn'+(adjusting?' active':'')+'" data-db-part-adjust="'+part.id+'">Adjust</button>'+
                     '<button class="db-btn" data-db-part-animate="'+part.id+'">Animate</button>'+
                   '</div>'+
                   '<div class="db-grid2" style="margin-top:7px">'+
@@ -4267,7 +4473,7 @@
         '<h3>MyCharacter</h3>'+
         '<div class="db-row"><label>Name</label><input value="'+(state.character.nameConfirmed?esc(state.character.name):'')+'" placeholder="Name character" data-db-character-name></div>'+
         '<div class="db-grid3"><button class="db-btn primary" data-db-character-add>Add Current Part</button><button class="db-btn" data-db-character-save>Save</button><button class="db-btn" data-db-character-load>Load</button></div>'+
-        '<p class="db-help" style="margin-top:8px">Add parts, adjust bones, or animate.</p>'+
+        '<p class="db-help" style="margin-top:8px">Add parts, place them with Adjust, or animate.</p>'+
       '</div>'+
       '<div class="db-section"><h3>Parts</h3><div class="db-list">'+cards+'</div></div>'+
       '<div class="db-section"><h3>Maintenance</h3><div class="db-grid3"><button class="db-btn" data-db-character-resync>Resync Bones</button><button class="db-btn" data-db-character-cleanup>Clean Up</button><button class="db-btn" data-db-character-commit>Force Sync</button></div></div>'+
@@ -4315,7 +4521,7 @@
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts SVG/rig artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div><div class="db-section"><h3>Vector Exchange</h3><div class="db-grid2"><button class="db-btn" data-db-export-svg>Export Selected Shapes SVG</button><button class="db-btn" data-db-load-svg>Import SVG To Build Parts</button></div></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> use stage vectors, SVG or transparent PNG artwork.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Add To Character keeps the part where it is on stage. Select / Move uses Luke Animate’s native Select/Edit tool. Adjust opens rest-bone/envelope editing. Animate opens bone animation. To pin, press 📌 on the child part and click a visible target bone; the current placement is preserved.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> use stage vectors, SVG or transparent PNG artwork.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. A selected bone becomes the parent of the next bone. Binding uses local bone envelopes so each point follows only the nearby bones and bends across connected joints.</p><p class="db-help"><b>MyCharacter:</b> Adjust moves, rotates or scales the whole part and its bones without adding animation keys. It also works while pinned and keeps the pin. Animate edits bone animation. To pin, press 📌 on the child part and click a visible target bone.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> selected Luke Animate shapes export as SVG. SVG path, polyline, polygon, line, rectangle, circle, ellipse and text elements import as editable Luke Animate objects.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   var boneCursorCache={};
@@ -4352,15 +4558,15 @@
     p.querySelectorAll('[data-db-use-selection]').forEach(function(b){b.onclick=useStageSelection;});p.querySelectorAll('[data-db-load-png]').forEach(function(b){b.onclick=function(){state.fileInputs.png.click();};});p.querySelectorAll('[data-db-step-jump]').forEach(function(step){step.onclick=function(){state.tab=step.getAttribute('data-db-step-jump')||'source';state.mode=state.tab==='bones'?'add-bone':'select';renderAll();};});p.querySelectorAll('[data-db-point-mode]').forEach(function(input){input.onchange=function(){if(input.checked){state.pointMode=input.value||'selected';renderAll();notify('Ingest mode set to '+(state.pointMode==='limb'?'Limb':(state.pointMode==='uniform'?'Uniform':'Selected points'))+'.',false);}};});p.querySelectorAll('[data-db-load-svg]').forEach(function(b){b.onclick=function(){state.fileInputs.svg.click();};});p.querySelectorAll('[data-db-add-dummy]').forEach(function(b){b.onclick=addDummy;});p.querySelectorAll('[data-db-export-svg]').forEach(function(b){b.onclick=function(){var o=selectedObjects().filter(supportedObject);if(!o.length&&state.activeRig)o=rigObjects(state.activeRig);if(!o.length){notify('Select shapes or build a part first.',true);return;}downloadText('LukeAnimate_Selection.svg',objectsToSvg(o),'image/svg+xml');};});
     var rem=p.querySelector('[data-db-remove-originals]');if(rem)rem.onchange=function(){state.removeOriginals=!!rem.checked;};p.querySelectorAll('[data-db-add-character],[data-db-character-add]').forEach(function(b){b.onclick=addBuildToCharacter;});p.querySelectorAll('[data-db-release-stage]').forEach(function(b){b.onclick=releaseRigToStage;});p.querySelectorAll('[data-db-cancel-edit]').forEach(function(b){b.onclick=function(){state.editingPartId=null;notify('Part edit cancelled.',false);};});p.querySelectorAll('[data-db-save-part]').forEach(function(b){b.onclick=savePart;});p.querySelectorAll('[data-db-load-part]').forEach(function(b){b.onclick=function(){state.fileInputs.part.click();};});
     var cn=p.querySelector('[data-db-character-name]');if(cn)cn.oninput=function(){var value=String(cn.value||'').trim();state.character.name=value||'MyCharacter';state.character.nameConfirmed=!!value;};p.querySelectorAll('[data-db-character-save]').forEach(function(b){b.onclick=saveCharacter;});p.querySelectorAll('[data-db-character-load]').forEach(function(b){b.onclick=function(){state.fileInputs.character.click();};});p.querySelectorAll('[data-db-character-commit],[data-db-commit-character]').forEach(function(b){b.onclick=commitCharacter;});p.querySelectorAll('[data-db-character-resync]').forEach(function(b){b.onclick=resyncCharacterPlacement;});p.querySelectorAll('[data-db-character-cleanup]').forEach(function(b){b.onclick=function(){cleanUpLooseArtwork(false);};});var commitName=p.querySelector('[data-db-commit-name]');if(commitName)commitName.oninput=function(){state.character.name=commitName.value||'MyCharacter';};
-    p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(event){if(event&&event.target&&event.target.closest('button,input,select,textarea'))return;var part=partById(card.getAttribute('data-db-part-card'));if(part){selectCharacterPartOnStage(part);renderAll();}};});
+    p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(event){if(event&&event.target&&event.target.closest('button,input,select,textarea'))return;var part=partById(card.getAttribute('data-db-part-card'));if(part){if(state.adjustingPartId&&Number(state.adjustingPartId)!==Number(part.id))finishPartPlacementAdjust(true);selectCharacterPartOnStage(part);renderAll();}};});
     p.querySelectorAll('[data-db-part-toggle]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var part=partById(button.getAttribute('data-db-part-toggle'));if(part){part.collapsed=!part.collapsed;renderAll();}};});
     p.querySelectorAll('[data-db-part-name]').forEach(function(input){input.onchange=function(){var part=partById(input.getAttribute('data-db-part-name'));if(part){part.name=input.value||part.name;if(part.clipId&&clips()[part.clipId])clips()[part.clipId].name=part.name;var instance=partInstance(part);if(instance)instance.name=part.name;renderAll();API.refreshUI();}};});
     p.querySelectorAll('[data-db-part-delete]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}deleteCharacterPart(partById(button.getAttribute('data-db-part-delete')));};});
-    p.querySelectorAll('[data-db-part-select]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var part=partById(button.getAttribute('data-db-part-select'));selectCharacterPartOnStage(part);renderAll();notify('Selected '+(part?part.name:'part')+'. Use Luke Animate Select/Edit handles to move, scale or rotate it.',false);};});
-    p.querySelectorAll('[data-db-part-adjust]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}activateCharacterPartMode(partById(button.getAttribute('data-db-part-adjust')),'adjust');};});
-    p.querySelectorAll('[data-db-part-animate]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}activateCharacterPartMode(partById(button.getAttribute('data-db-part-animate')),'animate');};});
-    p.querySelectorAll('[data-db-part-pin]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}startPartPinPick(partById(button.getAttribute('data-db-part-pin')));};});
-    p.querySelectorAll('[data-db-clear-pin]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}clearPartPin(partById(button.getAttribute('data-db-clear-pin')),false);renderAll();};});
+    p.querySelectorAll('[data-db-part-select]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);var part=partById(button.getAttribute('data-db-part-select'));selectCharacterPartOnStage(part);renderAll();notify('Selected '+(part?part.name:'part')+'.',false);};});
+    p.querySelectorAll('[data-db-part-adjust]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}beginPartPlacementAdjust(partById(button.getAttribute('data-db-part-adjust')));};});
+    p.querySelectorAll('[data-db-part-animate]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);activateCharacterPartMode(partById(button.getAttribute('data-db-part-animate')),'animate');};});
+    p.querySelectorAll('[data-db-part-pin]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);startPartPinPick(partById(button.getAttribute('data-db-part-pin')));};});
+    p.querySelectorAll('[data-db-clear-pin]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);clearPartPin(partById(button.getAttribute('data-db-clear-pin')),false);renderAll();};});
     p.querySelectorAll('[data-db-part-up]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}movePart(partById(button.getAttribute('data-db-part-up')),-1);};});
     p.querySelectorAll('[data-db-part-down]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}movePart(partById(button.getAttribute('data-db-part-down')),1);};});
     p.querySelectorAll('[data-db-bone-id]').forEach(function(row){row.onclick=function(event){if(event&&event.target&&event.target.closest('[data-db-delete-bone-id]'))return;state.selectedBoneId=row.getAttribute('data-db-bone-id');if(state.tab==='bones')state.mode='add-bone';renderAll();};});p.querySelectorAll('[data-db-delete-bone-id]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}deleteBoneById(button.getAttribute('data-db-delete-bone-id'));};});p.querySelectorAll('[data-db-add-bone]').forEach(function(b){b.onclick=function(){if(!state.activeRig){notify('Build or load a part first.',true);return;}state.mode='add-bone';renderAll();notify('Drag on the stage to create a bone. Keep dragging again to extend the chain.',false);};});p.querySelectorAll('[data-db-bind-rig]').forEach(function(b){b.onclick=bindRig;});p.querySelectorAll('[data-db-clear-bones]').forEach(function(b){b.onclick=clearBones;});p.querySelectorAll('[data-db-delete-bone]').forEach(function(b){b.onclick=deleteBone;});
@@ -4377,7 +4583,7 @@
     ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;
     state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.png=panel.querySelector('[data-db-png]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');
     API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;
-    panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){var nextTab=b.getAttribute('data-db-tab');if(state.tab==='character'&&nextTab!=='character'&&state.character.rootClipId&&API.getEditingClipId()===state.character.rootClipId){state.activeRig=null;state.selectedBoneId='';state.selectedCurveId='';}state.tab=nextTab;state.curvePointAddMode=false;state.mode=state.tab==='bones'?'add-bone':'select';if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}renderAll();};});
+    panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){var nextTab=b.getAttribute('data-db-tab');if(state.adjustingPartId&&nextTab!=='character')finishPartPlacementAdjust(true);if(state.tab==='character'&&nextTab!=='character'&&state.character.rootClipId&&API.getEditingClipId()===state.character.rootClipId){state.activeRig=null;state.selectedBoneId='';state.selectedCurveId='';}state.tab=nextTab;state.curvePointAddMode=false;state.mode=state.tab==='bones'?'add-bone':'select';if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}renderAll();};});
     state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};
     state.fileInputs.png.onchange=function(){var f=this.files&&this.files[0];if(f)loadPngFile(f);this.value='';};
     state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};
@@ -4399,7 +4605,7 @@
       if(state.open)return;
       if(state.character.committed&&state.character.showBones){
         var bone=characterAnimationBoneHit(e),shape=bone?null:characterPartShapeHit(e),part=bone?bone.part:(shape&&shape.part);
-        if(part){e.preventDefault();e.stopImmediatePropagation();open();activateCharacterPartMode(part,'adjust');if(bone)state.selectedBoneId=bone.bone.id;renderAll();API.refreshUI();return;}
+        if(part){e.preventDefault();e.stopImmediatePropagation();open();activateCharacterPartMode(part,'editbone');if(bone)state.selectedBoneId=bone.bone.id;renderAll();API.refreshUI();return;}
       }
       var loose=stageRiggedShapeHit(e);if(!loose)return;
       e.preventDefault();e.stopImmediatePropagation();activateStandaloneRigForEdit(loose);open();renderAll();API.refreshUI();
@@ -4413,7 +4619,9 @@
     },true);
     window.addEventListener('keyup',function(e){if(e.key==='b'||e.key==='B')state.bKeyDown=false;},true);
     window.addEventListener('blur',function(){state.bKeyDown=false;},true);
-    setInterval(function(){if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());hideDemBonesTimelineRows();if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);
+    window.addEventListener('mouseup',function(){if(!state.adjustingPartId)return;setTimeout(function(){if(state.adjustingPartId){syncAdjustedPartPlacement();renderBody();API.refreshUI();}},0);},true);
+    window.addEventListener('pointerup',function(){if(!state.adjustingPartId)return;setTimeout(function(){if(state.adjustingPartId){syncAdjustedPartPlacement();renderBody();API.refreshUI();}},0);},true);
+    setInterval(function(){if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());hideDemBonesTimelineRows();if(state.adjustingPartId){setAdjustAutoKeyframe(false);}if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);
   }
 
   function open(){
@@ -4429,6 +4637,7 @@
     renderAll();notify('Dem Bones ready.',false);
   }
   function close(){
+    if(state.adjustingPartId)finishPartPlacementAdjust(true);
     /*
       Closing DemBones after a Character exists is a final assembly handoff:
       leave one Character on Main Scene, discard loose Build Parts artwork,
