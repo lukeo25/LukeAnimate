@@ -39,6 +39,7 @@
    v16.20 restores reliable Character double-click editing and makes Part Dummy boxes behave like direct transform controls. Double-clicking the Character always opens the all-parts/all-bones Edit Bone view. A Part Dummy can be clicked in Build Character or with the panel closed to select its box; its corner scale handles and rotate handle then remain directly draggable. Clicking the assembled Character itself selects the automatic Character Dummy and exposes Luke Animate's normal scale/rotate bounding box; double-clicking instead opens all parts and bones for editing.
    v16.21 fixes Dummy scale inheritance so the complete pinned child part, including its curves and displayed bones, scales with the Dummy instead of only shifting around the attachment point.
    v16.22 restores direct Dummy manipulation. Part Dummies begin move/scale/rotate on the same mouse press instead of requiring a select-only click first. The automatic Character Dummy now has its own DemBones box, corner scale handles and rotate handle, so its transforms no longer depend on Luke Animate's native selection handles. Character Dummy move, scale and rotate write a real key at the current frame and affect the complete Character.
+   v16.23 fixes the Dummy workflow: adding a Dummy leaves Bones/Add Bone ready, Dummies are excluded from normal bone-chain snapping so a new bone stays exactly where it is dragged, the first Part Dummy becomes a true rig-level transform controller so its animated move/rotate/scale carries the part curves and all ordinary bones with it, and Character Dummy keys are synchronized across every live/canonical Character root instance so the box, curves and bone overlays transform together.
 
    v16.19 changes Part Dummies to box controls with direct move, scale and rotate handles. Part Dummies
    do not deform their own artwork, can be pin targets, and pass animated scale
@@ -1217,11 +1218,13 @@
     return Math.max(.001,Math.hypot(b.x-a.x,b.y-a.y));
   }
 
-  function nearestBoneEndpoint(point,ignoreId){
+  function nearestBoneEndpoint(point,ignoreId,includeDummies){
     var rig=state.activeRig,best=null;
     if(!rig)return null;
     (rig.bones||[]).forEach(function(b){
       if(ignoreId&&String(b.id)===String(ignoreId))return;
+      /* A Dummy is a transform/pin control, never a skeletal chain joint. */
+      if(!includeDummies&&isDummyBone(b))return;
       [["head",b.restHead],["tail",b.restTail]].forEach(function(entry){
         var d=Math.hypot(point.x-entry[1].x,point.y-entry[1].y);
         if(!best||d<best.distance)best={bone:b,type:entry[0],point:entry[1],distance:d};
@@ -1235,8 +1238,9 @@
     var rig=state.activeRig;
     if(!rig||!rig.bones.length)return out;
     var threshold=scenePixels(18);
-    var headHit=nearestBoneEndpoint(a,null);
-    var tailHit=nearestBoneEndpoint(b,null);
+    /* Never let a Dummy pull a newly drawn bone away from the mouse position. */
+    var headHit=nearestBoneEndpoint(a,null,false);
+    var tailHit=nearestBoneEndpoint(b,null,false);
     var parent=null;
     if(headHit&&headHit.type==="tail"&&headHit.distance<=threshold){
       parent=headHit.bone;
@@ -1249,6 +1253,8 @@
       out.tail=clone(a);
     }else{
       parent=selectedBone();
+      /* A selected Dummy must not become the parent of the next skeletal bone. */
+      if(parent&&isDummyBone(parent))parent=null;
       if(parent){
         var sx=parent.restTail.x-out.head.x,sy=parent.restTail.y-out.head.y;
         out.head={x:parent.restTail.x,y:parent.restTail.y};
@@ -1320,6 +1326,8 @@
     var rig=state.activeRig;
     if(!rig){notify("Build or load a part first.",true);return null;}
     API.pushUndo();
+    var alreadyHasControlDummy=(rig.bones||[]).some(function(item){return isDummyBone(item)&&(item.controlsRig===true);});
+    var alreadyHasAnyDummy=(rig.bones||[]).some(function(item){return isDummyBone(item);});
     var bounds=rigTargetBounds(rig);
     var cx=isFinite(bounds&&bounds.cx)?bounds.cx:0;
     var cy=isFinite(bounds&&bounds.cy)?bounds.cy:0;
@@ -1327,18 +1335,19 @@
     var bh=Math.abs(n(bounds&&bounds.y2,0)-n(bounds&&bounds.y1,0));
     var span=Math.max(36,Math.min(90,Math.max(1,Math.min(bw||60,bh||60))*.28));
     var count=(rig.bones||[]).filter(function(item){return String(item&&item.type||'').toLowerCase()==='dummy';}).length+1;
-    var bone={id:uid("dummy"),name:"Dummy "+count,type:"dummy",parentId:"",restHead:{x:round3(cx),y:round3(cy)},restTail:{x:round3(cx+span),y:round3(cy)},restLength:span,restAngle:0,localRestAngle:0,envStart:2,envEnd:2,strength:.001,basePose:{dx:0,dy:0,rotation:0,scale:1,easing:"linear"},keys:[]};
+    var bone={id:uid("dummy"),name:"Dummy "+count,type:"dummy",parentId:"",restHead:{x:round3(cx),y:round3(cy)},restTail:{x:round3(cx+span),y:round3(cy)},restLength:span,restAngle:0,localRestAngle:0,envStart:2,envEnd:2,strength:.001,basePose:{dx:0,dy:0,rotation:0,scale:1,easing:"linear"},keys:[],controlsRig:(!alreadyHasControlDummy&&!alreadyHasAnyDummy)};
     rig.bones=rig.bones||[];
     rig.bones.push(bone);
     normaliseRigBones(rig);
     state.selectedBoneId=bone.id;
-    state.tab="editbone";
-    state.mode="select";
+    /* Stay in Bones/Add Bone so adding a Dummy never traps the user in Edit Bone. */
+    state.tab="bones";
+    state.mode="add-bone";
     rebuildRigSkinData(rig);
     var characterPart=characterPartForRigId(rig.id);
     if(characterPart)syncCharacterPartRigRefs(characterPart);
     renderAll();API.refreshUI();
-    notify(bone.name+" added. It can be pinned to and its animated scale is inherited by pinned parts.",false);
+    notify(bone.name+" added. Add Bone is still active: drag exactly where you want the next bone. The first Dummy is also the part-level move/rotate/scale controller in Animate.",false);
     return bone;
   }
 
@@ -1447,7 +1456,41 @@
     return map;
   }
 
-  function posedTransformMap(rig,time){
+  function rigControlDummy(rig){
+    if(!rig||!Array.isArray(rig.bones))return null;
+    var dummies=rig.bones.filter(function(bone){return isDummyBone(bone);});
+    if(!dummies.length)return null;
+    /* Saved rigs from before v16.23 use their first Dummy as the part controller. */
+    return dummies.filter(function(bone){return bone.controlsRig===true;})[0]||dummies[0];
+  }
+
+  function rigControlDummyTransform(rig,time){
+    var dummy=rigControlDummy(rig);
+    if(!dummy)return null;
+    var pose=interpolatePose(dummy,time);
+    return{
+      dummy:dummy,
+      pivot:{x:n(dummy.restHead&&dummy.restHead.x,0),y:n(dummy.restHead&&dummy.restHead.y,0)},
+      dx:n(pose.dx,0),dy:n(pose.dy,0),
+      rotation:n(pose.rotation,0)*Math.PI/180,
+      scale:Math.max(.01,n(pose.scale,1))
+    };
+  }
+
+  function applyRigControlPoint(point,control){
+    if(!control)return{x:n(point&&point.x,0),y:n(point&&point.y,0)};
+    var px=n(point&&point.x,0)-control.pivot.x;
+    var py=n(point&&point.y,0)-control.pivot.y;
+    var rotated=rotateVector(px*control.scale,py*control.scale,control.rotation);
+    return{x:control.pivot.x+control.dx+rotated.x,y:control.pivot.y+control.dy+rotated.y};
+  }
+
+  function applyRigControlVector(vector,control){
+    if(!control)return{x:n(vector&&vector.x,0),y:n(vector&&vector.y,0)};
+    return rotateVector(n(vector&&vector.x,0)*control.scale,n(vector&&vector.y,0)*control.scale,control.rotation);
+  }
+
+  function posedTransformMap(rig,time,options){
     normaliseRigBones(rig);
     var by={},rest=restTransformMap(rig),out={},resolving={};
     (rig.bones||[]).forEach(function(b){by[b.id]=b;});
@@ -1468,7 +1511,21 @@
       var result={head:head,tail:{x:head.x+off.x,y:head.y+off.y},angle:angle,length:length,scale:localScale};
       out[b.id]=result;delete resolving[b.id];return result;
     }
-    (rig.bones||[]).forEach(resolve);return out;
+    (rig.bones||[]).forEach(resolve);
+
+    var control=!(options&&options.ignoreRigControl)?rigControlDummyTransform(rig,time):null;
+    if(control){
+      Object.keys(out).forEach(function(id){
+        var q=out[id];
+        if(!q||String(id)===String(control.dummy.id))return;
+        q.head=applyRigControlPoint(q.head,control);
+        q.tail=applyRigControlPoint(q.tail,control);
+        q.angle=angleOf(q.head,q.tail);
+        q.length=Math.max(.001,Math.hypot(q.tail.x-q.head.x,q.tail.y-q.head.y));
+        q.scale=Math.max(.01,n(q.scale,1)*control.scale);
+      });
+    }
+    return out;
   }
 
   function deformPoint(point,weights,rest,posed){
@@ -1556,23 +1613,47 @@
     })[0]||null;
   }
 
-  function characterRootInstance(){
-    var found=state.character.rootInstanceId?findObjectById(state.character.rootInstanceId):null;
-    if(found)return found;
-    if(typeof API.getMainSceneDrawObjects==='function'){
-      try{
-        var main=API.getMainSceneDrawObjects()||[];
-        for(var i=0;i<main.length;i++){
-          var object=main[i];
-          if(!object)continue;
-          if(state.character.rootInstanceId&&String(object.id)===String(state.character.rootInstanceId))return object;
-          if(object.__demBonesCharacterInstance&&String(object.__dbCharacterId||'')===String(state.character.id||'')){
-            state.character.rootInstanceId=object.id;return object;
-          }
-        }
-      }catch(ignoreMainCharacterRoot){}
+  function characterRootInstances(){
+    var result=[],seen=[];
+    function add(object){
+      if(!object||object.type!=="clipinstance")return;
+      var idMatch=state.character.rootInstanceId&&String(object.id)===String(state.character.rootInstanceId);
+      var markerMatch=object.__demBonesCharacterInstance&&String(object.__dbCharacterId||'')===String(state.character.id||'');
+      if(!idMatch&&!markerMatch)return;
+      if(seen.indexOf(object)>=0)return;
+      seen.push(object);result.push(object);
+      if(!state.character.rootInstanceId&&object.id)state.character.rootInstanceId=object.id;
     }
-    return null;
+    if(typeof API.getMainSceneDrawObjects==='function'){
+      try{(API.getMainSceneDrawObjects()||[]).forEach(add);}catch(ignoreMainCharacterRoots){}
+    }
+    allObjectArrays().forEach(function(list){(list||[]).forEach(add);});
+    return result;
+  }
+
+  function characterRootInstance(){
+    var copies=characterRootInstances();
+    if(copies.length)return copies[0];
+    var found=state.character.rootInstanceId?findObjectById(state.character.rootInstanceId):null;
+    return found||null;
+  }
+
+  function syncCharacterRootDummyCopies(source){
+    if(!source)return false;
+    var copies=characterRootInstances();
+    if(copies.indexOf(source)<0)copies.unshift(source);
+    copies.forEach(function(instance){
+      if(!instance)return;
+      instance.__demBonesCharacterInstance=true;
+      instance.__dbCharacterId=state.character.id;
+      instance.__dbCharacterDummy=true;
+      instance.name=characterDummyLabel();
+      ['x','y','scale','scaleX','scaleY','rotation','opacity'].forEach(function(field){
+        if(source[field]!==undefined)instance[field]=source[field];
+      });
+      instance.keyframes=clone(source.keyframes||[]);
+    });
+    return copies.length>0;
   }
 
   function characterDummyLabel(){return (state.character.name||"MyCharacter")+" Dummy";}
@@ -1580,6 +1661,8 @@
   function markCharacterRootDummy(instance){
     if(!instance)return null;
     instance.__dbCharacterDummy=true;
+    instance.__demBonesCharacterInstance=true;
+    instance.__dbCharacterId=state.character.id;
     instance.name=characterDummyLabel();
     if(!Array.isArray(instance.keyframes))instance.keyframes=[];
     return instance;
@@ -1708,6 +1791,7 @@
     };
     instance.keyframes.push(key);
     instance.keyframes.sort(function(a,b){return n(a&&a.time,0)-n(b&&b.time,0);});
+    syncCharacterRootDummyCopies(instance);
     return key;
   }
 
@@ -1760,6 +1844,7 @@
       while(delta>180)delta-=360;while(delta<-180)delta+=360;
       key.rotation=round3(start.rotation+delta);
     }else return false;
+    syncCharacterRootDummyCopies(drag.instance);
     syncAllCharacterRigRefs();
     API.refreshUI();
     return true;
@@ -1775,6 +1860,7 @@
     if(!key){key={time:time,easing:'linear'};instance.keyframes.push(key);}
     ['x','y','scale','scaleX','scaleY','rotation','opacity'].forEach(function(field){var fallback=instance[field];key[field]=field==='opacity'?clamp(n(effective[field],fallback),0,1):(field==='scale'||field==='scaleX'||field==='scaleY'?Math.max(.01,n(effective[field],fallback)):n(effective[field],fallback));});
     instance.keyframes.sort(function(a,b){return n(a&&a.time,0)-n(b&&b.time,0);});
+    syncCharacterRootDummyCopies(instance);
     return true;
   }
 
@@ -2841,7 +2927,9 @@
 
     var rest=restTransformMap(rig);
     var editingRestOnly=state.tab==="editbone";
-    var posed=editingRestOnly?rest:posedTransformMap(rig,time);
+    /* Solve ordinary bone deformation locally, then apply the Part Dummy once
+       to the complete mesh. This makes Dummy scaling a real parent transform. */
+    var posed=editingRestOnly?rest:posedTransformMap(rig,time,{ignoreRigControl:true});
     var base=editingRestOnly?data.restPoints:interpolatePointKey(rig,object.id,time,data.restPoints);
 
     var points=base.map(function(point,index){
@@ -2849,6 +2937,18 @@
     });
 
     var handles=deformBezierHandles(base,points,data,rest,posed);
+    var control=editingRestOnly?null:rigControlDummyTransform(rig,time);
+    if(control){
+      points=points.map(function(point){return applyRigControlPoint(point,control);});
+      if(Array.isArray(handles)){
+        handles=handles.map(function(handle){
+          if(!handle)return handle;
+          var iv=applyRigControlVector({x:n(handle.inX,0),y:n(handle.inY,0)},control);
+          var ov=applyRigControlVector({x:n(handle.outX,0),y:n(handle.outY,0)},control);
+          return{inX:iv.x,inY:iv.y,outX:ov.x,outY:ov.y};
+        });
+      }
+    }
 
     return{
       points:points,
@@ -6197,7 +6297,7 @@
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. Add Dummy creates a non-deforming box control. Click it once to select it and reveal the handles; drag inside to move, a corner to scale, and the round handle to rotate.</p><p class="db-help"><b>MyCharacter:</b> double-click the Character on stage to open all parts and all bones for editing. Every Character also has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. Add Dummy creates a box control and leaves Add Bone active. The first Dummy is the Part controller: in Animate, dragging inside moves the complete part, a corner scales its curves and bones together, and the round handle rotates them together. Dummies never steal skeletal chain snapping.</p><p class="db-help"><b>MyCharacter:</b> double-click the Character on stage to open all parts and all bones for editing. Every Character also has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   var boneCursorCache={};
