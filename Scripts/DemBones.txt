@@ -39,7 +39,8 @@
    v16.20 restores reliable Character double-click editing and makes Part Dummy boxes behave like direct transform controls. Double-clicking the Character always opens the all-parts/all-bones Edit Bone view. A Part Dummy can be clicked in Build Character or with the panel closed to select its box; its corner scale handles and rotate handle then remain directly draggable. Clicking the assembled Character itself selects the automatic Character Dummy and exposes Luke Animate's normal scale/rotate bounding box; double-clicking instead opens all parts and bones for editing.
    v16.21 fixes Dummy scale inheritance so the complete pinned child part, including its curves and displayed bones, scales with the Dummy instead of only shifting around the attachment point.
    v16.22 restores direct Dummy manipulation. Part Dummies begin move/scale/rotate on the same mouse press instead of requiring a select-only click first. The automatic Character Dummy now has its own DemBones box, corner scale handles and rotate handle, so its transforms no longer depend on Luke Animate's native selection handles. Character Dummy move, scale and rotate write a real key at the current frame and affect the complete Character.
-   v16.23 fixes the Dummy workflow: adding a Dummy leaves Bones/Add Bone ready, Dummies are excluded from normal bone-chain snapping so a new bone stays exactly where it is dragged, the first Part Dummy becomes a true rig-level transform controller so its animated move/rotate/scale carries the part curves and all ordinary bones with it, and Character Dummy keys are synchronized across every live/canonical Character root instance so the box, curves and bone overlays transform together.
+   v16.23 fixes the Dummy workflow: Dummies are excluded from normal bone-chain snapping, the first Part Dummy becomes a true rig-level transform controller so its animated move/rotate/scale carries the part curves and all ordinary bones with it, and Character Dummy keys are synchronized across every live/canonical Character root instance so the box, curves and bone overlays transform together.
+   v16.24 makes the Bones tools explicit. Add Dummy now creates and selects a directly manipulable Dummy and exits Add Bone mode. The Dummy can immediately be moved, scaled and rotated on the stage. No stage drag creates a bone until Add Bone is deliberately clicked. Add Bone then stays active for chain creation until another tool is chosen.
 
    v16.19 changes Part Dummies to box controls with direct move, scale and rotate handles. Part Dummies
    do not deform their own artwork, can be pin targets, and pass animated scale
@@ -57,7 +58,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.22";
+  var TOOL_VERSION = "16.24";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -919,10 +920,10 @@
         if(!rig)return;
         API.addDrawObject(object,"animate");
         state.lastStageSelectionIds=[object.id];
-        state.tab="bones";state.mode="add-bone";
+        state.tab="bones";state.mode="select";
         try{API.selectDrawObject(object);}catch(ignoreSelect){}
         renderAll();API.refreshUI();
-        notify("PNG loaded. Add bones, then Bind.",false);
+        notify("PNG loaded. Choose Add Bone or Add Dummy.",false);
       };
       image.onerror=function(){notify("PNG load failed.",true);};
       image.src=dataUrl;
@@ -983,10 +984,10 @@
       toStage.forEach(function(o){API.addDrawObject(o,"animate");});
       state.lastStageSelectionIds=working.map(function(o){return o.id;});
       try{API.selectDrawObject(working[0]);}catch(eSelect){}
-      state.tab="bones";state.mode="add-bone";renderAll();
+      state.tab="bones";state.mode="select";renderAll();
       API.refreshUI();
       var modeLabel=state.pointMode==="limb"?"Limb":(state.pointMode==="uniform"?"Uniform":"Selected points");
-      notify("Ingested "+working.length+" selected vector"+(working.length===1?"":"s")+" using "+modeLabel+". Drag to create the first bone; keep dragging to extend the chain.",false);
+      notify("Ingested "+working.length+" selected vector"+(working.length===1?"":"s")+" using "+modeLabel+". Choose Add Bone or Add Dummy.",false);
     }
   }
 
@@ -1340,14 +1341,17 @@
     rig.bones.push(bone);
     normaliseRigBones(rig);
     state.selectedBoneId=bone.id;
-    /* Stay in Bones/Add Bone so adding a Dummy never traps the user in Edit Bone. */
+    /* A Dummy is its own placement tool. Adding it must NEVER leave Add Bone armed.
+       The user positions/scales/rotates this box first, then explicitly chooses Add Bone. */
+    state.addPreview=null;
+    state.drag=null;
     state.tab="bones";
-    state.mode="add-bone";
+    state.mode="dummy-adjust";
     rebuildRigSkinData(rig);
     var characterPart=characterPartForRigId(rig.id);
     if(characterPart)syncCharacterPartRigRefs(characterPart);
     renderAll();API.refreshUI();
-    notify(bone.name+" added. Add Bone is still active: drag exactly where you want the next bone. The first Dummy is also the part-level move/rotate/scale controller in Animate.",false);
+    notify(bone.name+" added. Position it now: drag inside to move, drag a corner to scale, or drag the round handle to rotate. Click Add Bone only when you want to draw a bone.",false);
     return bone;
   }
 
@@ -1390,9 +1394,10 @@
         :"";
     }
 
-    state.mode=state.tab==="bones"
-      ?"add-bone"
-      :"select";
+    if(state.tab==="bones"){
+      var remainingSelected=selectedBone();
+      state.mode=remainingSelected&&isDummyBone(remainingSelected)?"dummy-adjust":"select";
+    }else state.mode="select";
 
     normaliseRigBones(rig);
 
@@ -1430,7 +1435,7 @@
     API.pushUndo();
     rig.bones=[];
     state.selectedBoneId="";
-    state.mode=state.tab==="bones"?"add-bone":"select";
+    state.mode="select";
     rigObjects(rig).forEach(function(o){o.demBones.weights=[];});
     renderAll();
     API.refreshUI();
@@ -4030,7 +4035,7 @@
     state.selectedCurveId="";
     state.characterAllBonesEdit=(nextTab==="bones"||nextTab==="editbone");
     state.tab=nextTab;
-    state.mode=nextTab==="bones"?"add-bone":"select";
+    state.mode="select";
     if(nextTab==="bones"||nextTab==="editbone")state.showEnvelopes=true;
     API.refreshUI();
     renderAll();
@@ -5358,7 +5363,7 @@
         });
 
         state.tab="bones";
-        state.mode="add-bone";
+        state.mode="select";
 
         renderAll();
         API.refreshUI();
@@ -5669,15 +5674,33 @@
       }
       var allHit=characterAllEditBoneHit(event);
       if(state.tab==="bones"){
+        /* Bone creation is explicit. Merely being on the Bones page cannot create a bone. */
+        if(state.mode==="add-bone"){
+          event.preventDefault();event.stopImmediatePropagation();
+          var addPart=(allHit&&!isDummyBone(allHit.bone))?allHit.part:partById(state.character.selectedPartId);
+          if(!addPart&&allHit)addPart=allHit.part;
+          if(!addPart||!addPart.rig){notify("Select a Character part before adding a bone.",true);return;}
+          focusCharacterPartCard(addPart);state.activeRig=addPart.rig;syncCharacterPartRigRefs(addPart);syncRigRefs(state.activeRig);
+          if(allHit&&!isDummyBone(allHit.bone))state.selectedBoneId=allHit.bone.id;
+          var addScenePoint=selectedScenePoint(event);
+          var addLocalPoint=currentScenePointToPartLocal(addPart,addScenePoint,currentTime());
+          var chainHit=allHit&&!isDummyBone(allHit.bone);
+          state.drag={kind:chainHit?"character-maybe-add":"character-add",pointerId:event.pointerId,part:addPart,startScene:addScenePoint,startLocal:addLocalPoint,currentLocal:clone(addLocalPoint)};
+          if(!chainHit)state.addPreview={characterPartId:addPart.id,head:clone(addLocalPoint),tail:clone(addLocalPoint)};
+          renderAll();API.refreshUI();return;
+        }
+
+        if(!allHit)return;
         event.preventDefault();event.stopImmediatePropagation();
-        var addPart=allHit?allHit.part:partById(state.character.selectedPartId);
-        if(!addPart||!addPart.rig){notify("Select a Character part before adding a bone.",true);return;}
-        focusCharacterPartCard(addPart);state.activeRig=addPart.rig;syncCharacterPartRigRefs(addPart);syncRigRefs(state.activeRig);
-        if(allHit)state.selectedBoneId=allHit.bone.id;
-        var addScenePoint=selectedScenePoint(event);
-        var addLocalPoint=currentScenePointToPartLocal(addPart,addScenePoint,currentTime());
-        state.drag={kind:allHit?"character-maybe-add":"character-add",pointerId:event.pointerId,part:addPart,startScene:addScenePoint,startLocal:addLocalPoint,currentLocal:clone(addLocalPoint)};
-        if(!allHit)state.addPreview={characterPartId:addPart.id,head:clone(addLocalPoint),tail:clone(addLocalPoint)};
+        focusCharacterPartCard(allHit.part);state.activeRig=allHit.part.rig;syncCharacterPartRigRefs(allHit.part);syncRigRefs(state.activeRig);state.selectedBoneId=allHit.bone.id;
+        if(isDummyBone(allHit.bone)){
+          state.mode="dummy-adjust";
+          API.pushUndo();
+          var dummyPoint=currentScenePointToPartLocal(allHit.part,selectedScenePoint(event),currentTime());
+          state.drag={kind:"character-edit-rest",pointerId:event.pointerId,part:allHit.part,bone:allHit.bone,parent:null,handle:allHit.handle,startPointer:dummyPoint,startHead:clone(allHit.bone.restHead),startTail:clone(allHit.bone.restTail),startParentTail:null};
+        }else{
+          state.mode="select";
+        }
         renderAll();API.refreshUI();return;
       }
       if(!allHit){event.preventDefault();event.stopImmediatePropagation();return;}
@@ -5706,8 +5729,29 @@
     }
     var hit=boneHit(event);
     if(state.tab==="bones"){
-      if(hit){event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;state.mode="add-bone";state.drag={kind:"maybe-add",pointerId:event.pointerId,start:point,current:point};renderAll();return;}
-      if(state.mode!=="add-bone")return;event.preventDefault();event.stopImmediatePropagation();state.addPreview={head:point,tail:point};state.drag={kind:"add",pointerId:event.pointerId,start:point,current:point};return;
+      /* Add Bone is a deliberate tool. Until that button is clicked, stage drags
+         select/manipulate controls but can never create skeletal geometry. */
+      if(state.mode==="add-bone"){
+        event.preventDefault();event.stopImmediatePropagation();
+        if(hit&&!isDummyBone(hit.bone)){
+          state.selectedBoneId=hit.bone.id;
+          state.drag={kind:"maybe-add",pointerId:event.pointerId,start:point,current:point};
+        }else{
+          state.addPreview={head:clone(point),tail:clone(point)};
+          state.drag={kind:"add",pointerId:event.pointerId,start:point,current:point};
+        }
+        renderAll();return;
+      }
+      if(!hit)return;
+      event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;
+      if(isDummyBone(hit.bone)){
+        state.mode="dummy-adjust";
+        API.pushUndo();
+        state.drag={kind:"edit-rest",pointerId:event.pointerId,bone:hit.bone,parent:null,handle:hit.handle,startPointer:point,startHead:clone(hit.bone.restHead),startTail:clone(hit.bone.restTail),startParentTail:null};
+      }else{
+        state.mode="select";
+      }
+      renderAll();return;
     }
     if(!hit){if(state.tab==="editbone"||state.tab==="animate"){event.preventDefault();event.stopImmediatePropagation();}return;}
     event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;
@@ -5856,7 +5900,11 @@
     else if(finished.kind==="closed-active-rig-bone"){syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();}
     else if(finished.kind==="character-dummy-transform"){ensureCharacterDummyKeyFromCurrent();syncAllCharacterRigRefs();API.refreshUI();}
     state.drag=null;state.addPreview=null;
-    if(state.open){state.mode=state.tab==="bones"?"add-bone":"select";if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());renderAll();}
+    if(state.open){
+      if(state.tab!=="bones")state.mode="select";
+      if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());
+      renderAll();
+    }
     else API.refreshUI();
   }
 
@@ -6266,7 +6314,7 @@
     var rig=state.activeRig;
     var hasBones=!!(rig&&rig.bones&&rig.bones.length);
     return '<div class="db-page active">'+
-      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone">Bone</option><option value="lip">Lip_Bone</option><option value="frame">Frame_Bone</option></select></div><div class="db-grid2"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-add-dummy>Add Dummy</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div></div>'+
+      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone">Bone</option><option value="lip">Lip_Bone</option><option value="frame">Frame_Bone</option></select></div><div class="db-grid2"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn'+(state.mode==='dummy-adjust'?' active':'')+'" data-db-add-dummy>Add Dummy</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div></div>'+
       envelopeDisplayHtml()+
       '<div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div>'+
       (hasBones?'<div class="db-section"><h3>Project Files</h3><button class="db-btn" style="width:100%" data-db-save-part>Save Part</button></div>':'')+
@@ -6297,7 +6345,7 @@
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. Add Dummy creates a box control and leaves Add Bone active. The first Dummy is the Part controller: in Animate, dragging inside moves the complete part, a corner scales its curves and bones together, and the round handle rotates them together. Dummies never steal skeletal chain snapping.</p><p class="db-help"><b>MyCharacter:</b> double-click the Character on stage to open all parts and all bones for editing. Every Character also has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> choose Add Dummy to create a box control, then position it immediately by dragging inside, scaling from a corner or rotating from the round handle. Add Dummy turns Add Bone OFF. A bone can only be drawn after you deliberately click Add Bone. The first Dummy is the Part controller: in Animate, dragging inside moves the complete part, a corner scales its curves and bones together, and the round handle rotates them together.</p><p class="db-help"><b>MyCharacter:</b> double-click the Character on stage to open all parts and all bones for editing. Every Character also has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   var boneCursorCache={};
@@ -6331,7 +6379,7 @@
   function bindPair(rangeSel,numSel,callback){var r=state.panel.querySelector(rangeSel),m=state.panel.querySelector(numSel);if(!r||!m)return;r.addEventListener('input',function(){m.value=r.value;callback&&callback(r.value);});m.addEventListener('input',function(){r.value=m.value;callback&&callback(m.value);});}
 
   function bindBodyEvents(){var p=state.panel;if(!p)return;
-    p.querySelectorAll('[data-db-use-selection]').forEach(function(b){b.onclick=useStageSelection;});p.querySelectorAll('[data-db-load-png]').forEach(function(b){b.onclick=function(){state.fileInputs.png.click();};});p.querySelectorAll('[data-db-step-jump]').forEach(function(step){step.onclick=function(){state.tab=step.getAttribute('data-db-step-jump')||'source';state.mode=state.tab==='bones'?'add-bone':'select';renderAll();};});p.querySelectorAll('[data-db-load-svg]').forEach(function(b){b.onclick=function(){state.fileInputs.svg.click();};});
+    p.querySelectorAll('[data-db-use-selection]').forEach(function(b){b.onclick=useStageSelection;});p.querySelectorAll('[data-db-load-png]').forEach(function(b){b.onclick=function(){state.fileInputs.png.click();};});p.querySelectorAll('[data-db-step-jump]').forEach(function(step){step.onclick=function(){state.tab=step.getAttribute('data-db-step-jump')||'source';state.mode='select';renderAll();};});p.querySelectorAll('[data-db-load-svg]').forEach(function(b){b.onclick=function(){state.fileInputs.svg.click();};});
     var svgQuality=p.querySelector('[data-db-svg-quality]');if(svgQuality)svgQuality.onchange=function(){state.svgQuality=svgQualityProfile(svgQuality.value).key;};
     var rem=p.querySelector('[data-db-remove-originals]');if(rem)rem.onchange=function(){state.removeOriginals=!!rem.checked;};
     p.querySelectorAll('[data-db-character-add-picker]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}state.character.addPickerOpen=!state.character.addPickerOpen;if(state.character.addPickerOpen)selectedAvailableBuildPartCandidate();renderAll();};});
@@ -6352,7 +6400,7 @@
     p.querySelectorAll('[data-db-clear-pin]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.adjustingPartId)finishPartPlacementAdjust(true);clearPartPin(partById(button.getAttribute('data-db-clear-pin')),false);renderAll();};});
     p.querySelectorAll('[data-db-part-up]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}movePart(partById(button.getAttribute('data-db-part-up')),-1);};});
     p.querySelectorAll('[data-db-part-down]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}movePart(partById(button.getAttribute('data-db-part-down')),1);};});
-    p.querySelectorAll('[data-db-bone-id]').forEach(function(row){row.onclick=function(event){if(event&&event.target&&event.target.closest('[data-db-delete-bone-id]'))return;state.selectedBoneId=row.getAttribute('data-db-bone-id');if(state.tab==='bones')state.mode='add-bone';renderAll();};});p.querySelectorAll('[data-db-delete-bone-id]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}deleteBoneById(button.getAttribute('data-db-delete-bone-id'));};});p.querySelectorAll('[data-db-add-bone]').forEach(function(b){b.onclick=function(){if(!state.activeRig){notify('Build or load a part first.',true);return;}state.mode='add-bone';renderAll();notify('Drag on the stage to create a bone. Keep dragging again to extend the chain.',false);};});p.querySelectorAll('[data-db-add-dummy]').forEach(function(b){b.onclick=function(){finishCharacterDummyControl();addDummyBone();};});p.querySelectorAll('[data-db-bind-rig]').forEach(function(b){b.onclick=bindRig;});p.querySelectorAll('[data-db-clear-bones]').forEach(function(b){b.onclick=clearBones;});p.querySelectorAll('[data-db-delete-bone]').forEach(function(b){b.onclick=deleteBone;});
+    p.querySelectorAll('[data-db-bone-id]').forEach(function(row){row.onclick=function(event){if(event&&event.target&&event.target.closest('[data-db-delete-bone-id]'))return;state.selectedBoneId=row.getAttribute('data-db-bone-id');if(state.tab==='bones'){var listedBone=selectedBone();state.mode=listedBone&&isDummyBone(listedBone)?'dummy-adjust':'select';}renderAll();};});p.querySelectorAll('[data-db-delete-bone-id]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}deleteBoneById(button.getAttribute('data-db-delete-bone-id'));};});p.querySelectorAll('[data-db-add-bone]').forEach(function(b){b.onclick=function(){if(!state.activeRig){notify('Build or load a part first.',true);return;}state.drag=null;state.addPreview=null;state.mode='add-bone';renderAll();notify('Add Bone active. Drag exactly where you want the bone. Keep dragging again to extend the chain.',false);};});p.querySelectorAll('[data-db-add-dummy]').forEach(function(b){b.onclick=function(){finishCharacterDummyControl();addDummyBone();};});p.querySelectorAll('[data-db-bind-rig]').forEach(function(b){b.onclick=bindRig;});p.querySelectorAll('[data-db-clear-bones]').forEach(function(b){b.onclick=clearBones;});p.querySelectorAll('[data-db-delete-bone]').forEach(function(b){b.onclick=deleteBone;});
     var editBoneSelect=p.querySelector('[data-db-edit-bone-select]');if(editBoneSelect)editBoneSelect.onchange=function(){state.selectedBoneId=editBoneSelect.value;renderAll();};
     var editBoneName=p.querySelector('[data-db-edit-bone-name]');if(editBoneName)editBoneName.onchange=function(){var b=selectedBone();if(!b)return;API.pushUndo();b.name=(editBoneName.value||b.name||'Bone').trim()||b.name||'Bone';renderAll();API.refreshUI();};
     var editBoneType=p.querySelector('[data-db-edit-bone-type]');if(editBoneType)editBoneType.onchange=function(){var b=selectedBone();if(!b)return;API.pushUndo();b.type=editBoneType.value||'bone';normaliseRigBones(state.activeRig);bindRig(false);renderAll();};
@@ -6376,7 +6424,7 @@
       if(selectedPart&&['bones','editbone'].indexOf(nextTab)>=0&&activateCharacterPartRigTab(selectedPart,nextTab))return;
       if(nextTab!=='editbone'&&nextTab!=='bones')state.characterAllBonesEdit=false;
       state.tab=nextTab;
-      state.mode=state.tab==='bones'?'add-bone':'select';
+      state.mode='select';
       if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}
       renderAll();
     };});
