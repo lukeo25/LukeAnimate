@@ -36,7 +36,7 @@
    picker opens with that exact rig selected. Loading never guesses by part
    name, and it does not silently add the file to the Character.
 
-   v16.18 adds Part Dummies and an automatic Character root Dummy. Part Dummies
+   v16.19 changes Part Dummies to box controls with direct move, scale and rotate handles. Part Dummies
    do not deform their own artwork, can be pin targets, and pass animated scale
    to pinned parts. The Character root Dummy is the Character Clip transform,
    so moving, rotating or scaling it affects every part and creates native keys.
@@ -52,7 +52,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.18";
+  var TOOL_VERSION = "16.19";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -2082,6 +2082,78 @@
     return records;
   }
 
+  function isDummyBone(bone){
+    return String(bone&&bone.type||'').toLowerCase()==='dummy';
+  }
+
+  function dummyBoxGeometry(head,tail,rotateOffset){
+    head=head||{x:0,y:0};tail=tail||{x:1,y:0};
+    var dx=n(tail.x,0)-n(head.x,0),dy=n(tail.y,0)-n(head.y,0);
+    var len=Math.max(.001,Math.hypot(dx,dy));
+    var ux=dx/len,uy=dy/len,vx=-uy,vy=ux;
+    var half=Math.max(6,len*.5);
+    var off=Math.max(0,n(rotateOffset,0));
+    function p(ax,ay){return{x:head.x+ux*ax+vx*ay,y:head.y+uy*ax+vy*ay};}
+    return{
+      center:{x:n(head.x,0),y:n(head.y,0)},ux:ux,uy:uy,vx:vx,vy:vy,half:half,length:len,
+      nw:p(-half,-half),ne:p(half,-half),se:p(half,half),sw:p(-half,half),
+      top:p(0,-half),rotate:p(0,-half-off)
+    };
+  }
+
+  function pointInsideDummyBox(point,geom,pad){
+    if(!point||!geom)return false;
+    pad=Math.max(0,n(pad,0));
+    var dx=point.x-geom.center.x,dy=point.y-geom.center.y;
+    var lx=dx*geom.ux+dy*geom.uy;
+    var ly=dx*geom.vx+dy*geom.vy;
+    return Math.abs(lx)<=geom.half+pad&&Math.abs(ly)<=geom.half+pad;
+  }
+
+  function dummyBoxHit(point,bone,q,selected,pixelUnit){
+    if(!isDummyBone(bone)||!q)return null;
+    pixelUnit=typeof pixelUnit==='function'?pixelUnit:function(v){return v;};
+    var geom=dummyBoxGeometry(q.head,q.tail,pixelUnit(28));
+    var threshold=pixelUnit(11),best=null;
+    if(selected){
+      [
+        {handle:'dummy-scale-nw',p:geom.nw},
+        {handle:'dummy-scale-ne',p:geom.ne},
+        {handle:'dummy-scale-se',p:geom.se},
+        {handle:'dummy-scale-sw',p:geom.sw},
+        {handle:'dummy-rotate',p:geom.rotate}
+      ].forEach(function(item){
+        var d=Math.hypot(point.x-item.p.x,point.y-item.p.y);
+        if(d<=threshold&&(!best||d<best.distance))best={bone:bone,handle:item.handle,point:point,distance:d,geometry:geom};
+      });
+      if(best)return best;
+    }
+    if(pointInsideDummyBox(point,geom,pixelUnit(5))){
+      return{bone:bone,handle:'dummy-move',point:point,distance:0,geometry:geom};
+    }
+    return null;
+  }
+
+  function drawDummyBoxPixels(ctx,head,tail,selected,label){
+    var geom=dummyBoxGeometry(head,tail,26);
+    ctx.save();
+    ctx.strokeStyle=selected?'#0e9c86':'rgba(79,127,138,.92)';
+    ctx.fillStyle=selected?'rgba(14,156,134,.08)':'rgba(255,255,255,.05)';
+    ctx.lineWidth=selected?2.5:2;
+    ctx.setLineDash(selected?[]:[6,4]);
+    ctx.beginPath();ctx.moveTo(geom.nw.x,geom.nw.y);ctx.lineTo(geom.ne.x,geom.ne.y);ctx.lineTo(geom.se.x,geom.se.y);ctx.lineTo(geom.sw.x,geom.sw.y);ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();ctx.moveTo(geom.center.x-8,geom.center.y);ctx.lineTo(geom.center.x+8,geom.center.y);ctx.moveTo(geom.center.x,geom.center.y-8);ctx.lineTo(geom.center.x,geom.center.y+8);ctx.stroke();
+    if(selected){
+      ctx.fillStyle='#ffffff';ctx.strokeStyle='#0e9c86';ctx.lineWidth=2;
+      [geom.nw,geom.ne,geom.se,geom.sw].forEach(function(p){ctx.beginPath();ctx.rect(p.x-5,p.y-5,10,10);ctx.fill();ctx.stroke();});
+      ctx.beginPath();ctx.moveTo(geom.top.x,geom.top.y);ctx.lineTo(geom.rotate.x,geom.rotate.y);ctx.stroke();
+      ctx.beginPath();ctx.arc(geom.rotate.x,geom.rotate.y,6,0,Math.PI*2);ctx.fill();ctx.stroke();
+    }
+    ctx.fillStyle='#26303b';ctx.font='11px Arial';ctx.fillText(label||'Dummy',geom.ne.x+7,geom.ne.y-6);
+    ctx.restore();
+  }
+
   function characterAllEditBoneHit(event){
     var point=eventStagePoint(event);
     var nodeThreshold=stagePixelsFromClient(14);
@@ -2090,6 +2162,12 @@
     characterRestBoneDisplayRecords(currentTime()).forEach(function(record){
       var head=stagePointFromScene(record.head);
       var tail=stagePointFromScene(record.tail);
+      var selected=!!(state.activeRig===record.part.rig&&String(state.selectedBoneId)===String(record.bone.id));
+      if(isDummyBone(record.bone)){
+        var dh=dummyBoxHit(point,record.bone,{head:head,tail:tail},selected,function(v){return stagePixelsFromClient(v);});
+        if(dh&&(!best||dh.distance<best.distance))best={part:record.part,bone:record.bone,handle:dh.handle,head:record.head,tail:record.tail,distance:dh.distance};
+        return;
+      }
       var headDistance=Math.hypot(point.x-head.x,point.y-head.y);
       var tailDistance=Math.hypot(point.x-tail.x,point.y-tail.y);
       var lineDistance=distancePointToSegment(point,head,tail);
@@ -2233,6 +2311,7 @@
     records.forEach(function(record){
       var head=stagePointFromScene(record.head),tail=stagePointFromScene(record.tail);
       var selected=!!(state.activeRig===record.part.rig&&String(state.selectedBoneId)===String(record.bone.id));
+      if(isDummyBone(record.bone)){drawDummyBoxPixels(ctx,head,tail,selected,record.bone.name||'Dummy');return;}
       ctx.lineWidth=selected?5:3;
       ctx.strokeStyle=selected?"#0e9c86":"rgba(14,156,134,.88)";
       ctx.beginPath();ctx.moveTo(head.x,head.y);ctx.lineTo(tail.x,tail.y);ctx.stroke();
@@ -2292,6 +2371,8 @@
         !state.open&&Number(state.closedBonePartId)===Number(record.part.id)&&String(state.closedBoneId)===String(record.bone.id)
       ));
 
+      if(isDummyBone(record.bone)){drawDummyBoxPixels(ctx,head,tail,selected,record.bone.name||'Dummy');return;}
+
       ctx.lineWidth=selected?5:3;
       ctx.strokeStyle=selected
         ?"#0e9c86"
@@ -2347,6 +2428,12 @@
     var point=selectedScenePoint(event);
     var nodeThreshold=scenePixels(14),lineThreshold=scenePixels(9),best=null;
     characterBoneDisplayRecords(currentTime()).forEach(function(record){
+      var selected=!!((state.open&&state.activeRig===record.part.rig&&String(state.selectedBoneId)===String(record.bone.id))||(!state.open&&Number(state.closedBonePartId)===Number(record.part.id)&&String(state.closedBoneId)===String(record.bone.id)));
+      if(isDummyBone(record.bone)){
+        var dh=dummyBoxHit(point,record.bone,{head:record.head,tail:record.tail},selected,scenePixels);
+        if(dh&&(!best||dh.distance<best.distance))best={part:record.part,bone:record.bone,handle:dh.handle,head:record.head,tail:record.tail,distance:dh.distance};
+        return;
+      }
       var headDistance=Math.hypot(point.x-record.head.x,point.y-record.head.y);
       var tailDistance=Math.hypot(point.x-record.tail.x,point.y-record.tail.y);
       var lineDistance=distancePointToSegment(point,record.head,record.tail);
@@ -2416,12 +2503,22 @@
     if(state.closedBoneId){
       var selected=(rig.bones||[]).filter(function(b){return String(b.id)===String(state.closedBoneId);})[0],sq=selected&&map[selected.id];
       if(selected&&sq){
-        var hd=Math.hypot(p.x-sq.head.x,p.y-sq.head.y),td=Math.hypot(p.x-sq.tail.x,p.y-sq.tail.y);
-        if(Math.min(hd,td)<bestD)return{bone:selected,handle:hd<=td?"head":"tail",point:p,distance:Math.min(hd,td)};
+        if(isDummyBone(selected)){
+          var dh=dummyBoxHit(p,selected,sq,true,scenePixels);if(dh)return dh;
+        }else{
+          var hd=Math.hypot(p.x-sq.head.x,p.y-sq.head.y),td=Math.hypot(p.x-sq.tail.x,p.y-sq.tail.y);
+          if(Math.min(hd,td)<bestD)return{bone:selected,handle:hd<=td?"head":"tail",point:p,distance:Math.min(hd,td)};
+        }
       }
     }
     (rig.bones||[]).forEach(function(b){
       var q=map[b.id];if(!q)return;
+      if(isDummyBone(b)){
+        var selected=String(b.id)===String(state.closedBoneId);
+        var dh=dummyBoxHit(p,b,q,selected,scenePixels);
+        if(dh&&(!best||dh.distance<best.distance))best=dh;
+        return;
+      }
       [["head",q.head],["tail",q.tail]].forEach(function(pair){var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);if(d<bestD&&(!best||d<best.distance))best={bone:b,handle:pair[0],point:p,distance:d};});
       var ld=distancePointToSegment(p,q.head,q.tail);if(ld<lineD&&(!best||ld<best.distance-scenePixels(2)))best={bone:b,handle:"line",point:p,distance:ld};
     });
@@ -4613,6 +4710,15 @@
         var display=characterBoneRecordDisplayPoints(record,currentTime());
         if(!display)return;
 
+        if(isDummyBone(record.bone)){
+          var dg=dummyBoxGeometry(display.head,display.tail,0);
+          if(pointInsideDummyBox(point,dg,stagePixelsFromClient(5))){
+            var centreDistance=Math.hypot(point.x-dg.center.x,point.y-dg.center.y);
+            if(!best||centreDistance<best.distance)best={target:target,bone:record.bone,attachPoint:'head',distance:centreDistance};
+          }
+          return;
+        }
+
         [["head",display.head],["tail",display.tail]].forEach(function(pair){
           var distance=Math.hypot(
             point.x-pair[1].x,
@@ -4672,6 +4778,11 @@
         if(!display)return;
         var head=display.head;
         var tail=display.tail;
+
+        if(isDummyBone(record.bone)){
+          drawDummyBoxPixels(ctx,head,tail,true,target.name+' / '+(record.bone.name||'Dummy'));
+          return;
+        }
 
         ctx.lineWidth=4;
         ctx.strokeStyle="#e7b72f";
@@ -5035,12 +5146,19 @@
     if(state.selectedBoneId&&(state.tab==="editbone"||state.tab==="animate")){
       var selected=boneById(state.selectedBoneId),sq=selected&&map[selected.id];
       if(selected&&sq){
-        var own=[];own.push({bone:selected,handle:"head",distance:Math.hypot(p.x-sq.head.x,p.y-sq.head.y)});own.push({bone:selected,handle:"tail",distance:Math.hypot(p.x-sq.tail.x,p.y-sq.tail.y)});
-        own.sort(function(a,b){return a.distance-b.distance;});if(own[0].distance<bestD)return Object.assign({point:p},own[0]);
+        if(isDummyBone(selected)){
+          var dummySelectedHit=dummyBoxHit(p,selected,sq,true,scenePixels);if(dummySelectedHit)return dummySelectedHit;
+        }else{
+          var own=[];own.push({bone:selected,handle:"head",distance:Math.hypot(p.x-sq.head.x,p.y-sq.head.y)});own.push({bone:selected,handle:"tail",distance:Math.hypot(p.x-sq.tail.x,p.y-sq.tail.y)});
+          own.sort(function(a,b){return a.distance-b.distance;});if(own[0].distance<bestD)return Object.assign({point:p},own[0]);
+        }
       }
     }
     (rig.bones||[]).forEach(function(b){
       var q=map[b.id];if(!q)return;
+      if(isDummyBone(b)){
+        var dh=dummyBoxHit(p,b,q,String(b.id)===String(state.selectedBoneId),scenePixels);if(dh&&(!best||dh.distance<best.distance))best=dh;return;
+      }
       [["head",q.head],["tail",q.tail]].forEach(function(pair){var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);if(d<bestD&&(!best||d<best.distance))best={bone:b,handle:pair[0],point:p,distance:d};});
       var ld=distancePointToSegment(p,q.head,q.tail);if(ld<lineD&&(!best||ld<best.distance-scenePixels(2)))best={bone:b,handle:"line",point:p,distance:ld};
     });
@@ -5083,12 +5201,19 @@
 
   function updateAnimatedBoneDrag(drag,pointer){
     var key=drag.key,startPose=drag.startPose,bone=drag.bone,startTransform=drag.startTransform;
-    var isDummy=String(bone&&bone.type||'').toLowerCase()==='dummy';
-    if(isDummy&&drag.handle==='tail'){
-      var dx=pointer.x-startTransform.head.x,dy=pointer.y-startTransform.head.y;var desired=Math.atan2(dy,dx),delta=(desired-startTransform.angle)*180/Math.PI;while(delta>180)delta-=360;while(delta<-180)delta+=360;
-      key.rotation=round3(n(startPose.rotation,0)+delta);key.scale=round3(Math.max(.01,n(startPose.scale,1)*(Math.hypot(dx,dy)/Math.max(.001,n(startTransform.length,1)))));if(bone.parentId){key.dx=0;key.dy=0;}return;
+    var isDummy=isDummyBone(bone);
+    if(isDummy&&drag.handle==='dummy-rotate'){
+      var rdx=pointer.x-startTransform.head.x,rdy=pointer.y-startTransform.head.y;
+      var desiredBoxAngle=Math.atan2(rdy,rdx)+Math.PI/2;
+      var deltaRotate=(desiredBoxAngle-startTransform.angle)*180/Math.PI;while(deltaRotate>180)deltaRotate-=360;while(deltaRotate<-180)deltaRotate+=360;
+      key.rotation=round3(n(startPose.rotation,0)+deltaRotate);if(bone.parentId){key.dx=0;key.dy=0;}return;
     }
-    if(isDummy&&(drag.handle==='head'||drag.handle==='line')&&!bone.parentId){key.dx=round3(n(startPose.dx,0)+(pointer.x-drag.startPointer.x));key.dy=round3(n(startPose.dy,0)+(pointer.y-drag.startPointer.y));return;}
+    if(isDummy&&String(drag.handle||'').indexOf('dummy-scale-')===0){
+      var sdx=pointer.x-startTransform.head.x,sdy=pointer.y-startTransform.head.y;
+      var newLength=Math.max(.01,(Math.hypot(sdx,sdy)*2)/Math.sqrt(2));
+      key.scale=round3(Math.max(.01,n(startPose.scale,1)*(newLength/Math.max(.001,n(startTransform.length,1)))));if(bone.parentId){key.dx=0;key.dy=0;}return;
+    }
+    if(isDummy&&(drag.handle==='dummy-move'||drag.handle==='head'||drag.handle==='line')&&!bone.parentId){key.dx=round3(n(startPose.dx,0)+(pointer.x-drag.startPointer.x));key.dy=round3(n(startPose.dy,0)+(pointer.y-drag.startPointer.y));return;}
     if(drag.handle==='tail'||bone.parentId||drag.handle==='line'){var desired2=Math.atan2(pointer.y-startTransform.head.y,pointer.x-startTransform.head.x),delta2=(desired2-startTransform.angle)*180/Math.PI;while(delta2>180)delta2-=360;while(delta2<-180)delta2+=360;key.rotation=round3(n(startPose.rotation,0)+delta2);if(bone.parentId){key.dx=0;key.dy=0;}}else{key.dx=round3(n(startPose.dx,0)+(pointer.x-drag.startPointer.x));key.dy=round3(n(startPose.dy,0)+(pointer.y-drag.startPointer.y));}
   }
 
@@ -5253,7 +5378,16 @@
       var localNow=currentScenePointToPartLocal(state.drag.part,p,currentTime());
       var cb=state.drag.bone,cdx=localNow.x-state.drag.startPointer.x,cdy=localNow.y-state.drag.startPointer.y;
       state.activeRig=state.drag.part.rig;state.character.selectedPartId=state.drag.part.id;state.selectedBoneId=cb.id;
-      if(state.drag.handle==="tail"){
+      if(isDummyBone(cb)&&state.drag.handle==='dummy-rotate'){
+        var cra=Math.atan2(localNow.y-state.drag.startHead.y,localNow.x-state.drag.startHead.x)+Math.PI/2;
+        cb.restAngle=cra;cb.restTail={x:round3(cb.restHead.x+Math.cos(cra)*cb.restLength),y:round3(cb.restHead.y+Math.sin(cra)*cb.restLength)};
+      }else if(isDummyBone(cb)&&String(state.drag.handle||'').indexOf('dummy-scale-')===0){
+        var crLen=Math.max(12,(Math.hypot(localNow.x-state.drag.startHead.x,localNow.y-state.drag.startHead.y)*2)/Math.sqrt(2));
+        cb.restLength=round3(crLen);cb.restTail={x:round3(cb.restHead.x+Math.cos(cb.restAngle)*crLen),y:round3(cb.restHead.y+Math.sin(cb.restAngle)*crLen)};
+      }else if(isDummyBone(cb)&&state.drag.handle==='dummy-move'){
+        cb.restHead={x:round3(state.drag.startHead.x+cdx),y:round3(state.drag.startHead.y+cdy)};
+        cb.restTail={x:round3(state.drag.startTail.x+cdx),y:round3(state.drag.startTail.y+cdy)};
+      }else if(state.drag.handle==="tail"){
         cb.restTail={x:round3(localNow.x),y:round3(localNow.y)};
       }else{
         cb.restHead={x:round3(state.drag.startHead.x+cdx),y:round3(state.drag.startHead.y+cdy)};
@@ -5276,7 +5410,16 @@
     }
     if(state.drag.kind==="edit-rest"){
       var b=state.drag.bone,dx=p.x-state.drag.startPointer.x,dy=p.y-state.drag.startPointer.y;
-      if(state.drag.handle==="tail"){
+      if(isDummyBone(b)&&state.drag.handle==='dummy-rotate'){
+        var dra=Math.atan2(p.y-state.drag.startHead.y,p.x-state.drag.startHead.x)+Math.PI/2;
+        b.restAngle=dra;b.restTail={x:round3(b.restHead.x+Math.cos(dra)*b.restLength),y:round3(b.restHead.y+Math.sin(dra)*b.restLength)};
+      }else if(isDummyBone(b)&&String(state.drag.handle||'').indexOf('dummy-scale-')===0){
+        var drLen=Math.max(12,(Math.hypot(p.x-state.drag.startHead.x,p.y-state.drag.startHead.y)*2)/Math.sqrt(2));
+        b.restLength=round3(drLen);b.restTail={x:round3(b.restHead.x+Math.cos(b.restAngle)*drLen),y:round3(b.restHead.y+Math.sin(b.restAngle)*drLen)};
+      }else if(isDummyBone(b)&&state.drag.handle==='dummy-move'){
+        b.restHead={x:round3(state.drag.startHead.x+dx),y:round3(state.drag.startHead.y+dy)};
+        b.restTail={x:round3(state.drag.startTail.x+dx),y:round3(state.drag.startTail.y+dy)};
+      }else if(state.drag.handle==="tail"){
         b.restTail={x:round3(p.x),y:round3(p.y)};
       }else{
         b.restHead={x:round3(state.drag.startHead.x+dx),y:round3(state.drag.startHead.y+dy)};
@@ -5423,9 +5566,8 @@
 
     ctx.save();
 
-    if(String(bone&&bone.type||'').toLowerCase()==='dummy'){
-      ctx.lineWidth=selected?4:3;ctx.setLineDash([6,4]);ctx.strokeStyle=selected?"#0e9c86":"#4f7f8a";ctx.beginPath();ctx.moveTo(h.x,h.y);ctx.lineTo(t.x,t.y);ctx.stroke();ctx.setLineDash([]);
-      ctx.fillStyle=selected?"#0e9c86":"#ffffff";ctx.strokeStyle="#0b6658";ctx.lineWidth=2;ctx.beginPath();ctx.rect(h.x-7,h.y-7,14,14);ctx.fill();ctx.stroke();ctx.beginPath();ctx.arc(t.x,t.y,7,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.beginPath();ctx.moveTo(h.x-11,h.y);ctx.lineTo(h.x+11,h.y);ctx.moveTo(h.x,h.y-11);ctx.lineTo(h.x,h.y+11);ctx.stroke();ctx.fillStyle="#26303b";ctx.font="11px Arial";ctx.fillText(bone.name||"Dummy",(h.x+t.x)/2+6,(h.y+t.y)/2-6);ctx.restore();return;
+    if(isDummyBone(bone)){
+      ctx.restore();drawDummyBoxPixels(ctx,h,t,selected,bone.name||'Dummy');return;
     }
 
     ctx.lineWidth=selected?5:3;
@@ -5459,12 +5601,12 @@
   }
 
   function drawCharacterRootDummy(ctx){
-    if(!state.character.rootClipId||!state.character.parts.length)return;
-    var editing=typeof API.getEditingClipId==='function'?API.getEditingClipId():null;if(editing)return;
-    if(!(state.characterDummyActive||(state.open&&state.tab==='character')))return;
-    var transform=characterDummyTransform();if(!transform)return;
-    var p=stagePointFromScene({x:transform.x,y:transform.y});
-    ctx.save();ctx.strokeStyle=state.characterDummyActive?'#0e9c86':'rgba(14,156,134,.72)';ctx.fillStyle='rgba(255,255,255,.92)';ctx.lineWidth=2;ctx.beginPath();ctx.rect(p.x-9,p.y-9,18,18);ctx.fill();ctx.stroke();ctx.beginPath();ctx.moveTo(p.x-15,p.y);ctx.lineTo(p.x+15,p.y);ctx.moveTo(p.x,p.y-15);ctx.lineTo(p.x,p.y+15);ctx.stroke();ctx.fillStyle='#26303b';ctx.font='10px Arial';ctx.fillText('Character Dummy',p.x+13,p.y-11);ctx.restore();
+    /*
+      The Character Dummy is the real Character Clip instance. Do not draw a
+      second cross/marker over it: selecting Character Dummy uses Luke Animate's
+      normal object bounding box with scale and rotate handles.
+    */
+    return;
   }
 
   function overlayRenderer(ctx){
@@ -5741,7 +5883,7 @@
         '<div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option><option value="dummy"'+(b.type==='dummy'?' selected':'')+'>Dummy</option></select></div>'+
         '<div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div>'+
         (String(b.type||'').toLowerCase()==='dummy'?'':'<div class="db-row"><label>Strength</label><input type="number" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength-num></div>')+
-        '<div class="db-help">'+(String(b.type||'').toLowerCase()==='dummy'?'Drag to place it. Animate: drag its end to rotate and scale.':'Drag the bone, its end points, or envelope handles directly on the stage.')+'</div>'+
+        '<div class="db-help">'+(String(b.type||'').toLowerCase()==='dummy'?'Drag inside the box to move. Drag a corner to scale. Drag the round handle above the box to rotate.':'Drag the bone, its end points, or envelope handles directly on the stage.')+'</div>'+
         '<button class="db-btn danger" style="width:100%;margin-top:8px" data-db-delete-bone>Delete Bone</button>':
         '<div class="db-empty">Select a bone.</div>')+
       '</div>'+envelopeDisplayHtml()+'</div>';
@@ -5754,7 +5896,7 @@
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. Add Dummy creates a non-deforming pin/scale control.</p><p class="db-help"><b>MyCharacter:</b> every Character has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. Add Dummy creates a non-deforming box control: drag inside to move, corners to scale, and the round handle to rotate.</p><p class="db-help"><b>MyCharacter:</b> every Character has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   var boneCursorCache={};
