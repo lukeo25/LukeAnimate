@@ -1,4 +1,3 @@
-
 <!-- LukeAnimate GPT v172: image/text layer timing parity. Image, video and text drawing layers now expose explicit timeline start-trim, end-trim and whole-block move controls plus fade-in/fade-out transparency handles. Layer fades multiply the object's normal/keyframed opacity during preview and WebM export, and persist with canonical Wick drawing frames. Existing object keyframes, layer exposure, rig-aware off-stage proxies and WebM stage cropping are preserved. -->
 <!-- LukeAnimate GPT v171: rig-aware off-stage proxies. DemBones curves that share one rigId now produce one combined editor-only proxy bounding box for the whole rig instead of one box per curve. StickRig parts resolve to one containing StickRig/root proxy while editing that rig Clip, while top-level StickRig roots remain one proxy each. Dragging a rig proxy moves every represented member through the existing transform/Auto-Keyframe system; manual + Keyframe writes a transform key to every represented member. Proxy boxes remain editor-only and never enter WebM capture. -->
 <!-- LukeAnimate GPT v169: nested Clip rulers are true editing-viewport rulers. While editing a Clip, the horizontal ruler is fixed immediately below the top toolbar from the left ruler strip to the sidebar edge, the vertical ruler is fixed against the far-left workspace edge down to the timeline, and the corner sits at their intersection. Tick values continue to follow Clip coordinates while panning/scrolling. Main-stage ruler layout remains unchanged. -->
@@ -9,7 +8,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v178</title>
+<title>Luke Animate v180</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3120,7 +3119,8 @@ ctx.fill();</textarea>
     </div>
     <span id="time-readout">0.0s / 6.0s</span>
     <span class="transport-sep"></span>
-    <label class="transport-field">Duration<input type="number" id="inp-timelineduration" value="6" min="1" max="120" step="0.5"></label>
+    <label class="transport-field">Frames<input type="number" id="inp-timelineframes" value="180" min="1" max="20000" step="1"></label>
+    <label class="transport-field">Duration<input type="number" id="inp-timelineduration" value="6" min="0.01" max="120" step="0.01"></label>
     <label class="toggle-line transport-field"><input type="checkbox" id="chk-looptimeline" checked> Loop</label>
     <span class="transport-sep"></span>
     <label class="btn small" for="inp-audiofile" style="cursor:pointer;">Load Audio…</label>
@@ -3179,6 +3179,7 @@ ctx.fill();</textarea>
   let pathLen = 0;
 
   let playing = false; // start paused at 0 seconds
+  // v180 playback uses uncapped wall-clock delta so heavy rigs do not run in slow motion.
   let t = 0;              // animation time (seconds)
   let lastFrame = performance.now();
 
@@ -3301,7 +3302,7 @@ ctx.fill();</textarea>
   let behaviourCounter = 0;
   let editingBehaviourId = null;
   let trailFade = 0;          // global canvas-wide motion trail (0-95)
-  let timelineDuration = 6;   // seconds — shared with the recording duration
+  let timelineDuration = 6;   // seconds; v179 transport keeps this equal to totalFrames / FPS
   let timelineFramePixelWidth = 12; // compact default; user-adjustable in the timeline
   let loopTimeline = true;
   let audioLoaded = false;
@@ -4861,6 +4862,8 @@ ctx.fill();</textarea>
     document.getElementById('val-trailfade').textContent = trailFade;
     document.getElementById('inp-timelineduration').value = timelineDuration;
     document.getElementById('inp-duration').value = timelineDuration;
+    syncTimelineFrameCountDisplay();
+    syncTimelineFrameCountDisplay();
     document.getElementById('chk-looptimeline').checked = loopTimeline;
     setOnionSkin(snap.onionSkinEnabled !== undefined ? !!snap.onionSkinEnabled : onionSkinEnabled);
     updateOnionRangeUI();
@@ -11667,18 +11670,9 @@ ctx.fill();</textarea>
     ensureTimelineFrameCount(frameCount, options){
       const settings = options && typeof options === 'object' ? options : {};
       const requestedCount = Math.max(1, Math.round(Number(frameCount) || 1));
-      const requiredDuration = requestedCount / Math.max(1, this.fps);
-      if(requiredDuration <= timelineDuration + 1e-9) return getTimelineFrameInfo().frameCount;
-      if(settings.pushUndo !== false) pushUndo();
-      timelineDuration = Math.max(0.5, requiredDuration);
-      normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
-      Object.values(clips).forEach(ensureClipSceneFrames);
-      t = Math.min(t, timelineDuration);
-      syncActiveSceneFrameForTime(t, false);
-      const timelineDurationInput = document.getElementById('inp-timelineduration');
-      const exportDurationInput = document.getElementById('inp-duration');
-      if(timelineDurationInput) timelineDurationInput.value = String(timelineDuration);
-      if(exportDurationInput) exportDurationInput.value = String(timelineDuration);
+      const currentCount = getTimelineFrameInfo().frameCount;
+      if(requestedCount <= currentCount) return currentCount;
+      setTimelineFrameCount(requestedCount, settings.pushUndo !== false);
       if(settings.refresh !== false) this.refreshUI();
       return getTimelineFrameInfo().frameCount;
     },
@@ -14346,6 +14340,44 @@ ctx.fill();</textarea>
     return Math.max(1, parseInt(document.getElementById('inp-fps').value, 10) || 30);
   }
 
+  function getTimelineFrameCount(){
+    const framesInput = document.getElementById('inp-timelineframes');
+    if(framesInput){
+      const value = Math.round(Number(framesInput.value));
+      if(Number.isFinite(value) && value >= 1) return value;
+    }
+    return Math.max(1, Math.round(timelineDuration * getTimelineFPS()));
+  }
+
+  function syncTimelineFrameCountDisplay(){
+    const framesInput = document.getElementById('inp-timelineframes');
+    if(framesInput){
+      framesInput.value = String(Math.max(1, Math.round(timelineDuration * getTimelineFPS())));
+    }
+  }
+
+  function setTimelineFrameCount(frameCount, pushHistory = true){
+    const frames = Math.max(1, Math.round(Number(frameCount) || 1));
+    if(pushHistory) pushUndo();
+    timelineDuration = frames / getTimelineFPS();
+    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    Object.values(clips).forEach(ensureClipSceneFrames);
+    t = Math.min(t, timelineDuration);
+    syncActiveSceneFrameForTime(t, false);
+
+    const timelineDurationInput = document.getElementById('inp-timelineduration');
+    const exportDurationInput = document.getElementById('inp-duration');
+    const framesInput = document.getElementById('inp-timelineframes');
+
+    if(timelineDurationInput) timelineDurationInput.value = String(Number(timelineDuration.toFixed(6)));
+    if(exportDurationInput) exportDurationInput.value = String(Number(timelineDuration.toFixed(6)));
+    if(framesInput) framesInput.value = String(frames);
+
+    renderTimeline();
+    updateOnionRangeUI();
+    return frames;
+  }
+
   function getTimelineFrameInfo(){
     const fps = getTimelineFPS();
     const frameCount = Math.max(1, Math.round(timelineDuration * fps));
@@ -14931,6 +14963,7 @@ ctx.fill();</textarea>
   }
 
   function renderTimeline(){
+    syncTimelineFrameCountDisplay();
     renderFrameRuler();
     updateOnionRangeUI();
     const tracksEl = document.getElementById('timeline-tracks');
@@ -15192,28 +15225,42 @@ ctx.fill();</textarea>
   document.getElementById('onion-range-before-handle').addEventListener('mousedown', e=> beginOnionRangeDrag(e, 'before'));
   document.getElementById('onion-range-after-handle').addEventListener('mousedown', e=> beginOnionRangeDrag(e, 'after'));
   document.getElementById('inp-fps').addEventListener('change', ()=>{
-    normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
-    Object.values(clips).forEach(ensureClipSceneFrames);
-    syncActiveSceneFrameForTime(t, false);
-    renderTimeline();
-    updateOnionRangeUI();
+    // Frame count is canonical. Changing FPS changes how long those frames take.
+    // Example: 30 frames at 30 fps = exactly 1 second.
+    const framesInput = document.getElementById('inp-timelineframes');
+    const preservedFrames = framesInput
+      ? Math.max(1, Math.round(Number(framesInput.value) || 1))
+      : Math.max(1, Math.round(timelineDuration * getTimelineFPS()));
+    setTimelineFrameCount(preservedFrames, false);
   });
   window.addEventListener('resize', renderTimeline);
 
   function syncTimelineDuration(newDuration){
     pushUndo();
-    timelineDuration = Math.max(0.5, newDuration || 6);
+    const fps = getTimelineFPS();
+    timelineDuration = Math.max(1 / fps, Number(newDuration) || (1 / fps));
+    // Snap duration to an exact whole number of frames so playback can never
+    // drift into a partial frame.
+    const frames = Math.max(1, Math.round(timelineDuration * fps));
+    timelineDuration = frames / fps;
     normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    Object.values(clips).forEach(ensureClipSceneFrames);
     syncActiveSceneFrameForTime(Math.min(t, timelineDuration), false);
-    document.getElementById('inp-timelineduration').value = timelineDuration;
-    document.getElementById('inp-duration').value = timelineDuration;
+    document.getElementById('inp-timelineduration').value = String(Number(timelineDuration.toFixed(6)));
+    document.getElementById('inp-duration').value = String(Number(timelineDuration.toFixed(6)));
+    const framesInput = document.getElementById('inp-timelineframes');
+    if(framesInput) framesInput.value = String(frames);
     renderTimeline();
+    updateOnionRangeUI();
   }
   document.getElementById('inp-timelineduration').addEventListener('change', (e)=>{
     syncTimelineDuration(parseFloat(e.target.value));
   });
   document.getElementById('inp-duration').addEventListener('change', (e)=>{
     syncTimelineDuration(parseFloat(e.target.value));
+  });
+  document.getElementById('inp-timelineframes').addEventListener('change', (e)=>{
+    setTimelineFrameCount(parseInt(e.target.value, 10), true);
   });
   document.getElementById('chk-looptimeline').addEventListener('change', (e)=>{
     pushUndo();
@@ -17223,7 +17270,14 @@ ctx.fill();</textarea>
 
   // ---------------- main render loop ----------------
   function render(now){
-    const dt = Math.min(0.05, (now - lastFrame)/1000);
+    // v180: playback time must follow REAL elapsed time, not renderer speed.
+    // The previous 0.05 second cap caused slow-motion whenever a heavy SVG /
+    // DemBones rig made the browser render below 20 fps. Example: if one render
+    // took 0.20 s, the timeline advanced only 0.05 s, making a 1 second / 30
+    // frame animation take about 4 seconds. We now advance by the full elapsed
+    // wall-clock time. Rendering may drop visual frames under load, but the
+    // animation keeps the correct 30-frames-at-30-fps duration.
+    const dt = Math.max(0, (now - lastFrame)/1000);
     lastFrame = now;
     if(exportPlayback.active){
       // Use the export clock, not preview play/pause state. This makes the
@@ -17233,13 +17287,19 @@ ctx.fill();</textarea>
       t = Math.min(exportPlayback.duration, exportElapsed);
     } else if(playing){
       t += dt;
-      if(loopTimeline && timelineDuration > 0 && t >= timelineDuration){
-        t = t % timelineDuration;
-        if(audioLoaded && playing){ audioEl.currentTime = 0; if(audioEl.paused) playAudioIfLoaded(); }
-        // event-based effects (ripple rings, fireworks/explosion bursts, lightning
-        // bolts) store timestamps that would otherwise go negative right after a
-        // loop wrap — clear them so nothing carries a stale age into the new cycle
-        layers.forEach(l => { l.state = {}; });
+      if(timelineDuration > 0 && t >= timelineDuration){
+        if(loopTimeline){
+          t = t % timelineDuration;
+          if(audioLoaded && playing){ audioEl.currentTime = 0; if(audioEl.paused) playAudioIfLoaded(); }
+          // event-based effects (ripple rings, fireworks/explosion bursts, lightning
+          // bolts) store timestamps that would otherwise go negative right after a
+          // loop wrap — clear them so nothing carries a stale age into the new cycle
+          layers.forEach(l => { l.state = {}; });
+        }else{
+          t = timelineDuration;
+          playing = false;
+          pauseAudioIfLoaded();
+        }
       }
     }
 
