@@ -37,6 +37,7 @@
    name, and it does not silently add the file to the Character.
 
    v16.20 restores reliable Character double-click editing and makes Part Dummy boxes behave like direct transform controls. Double-clicking the Character always opens the all-parts/all-bones Edit Bone view. A Part Dummy can be clicked in Build Character or with the panel closed to select its box; its corner scale handles and rotate handle then remain directly draggable. Clicking the assembled Character itself selects the automatic Character Dummy and exposes Luke Animate's normal scale/rotate bounding box; double-clicking instead opens all parts and bones for editing.
+   v16.21 fixes Dummy scale inheritance so the complete pinned child part, including its curves and displayed bones, scales with the Dummy instead of only shifting around the attachment point.
 
    v16.19 changes Part Dummies to box controls with direct move, scale and rotate handles. Part Dummies
    do not deform their own artwork, can be pin targets, and pass animated scale
@@ -54,7 +55,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.20";
+  var TOOL_VERSION = "16.21";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1842,6 +1843,25 @@
     };
   }
 
+  function ensureDummyPinLengthBaselines(targetPart,targetBone,time){
+    if(!targetPart||!targetBone||!isDummyBone(targetBone))return false;
+    var poseMap=posedTransformMap(targetPart.rig,time);
+    var pose=poseMap&&poseMap[targetBone.id];
+    if(!pose)return false;
+    var currentLength=Math.max(.0001,n(pose.length,Math.hypot(pose.tail.x-pose.head.x,pose.tail.y-pose.head.y)));
+    var changed=false;
+    (state.character.parts||[]).forEach(function(child){
+      if(!child||!child.pin)return;
+      if(Number(child.pin.targetPartId)!==Number(targetPart.id))return;
+      if(String(child.pin.boneId)!==String(targetBone.id))return;
+      if(!(Number(child.pin.boneLengthAtPin)>0)){
+        child.pin.boneLengthAtPin=currentLength;
+        changed=true;
+      }
+    });
+    return changed;
+  }
+
   function resolvedPartTransform(part,time,visited){
     if(!part)return normalisePartTransform(null);
 
@@ -1915,7 +1935,14 @@
     var targetIsDummy=!!(targetBone&&String(targetBone.type||'').toLowerCase()==='dummy');
     var boneScaleNow=targetIsDummy?Math.max(.0001,n(bonePose.scale,1)):1;
     var boneScaleAtPin=Math.max(.0001,n(part.pin.boneScaleAtPin,1));
-    var boneScaleRatio=targetIsDummy?boneScaleNow/boneScaleAtPin:1;
+    var boneScaleRatio=1;
+    if(targetIsDummy){
+      var boneLengthNow=Math.max(.0001,n(bonePose.length,Math.hypot(bonePose.tail.x-bonePose.head.x,bonePose.tail.y-bonePose.head.y)));
+      var restLengthNow=Math.max(.0001,n(targetBone.restLength,Math.hypot(targetBone.restTail.x-targetBone.restHead.x,targetBone.restTail.y-targetBone.restHead.y)));
+      var inferredPinLength=restLengthNow*boneScaleAtPin;
+      var boneLengthAtPin=Math.max(.0001,n(part.pin.boneLengthAtPin,inferredPinLength));
+      boneScaleRatio=boneLengthNow/boneLengthAtPin;
+    }
 
     var rotatedOffset=rotateVector(
       n(localOffset.x,0)*parentScaleNow*boneScaleRatio,
@@ -3581,6 +3608,7 @@
     };
     part.pin.parentScaleAtPin=parentScale;
     part.pin.boneScaleAtPin=targetIsDummy?boneScaleNow:1;
+    part.pin.boneLengthAtPin=targetIsDummy?Math.max(.0001,n(pose.length,Math.hypot(pose.tail.x-pose.head.x,pose.tail.y-pose.head.y))):1;
     part.pin.childScaleAtPin=Math.max(.01,n(childTransform.scale,1));
     part.pin.childScaleXAtPin=Math.max(.01,n(childTransform.scaleX,1));
     part.pin.childScaleYAtPin=Math.max(.01,n(childTransform.scaleY,1));
@@ -4727,6 +4755,7 @@
       rotationOffset:childTransform.rotation-boneAngle,
       parentScaleAtPin:parentScale,
       boneScaleAtPin:String(bone.type||'').toLowerCase()==='dummy'?Math.max(.0001,n(pose.scale,1)):1,
+      boneLengthAtPin:String(bone.type||'').toLowerCase()==='dummy'?Math.max(.0001,n(pose.length,Math.hypot(pose.tail.x-pose.head.x,pose.tail.y-pose.head.y))):1,
       childScaleAtPin:childTransform.scale,
       childScaleXAtPin:childTransform.scaleX,
       childScaleYAtPin:childTransform.scaleY,
@@ -5271,6 +5300,8 @@
       key.rotation=round3(n(startPose.rotation,0)+deltaRotate);if(bone.parentId){key.dx=0;key.dy=0;}return;
     }
     if(isDummy&&String(drag.handle||'').indexOf('dummy-scale-')===0){
+      var animatedDummyOwner=drag.part||characterPartForRigId(state.activeRig&&state.activeRig.id);
+      if(animatedDummyOwner)ensureDummyPinLengthBaselines(animatedDummyOwner,bone,currentTime());
       var sdx=pointer.x-startTransform.head.x,sdy=pointer.y-startTransform.head.y;
       var newLength=Math.max(.01,(Math.hypot(sdx,sdy)*2)/Math.sqrt(2));
       key.scale=round3(Math.max(.01,n(startPose.scale,1)*(newLength/Math.max(.001,n(startTransform.length,1)))));if(bone.parentId){key.dx=0;key.dy=0;}return;
@@ -5487,6 +5518,7 @@
         var cra=Math.atan2(localNow.y-state.drag.startHead.y,localNow.x-state.drag.startHead.x)+Math.PI/2;
         cb.restAngle=cra;cb.restTail={x:round3(cb.restHead.x+Math.cos(cra)*cb.restLength),y:round3(cb.restHead.y+Math.sin(cra)*cb.restLength)};
       }else if(isDummyBone(cb)&&String(state.drag.handle||'').indexOf('dummy-scale-')===0){
+        ensureDummyPinLengthBaselines(state.drag.part,cb,currentTime());
         var crLen=Math.max(12,(Math.hypot(localNow.x-state.drag.startHead.x,localNow.y-state.drag.startHead.y)*2)/Math.sqrt(2));
         cb.restLength=round3(crLen);cb.restTail={x:round3(cb.restHead.x+Math.cos(cb.restAngle)*crLen),y:round3(cb.restHead.y+Math.sin(cb.restAngle)*crLen)};
       }else if(isDummyBone(cb)&&state.drag.handle==='dummy-move'){
@@ -5519,6 +5551,8 @@
         var dra=Math.atan2(p.y-state.drag.startHead.y,p.x-state.drag.startHead.x)+Math.PI/2;
         b.restAngle=dra;b.restTail={x:round3(b.restHead.x+Math.cos(dra)*b.restLength),y:round3(b.restHead.y+Math.sin(dra)*b.restLength)};
       }else if(isDummyBone(b)&&String(state.drag.handle||'').indexOf('dummy-scale-')===0){
+        var dummyOwnerPart=characterPartForRigId(state.activeRig&&state.activeRig.id);
+        if(dummyOwnerPart)ensureDummyPinLengthBaselines(dummyOwnerPart,b,currentTime());
         var drLen=Math.max(12,(Math.hypot(p.x-state.drag.startHead.x,p.y-state.drag.startHead.y)*2)/Math.sqrt(2));
         b.restLength=round3(drLen);b.restTail={x:round3(b.restHead.x+Math.cos(b.restAngle)*drLen),y:round3(b.restHead.y+Math.sin(b.restAngle)*drLen)};
       }else if(isDummyBone(b)&&state.drag.handle==='dummy-move'){
