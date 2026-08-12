@@ -1,5 +1,8 @@
 /* Luke Animate Dem Bones + MyCharacter GPT v16.25
-   v16.25 makes bone envelopes inherit the Part Dummy scale in Animate mode.
+   v16.26 fixes the Part Dummy as a true parent transform in Character/Edit Bone as well as Animate.
+   Moving, rotating or scaling a Dummy key now transforms the artwork, all ordinary bones
+   and their envelopes together, while the ordinary bones continue to deform the already
+   transformed artwork. Dummy placement on the Bones page remains a setup-only operation.
    When the rig-control Dummy scales the bones/curves, the displayed envelope
    radii now scale by the same amount instead of remaining at their rest size.
 
@@ -1041,6 +1044,10 @@
       by[b.id]=b;
     });
     (rig.bones||[]).forEach(function(b){
+      if(b.parentId&&by[b.parentId]&&!isDummyBone(b)&&isDummyBone(by[b.parentId])){
+        /* Dummy is a rig transform/pin target, never a skeletal chain parent. */
+        b.parentId="";
+      }
       if(b.parentId&&by[b.parentId]){
         var parent=by[b.parentId];
         b.restAngle=angleOf(b.restHead,b.restTail);
@@ -1497,6 +1504,66 @@
   function applyRigControlVector(vector,control){
     if(!control)return{x:n(vector&&vector.x,0),y:n(vector&&vector.y,0)};
     return rotateVector(n(vector&&vector.x,0)*control.scale,n(vector&&vector.y,0)*control.scale,control.rotation);
+  }
+
+  function inverseRigControlPoint(point,control){
+    if(!control)return{x:n(point&&point.x,0),y:n(point&&point.y,0)};
+    var translated={
+      x:n(point&&point.x,0)-control.pivot.x-control.dx,
+      y:n(point&&point.y,0)-control.pivot.y-control.dy
+    };
+    var unrotated=inverseRotateVector(translated.x,translated.y,control.rotation);
+    var scale=Math.max(.0001,n(control.scale,1));
+    return{
+      x:control.pivot.x+unrotated.x/scale,
+      y:control.pivot.y+unrotated.y/scale
+    };
+  }
+
+  /*
+    Edit Bone normally shows the rest skeleton. A Part Dummy is different: it
+    is the parent transform for the complete rig and its keyed transform must
+    remain visible even while ordinary bones are being edited. This map keeps
+    ordinary bones in their rest pose, then applies only the Dummy transform.
+  */
+  function editBoneDisplayTransformMap(rig,time){
+    var out=restTransformMap(rig);
+    var control=rigControlDummyTransform(rig,time);
+    if(!control)return out;
+
+    Object.keys(out).forEach(function(id){
+      var q=out[id];
+      if(!q)return;
+      if(String(id)===String(control.dummy.id)){
+        var pose=interpolatePose(control.dummy,time);
+        var restQ=out[id];
+        var head={
+          x:restQ.head.x+n(pose.dx,0),
+          y:restQ.head.y+n(pose.dy,0)
+        };
+        var baseVector={
+          x:restQ.tail.x-restQ.head.x,
+          y:restQ.tail.y-restQ.head.y
+        };
+        var scaledRotated=rotateVector(
+          baseVector.x*Math.max(.01,n(pose.scale,1)),
+          baseVector.y*Math.max(.01,n(pose.scale,1)),
+          n(pose.rotation,0)*Math.PI/180
+        );
+        q.head=head;
+        q.tail={x:head.x+scaledRotated.x,y:head.y+scaledRotated.y};
+        q.angle=angleOf(q.head,q.tail);
+        q.length=Math.max(.001,Math.hypot(q.tail.x-q.head.x,q.tail.y-q.head.y));
+        q.scale=Math.max(.01,n(pose.scale,1));
+        return;
+      }
+      q.head=applyRigControlPoint(q.head,control);
+      q.tail=applyRigControlPoint(q.tail,control);
+      q.angle=angleOf(q.head,q.tail);
+      q.length=Math.max(.001,Math.hypot(q.tail.x-q.head.x,q.tail.y-q.head.y));
+      q.scale=Math.max(.01,n(q.scale,1)*control.scale);
+    });
+    return out;
   }
 
   function posedTransformMap(rig,time,options){
@@ -2338,7 +2405,9 @@
     state.character.parts.forEach(function(part){
       if(!part||!part.rig)return;
       var transform=resolvedPartTransform(part,time,{});
-      var map=restTransformMap(part.rig);
+      var map=state.tab==="editbone"
+        ?editBoneDisplayTransformMap(part.rig,time)
+        :restTransformMap(part.rig);
       (part.rig.bones||[]).forEach(function(bone){
         var pose=map[bone.id];
         if(!pose)return;
@@ -2483,13 +2552,20 @@
 
   function characterAllEditEnvelopeGeometry(part,bone,time){
     if(!part||!part.rig||!bone)return null;
-    var map=restTransformMap(part.rig),q=map[bone.id];
+    var map=state.tab==="editbone"
+      ?editBoneDisplayTransformMap(part.rig,time)
+      :restTransformMap(part.rig),q=map[bone.id];
     if(!q)return null;
     var dx=q.tail.x-q.head.x,dy=q.tail.y-q.head.y;
     var len=Math.max(.0001,Math.hypot(dx,dy));
     var perp={x:-dy/len,y:dx/len};
-    var r0=Math.max(2,n(bone.envStart,30));
-    var r1=Math.max(2,n(bone.envEnd,r0));
+    var envelopeScale=1;
+    if(state.tab==="editbone"){
+      var editControl=rigControlDummyTransform(part.rig,time);
+      if(editControl)envelopeScale=Math.max(.01,n(editControl.scale,1));
+    }
+    var r0=Math.max(2,n(bone.envStart,30)*envelopeScale);
+    var r1=Math.max(2,n(bone.envEnd,n(bone.envStart,30))*envelopeScale);
     function scene(local){return partLocalPointToCurrentCharacterScene(part,local,time);}
     return{
       head:scene(q.head),tail:scene(q.tail),
@@ -2946,7 +3022,9 @@
     });
 
     var handles=deformBezierHandles(base,points,data,rest,posed);
-    var control=editingRestOnly?null:rigControlDummyTransform(rig,time);
+    /* The Dummy is a parent transform, not an ordinary bone. Even while the
+       Edit Bone tab is open its keyed transform must still carry the mesh. */
+    var control=rigControlDummyTransform(rig,time);
     if(control){
       points=points.map(function(point){return applyRigControlPoint(point,control);});
       if(Array.isArray(handles)){
@@ -5489,7 +5567,9 @@
   function boneHit(event){
     var rig=state.activeRig;if(!rig)return null;
     var p=selectedScenePoint(event);
-    var map=state.tab==="animate"?posedTransformMap(rig,currentTime()):restTransformMap(rig);
+    var map=state.tab==="animate"
+      ?posedTransformMap(rig,currentTime())
+      :(state.tab==="editbone"?editBoneDisplayTransformMap(rig,currentTime()):restTransformMap(rig));
     var best=null,bestD=scenePixels(14),lineD=scenePixels(9);
     if(state.selectedBoneId&&(state.tab==="editbone"||state.tab==="animate")){
       var selected=boneById(state.selectedBoneId),sq=selected&&map[selected.id];
@@ -5516,9 +5596,11 @@
   function envelopeHandleHit(event){
     if(state.tab!=="editbone"||!state.showEnvelopes)return null;
     var bone=selectedBone();if(!bone||String(bone.type||'').toLowerCase()==='dummy')return null;
-    var map=restTransformMap(state.activeRig),q=map[bone.id];if(!q)return null;
+    var map=editBoneDisplayTransformMap(state.activeRig,currentTime()),q=map[bone.id];if(!q)return null;
     var dx=q.tail.x-q.head.x,dy=q.tail.y-q.head.y,len=Math.max(.0001,Math.hypot(dx,dy)),perp={x:-dy/len,y:dx/len};
-    var r0=Math.max(2,n(bone.envStart,30)),r1=Math.max(2,n(bone.envEnd,r0));
+    var control=rigControlDummyTransform(state.activeRig,currentTime());
+    var envelopeScale=control?Math.max(.01,n(control.scale,1)):1;
+    var r0=Math.max(2,n(bone.envStart,30)*envelopeScale),r1=Math.max(2,n(bone.envEnd,n(bone.envStart,30))*envelopeScale);
     var handles=[
       {end:"start",side:1,p:{x:q.head.x+perp.x*r0,y:q.head.y+perp.y*r0}},
       {end:"start",side:-1,p:{x:q.head.x-perp.x*r0,y:q.head.y-perp.y*r0}},
@@ -5712,6 +5794,17 @@
       focusCharacterPartCard(allHit.part);state.activeRig=allHit.part.rig;syncCharacterPartRigRefs(allHit.part);syncRigRefs(state.activeRig);state.selectedBoneId=allHit.bone.id;
       API.pushUndo();
       var allPoint=currentScenePointToPartLocal(allHit.part,selectedScenePoint(event),currentTime());
+      if(isDummyBone(allHit.bone)){
+        var allDummyMap=posedTransformMap(allHit.part.rig,currentTime());
+        state.drag={
+          kind:"character-edit-dummy-transform",pointerId:event.pointerId,part:allHit.part,bone:allHit.bone,
+          handle:allHit.handle,startPointer:allPoint,startPose:clone(interpolatePose(allHit.bone,currentTime())),
+          startTransform:clone(allDummyMap[allHit.bone.id]),key:ensureBoneKeyForDrag(allHit.bone,currentTime())
+        };
+        renderAll();API.refreshUI();return;
+      }
+      var allControl=rigControlDummyTransform(allHit.part.rig,currentTime());
+      if(allControl)allPoint=inverseRigControlPoint(allPoint,allControl);
       var allParent=allHit.bone.parentId?(allHit.part.rig.bones||[]).filter(function(candidate){return String(candidate.id)===String(allHit.bone.parentId);})[0]||null:null;
       state.drag={kind:"character-edit-rest",pointerId:event.pointerId,part:allHit.part,bone:allHit.bone,parent:allParent,handle:allHit.handle,startPointer:allPoint,startHead:clone(allHit.bone.restHead),startTail:clone(allHit.bone.restTail),startParentTail:allParent?clone(allParent.restTail):null};
       renderAll();API.refreshUI();return;
@@ -5760,8 +5853,16 @@
     if(!hit){if(state.tab==="editbone"||state.tab==="animate"){event.preventDefault();event.stopImmediatePropagation();}return;}
     event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;
     if(state.tab==="editbone"){
-      API.pushUndo();var parent=hit.bone.parentId?boneById(hit.bone.parentId):null;
-      state.drag={kind:"edit-rest",pointerId:event.pointerId,bone:hit.bone,parent:parent,handle:hit.handle,startPointer:point,startHead:clone(hit.bone.restHead),startTail:clone(hit.bone.restTail),startParentTail:parent?clone(parent.restTail):null};renderAll();return;
+      API.pushUndo();
+      if(isDummyBone(hit.bone)){
+        var editDummyMap=posedTransformMap(state.activeRig,currentTime());
+        state.drag={kind:"edit-dummy-transform",pointerId:event.pointerId,bone:hit.bone,handle:hit.handle,startPointer:point,startPose:clone(interpolatePose(hit.bone,currentTime())),startTransform:clone(editDummyMap[hit.bone.id]),key:ensureBoneKeyForDrag(hit.bone,currentTime())};
+        renderAll();return;
+      }
+      var editControl=rigControlDummyTransform(state.activeRig,currentTime());
+      var restPoint=editControl?inverseRigControlPoint(point,editControl):point;
+      var parent=hit.bone.parentId?boneById(hit.bone.parentId):null;
+      state.drag={kind:"edit-rest",pointerId:event.pointerId,bone:hit.bone,parent:parent,handle:hit.handle,startPointer:restPoint,startHead:clone(hit.bone.restHead),startTail:clone(hit.bone.restTail),startParentTail:parent?clone(parent.restTail):null};renderAll();return;
     }
     if(state.tab==="animate"){
       API.pushUndo();var map=posedTransformMap(state.activeRig,currentTime());state.drag={kind:"animate-bone",pointerId:event.pointerId,bone:hit.bone,handle:hit.handle,startPointer:point,startPose:clone(interpolatePose(hit.bone,currentTime())),startTransform:clone(map[hit.bone.id]),key:ensureBoneKeyForDrag(hit.bone,currentTime())};ensureRigKeyedAtTime(state.activeRig,currentTime(),hit.bone.id);renderAll();return;
@@ -5789,6 +5890,18 @@
       API.refreshUI();return;
     }
     if(!state.open)return;
+    if(state.drag.kind==="character-edit-dummy-transform"){
+      var cedLocal=currentScenePointToPartLocal(state.drag.part,p,currentTime());
+      updateAnimatedBoneDrag(state.drag,cedLocal);
+      syncCharacterPartRigRefs(state.drag.part);
+      syncRigDisplayGeometry(state.drag.part.rig,currentTime());
+      API.refreshUI();return;
+    }
+    if(state.drag.kind==="edit-dummy-transform"){
+      updateAnimatedBoneDrag(state.drag,p);
+      syncRigDisplayGeometry(state.activeRig,currentTime());
+      API.refreshUI();return;
+    }
     if(state.drag.kind==="character-maybe-add"){
       var cmScene=selectedScenePoint(event);
       var cmLocal=currentScenePointToPartLocal(state.drag.part,cmScene,currentTime());
@@ -5808,6 +5921,8 @@
     }
     if(state.drag.kind==="character-resize-envelope"){
       var cpLocal=currentScenePointToPartLocal(state.drag.part,p,currentTime());
+      var cpControl=rigControlDummyTransform(state.drag.part.rig,currentTime());
+      if(cpControl)cpLocal=inverseRigControlPoint(cpLocal,cpControl);
       var cpBone=state.drag.bone,cpAnchor=state.drag.end==="start"?cpBone.restHead:cpBone.restTail;
       var cpRadius=clamp(Math.hypot(cpLocal.x-cpAnchor.x,cpLocal.y-cpAnchor.y),2,500);
       if(state.drag.end==="start")cpBone.envStart=round3(cpRadius);else cpBone.envEnd=round3(cpRadius);
@@ -5815,6 +5930,8 @@
     }
     if(state.drag.kind==="character-edit-rest"){
       var localNow=currentScenePointToPartLocal(state.drag.part,p,currentTime());
+      var characterRestControl=rigControlDummyTransform(state.drag.part.rig,currentTime());
+      if(characterRestControl&&!isDummyBone(state.drag.bone))localNow=inverseRigControlPoint(localNow,characterRestControl);
       var cb=state.drag.bone,cdx=localNow.x-state.drag.startPointer.x,cdy=localNow.y-state.drag.startPointer.y;
       state.activeRig=state.drag.part.rig;state.character.selectedPartId=state.drag.part.id;state.selectedBoneId=cb.id;
       if(isDummyBone(cb)&&state.drag.handle==='dummy-rotate'){
@@ -5844,25 +5961,32 @@
     if(state.drag.kind==="maybe-add"){state.drag.current=p;if(Math.hypot(p.x-state.drag.start.x,p.y-state.drag.start.y)>=scenePixels(8)){state.drag.kind="add";state.addPreview={head:clone(state.drag.start),tail:clone(p)};}API.refreshUI();return;}
     if(state.drag.kind==="add"){state.drag.current=p;if(state.addPreview)state.addPreview.tail=clone(p);API.refreshUI();return;}
     if(state.drag.kind==="resize-envelope"){
-      var eb=state.drag.bone,anchor=state.drag.end==="start"?eb.restHead:eb.restTail,radius=clamp(Math.hypot(p.x-anchor.x,p.y-anchor.y),2,500);
+      var envelopePoint=p;
+      var envelopeControl=rigControlDummyTransform(state.activeRig,currentTime());
+      if(envelopeControl)envelopePoint=inverseRigControlPoint(envelopePoint,envelopeControl);
+      var eb=state.drag.bone,anchor=state.drag.end==="start"?eb.restHead:eb.restTail,radius=clamp(Math.hypot(envelopePoint.x-anchor.x,envelopePoint.y-anchor.y),2,500);
       if(state.drag.end==="start")eb.envStart=round3(radius);else eb.envEnd=round3(radius);
       rebuildRigSkinData(state.activeRig);API.refreshUI();return;
     }
     if(state.drag.kind==="edit-rest"){
-      var b=state.drag.bone,dx=p.x-state.drag.startPointer.x,dy=p.y-state.drag.startPointer.y;
+      var b=state.drag.bone;
+      var editRestPoint=p;
+      var editRestControl=rigControlDummyTransform(state.activeRig,currentTime());
+      if(editRestControl&&!isDummyBone(b))editRestPoint=inverseRigControlPoint(editRestPoint,editRestControl);
+      var dx=editRestPoint.x-state.drag.startPointer.x,dy=editRestPoint.y-state.drag.startPointer.y;
       if(isDummyBone(b)&&state.drag.handle==='dummy-rotate'){
-        var dra=Math.atan2(p.y-state.drag.startHead.y,p.x-state.drag.startHead.x)+Math.PI/2;
+        var dra=Math.atan2(editRestPoint.y-state.drag.startHead.y,editRestPoint.x-state.drag.startHead.x)+Math.PI/2;
         b.restAngle=dra;b.restTail={x:round3(b.restHead.x+Math.cos(dra)*b.restLength),y:round3(b.restHead.y+Math.sin(dra)*b.restLength)};
       }else if(isDummyBone(b)&&String(state.drag.handle||'').indexOf('dummy-scale-')===0){
         var dummyOwnerPart=characterPartForRigId(state.activeRig&&state.activeRig.id);
         if(dummyOwnerPart)ensureDummyPinLengthBaselines(dummyOwnerPart,b,currentTime());
-        var drLen=Math.max(12,(Math.hypot(p.x-state.drag.startHead.x,p.y-state.drag.startHead.y)*2)/Math.sqrt(2));
+        var drLen=Math.max(12,(Math.hypot(editRestPoint.x-state.drag.startHead.x,editRestPoint.y-state.drag.startHead.y)*2)/Math.sqrt(2));
         b.restLength=round3(drLen);b.restTail={x:round3(b.restHead.x+Math.cos(b.restAngle)*drLen),y:round3(b.restHead.y+Math.sin(b.restAngle)*drLen)};
       }else if(isDummyBone(b)&&state.drag.handle==='dummy-move'){
         b.restHead={x:round3(state.drag.startHead.x+dx),y:round3(state.drag.startHead.y+dy)};
         b.restTail={x:round3(state.drag.startTail.x+dx),y:round3(state.drag.startTail.y+dy)};
       }else if(state.drag.handle==="tail"){
-        b.restTail={x:round3(p.x),y:round3(p.y)};
+        b.restTail={x:round3(editRestPoint.x),y:round3(editRestPoint.y)};
       }else{
         b.restHead={x:round3(state.drag.startHead.x+dx),y:round3(state.drag.startHead.y+dy)};
         b.restTail={x:round3(state.drag.startTail.x+dx),y:round3(state.drag.startTail.y+dy)};
@@ -5902,6 +6026,8 @@
     else if(finished.kind==="animate-bone"){API.refreshUI();notify("Bone pose keyed on frame "+currentFrame()+".",false);}
     else if(finished.kind==="closed-animate-bone"){syncCharacterPartRigRefs(finished.part);syncRigDisplayGeometry(finished.part.rig,currentTime());API.refreshUI();}
     else if(finished.kind==="closed-active-rig-bone"){syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();}
+    else if(finished.kind==="character-edit-dummy-transform"){syncCharacterPartRigRefs(finished.part);syncRigDisplayGeometry(finished.part.rig,currentTime());API.refreshUI();}
+    else if(finished.kind==="edit-dummy-transform"){syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();}
     else if(finished.kind==="character-dummy-transform"){ensureCharacterDummyKeyFromCurrent();syncAllCharacterRigRefs();API.refreshUI();}
     state.drag=null;state.addPreview=null;
     if(state.open){
@@ -6119,14 +6245,16 @@
 
     var map=state.tab==="animate"?posedTransformMap(
       state.activeRig,currentTime()
-    ):restTransformMap(state.activeRig);
+    ):(state.tab==="editbone"
+      ?editBoneDisplayTransformMap(state.activeRig,currentTime())
+      :restTransformMap(state.activeRig));
 
     /*
       Envelopes are painted first so bones and control points stay readable.
     */
     if(state.showEnvelopes){
       var activeEnvelopeScale=1;
-      if(state.tab==="animate"){
+      if(state.tab==="animate"||state.tab==="editbone"){
         var activeRigDummyControl=rigControlDummyTransform(state.activeRig,currentTime());
         if(activeRigDummyControl)activeEnvelopeScale=Math.max(.01,n(activeRigDummyControl.scale,1));
       }
