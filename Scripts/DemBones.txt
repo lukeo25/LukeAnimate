@@ -1,4 +1,8 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.18
+/* Luke Animate Dem Bones + MyCharacter GPT v16.25
+   v16.25 makes bone envelopes inherit the Part Dummy scale in Animate mode.
+   When the rig-control Dummy scales the bones/curves, the displayed envelope
+   radii now scale by the same amount instead of remaining at their rest size.
+
    v16.17 makes Edit Bone stage-drag driven. Bone head/tail/line placement
    and envelope size are edited only by dragging the visible stage controls;
    coordinate and envelope sliders have been removed from the Edit Bone panel.
@@ -5908,7 +5912,7 @@
     else API.refreshUI();
   }
 
-  function drawBoneEnvelope(ctx,bone,q,selected){
+  function drawBoneEnvelope(ctx,bone,q,selected,envelopeScale){
     if(!bone||!q||String(bone.type||'').toLowerCase()==='dummy')return;
 
     var dx=q.tail.x-q.head.x;
@@ -5919,8 +5923,15 @@
       y:dx/length
     };
 
-    var r0=Math.max(2,n(bone.envStart,30));
-    var r1=Math.max(2,n(bone.envEnd,r0));
+    /*
+      A Part Dummy is a parent transform for the complete rig. Its scale must
+      affect the visible envelopes just as it affects the bones and mesh. Keep
+      envStart/envEnd stored in rest units, then multiply only for display so
+      changing/animating the Dummy never destructively rewrites envelope data.
+    */
+    envelopeScale=Math.max(.01,n(envelopeScale,1));
+    var r0=Math.max(2,n(bone.envStart,30)*envelopeScale);
+    var r1=Math.max(2,n(bone.envEnd,n(bone.envStart,30))*envelopeScale);
 
     var hPlus=stagePointFromScene({
       x:q.head.x+perp.x*r0,
@@ -6114,13 +6125,19 @@
       Envelopes are painted first so bones and control points stay readable.
     */
     if(state.showEnvelopes){
+      var activeEnvelopeScale=1;
+      if(state.tab==="animate"){
+        var activeRigDummyControl=rigControlDummyTransform(state.activeRig,currentTime());
+        if(activeRigDummyControl)activeEnvelopeScale=Math.max(.01,n(activeRigDummyControl.scale,1));
+      }
       (state.activeRig.bones||[]).forEach(function(b){
         if(map[b.id]){
           drawBoneEnvelope(
             ctx,
             b,
             map[b.id],
-            b.id===state.selectedBoneId
+            b.id===state.selectedBoneId,
+            activeEnvelopeScale
           );
         }
       });
