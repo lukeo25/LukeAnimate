@@ -8,7 +8,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v180</title>
+<title>Luke Animate v182</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3197,7 +3197,10 @@ ctx.fill();</textarea>
     previousTime: 0,
     videoTrack: null,
     uiSnapshot: null,
-    startPending: false
+    startPending: false,
+    manualCapture: false,
+    lastRequestedFrame: -1,
+    totalFrames: 1
   };
 
   let bgMode = 'transparent'; // 'transparent' or 'color'
@@ -17279,16 +17282,16 @@ ctx.fill();</textarea>
     // animation keeps the correct 30-frames-at-30-fps duration.
     const dt = Math.max(0, (now - lastFrame)/1000);
     lastFrame = now;
-    if(exportPlayback.active){
-      // Use the export clock, not preview play/pause state. This makes the
-      // exported canvas evaluate every normal object keyframe plus StickRig and
-      // Dem Bones object evaluators at the correct time for each recorded frame.
-      const exportElapsed = Math.max(0, (now - exportPlayback.startedAt) / 1000);
-      t = Math.min(exportPlayback.duration, exportElapsed);
-    } else if(playing){
+    /*
+      v182 WEBM FIX: recording uses the EXACT SAME playback clock as Play.
+      exportPlayback.active is now only an export/UI flag; it no longer owns a
+      second timeline clock. This prevents the recorder from capturing a static
+      pose while normal preview playback is animating correctly.
+    */
+    if(playing){
       t += dt;
       if(timelineDuration > 0 && t >= timelineDuration){
-        if(loopTimeline){
+        if(loopTimeline && !exportPlayback.active){
           t = t % timelineDuration;
           if(audioLoaded && playing){ audioEl.currentTime = 0; if(audioEl.paused) playAudioIfLoaded(); }
           // event-based effects (ripple rings, fireworks/explosion bursts, lightning
@@ -17372,13 +17375,6 @@ ctx.fill();</textarea>
     renderClipPivotCross();
     renderRegisteredStageOverlays();
     renderOffstageObjectProxies();
-
-    // Some browsers expose manual frame requests on canvas capture tracks. Ask
-    // for the just-rendered frame when available; captureStream(fps) remains the
-    // fallback and supplies frames automatically elsewhere.
-    if(exportPlayback.active && exportPlayback.videoTrack && typeof exportPlayback.videoTrack.requestFrame === 'function'){
-      try { exportPlayback.videoTrack.requestFrame(); } catch(error) {}
-    }
 
     requestAnimationFrame(render);
   }
@@ -17596,8 +17592,13 @@ ctx.fill();</textarea>
       return;
     }
 
+    /*
+      v182: use the normal canvas capture stream while the SAME `playing`
+      playback loop that drives Preview advances the timeline.
+    */
     const stream = canvas.captureStream(fps);
     const canvasVideoTrack = stream.getVideoTracks ? stream.getVideoTracks()[0] : null;
+    const manualCanvasCapture = false;
 
     let recordStream = stream;
     let usingAudio = false;
@@ -17624,6 +17625,8 @@ ctx.fill();</textarea>
       exportPlayback.active = false;
       exportPlayback.startPending = false;
       exportPlayback.videoTrack = null;
+      exportPlayback.manualCapture = false;
+      exportPlayback.lastRequestedFrame = -1;
       playing = restorePlaying;
       t = restoreTime;
       syncActiveSceneFrameForTime(t, true);
@@ -17647,10 +17650,14 @@ ctx.fill();</textarea>
 
     exportPlayback.previousPlaying = playing;
     exportPlayback.previousTime = t;
-    exportPlayback.duration = duration;
     exportPlayback.fps = fps;
+    exportPlayback.totalFrames = Math.max(1, Math.round(duration * fps));
+    exportPlayback.duration = exportPlayback.totalFrames / fps;
     exportPlayback.videoTrack = canvasVideoTrack;
+    exportPlayback.manualCapture = manualCanvasCapture;
+    exportPlayback.lastRequestedFrame = -1;
     exportPlayback.startPending = true;
+    const exportDuration = exportPlayback.duration;
 
     // Remove every editor-only visual before the capture begins. The selection
     // and point-editing state are restored after MediaRecorder stops.
@@ -17672,9 +17679,15 @@ ctx.fill();</textarea>
     requestAnimationFrame(()=> requestAnimationFrame(()=>{
       if(!mediaRecorder || !exportPlayback.active || !exportPlayback.startPending) return;
       exportPlayback.startedAt = performance.now();
-      lastFrame = exportPlayback.startedAt;
-      exportPlayback.startPending = false;
       mediaRecorder.start();
+      exportPlayback.startPending = false;
+
+      // Start the SAME playback circuit used by the Play button.
+      t = 0;
+      lastFrame = performance.now();
+      playing = true;
+      exportPlayback.lastRequestedFrame = -1;
+
       if(usingAudio) playAudioIfLoaded();
       btnStop.disabled = false;
 
@@ -17682,8 +17695,11 @@ ctx.fill();</textarea>
       const tick = ()=>{
         if(!mediaRecorder || mediaRecorder.state !== 'recording') return;
         const elapsed = (performance.now()-startedAt)/1000;
-        recTime.textContent = `SAVING ${elapsed.toFixed(1)}s / ${duration}s`;
-        if(elapsed >= duration){
+        recTime.textContent = `SAVING ${Math.min(elapsed,exportDuration).toFixed(1)}s / ${exportDuration.toFixed(2)}s`;
+        // Allow one capture interval after the timeline reaches its end so the
+        // final rendered pose is present in the WebM, then stop recording.
+        const stopAfter = exportDuration + (1 / Math.max(1, fps));
+        if(elapsed >= stopAfter || (!playing && t >= timelineDuration - 1e-9)){
           mediaRecorder.stop();
           return;
         }
@@ -17702,6 +17718,8 @@ ctx.fill();</textarea>
       exportPlayback.startPending = false;
       exportPlayback.active = false;
       exportPlayback.videoTrack = null;
+      exportPlayback.manualCapture = false;
+      exportPlayback.lastRequestedFrame = -1;
       playing = exportPlayback.previousPlaying;
       t = exportPlayback.previousTime;
       syncActiveSceneFrameForTime(t, true);
