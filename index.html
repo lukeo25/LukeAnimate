@@ -1,3 +1,4 @@
+
 <!-- LukeAnimate GPT v172: image/text layer timing parity. Image, video and text drawing layers now expose explicit timeline start-trim, end-trim and whole-block move controls plus fade-in/fade-out transparency handles. Layer fades multiply the object's normal/keyframed opacity during preview and WebM export, and persist with canonical Wick drawing frames. Existing object keyframes, layer exposure, rig-aware off-stage proxies and WebM stage cropping are preserved. -->
 <!-- LukeAnimate GPT v171: rig-aware off-stage proxies. DemBones curves that share one rigId now produce one combined editor-only proxy bounding box for the whole rig instead of one box per curve. StickRig parts resolve to one containing StickRig/root proxy while editing that rig Clip, while top-level StickRig roots remain one proxy each. Dragging a rig proxy moves every represented member through the existing transform/Auto-Keyframe system; manual + Keyframe writes a transform key to every represented member. Proxy boxes remain editor-only and never enter WebM capture. -->
 <!-- LukeAnimate GPT v169: nested Clip rulers are true editing-viewport rulers. While editing a Clip, the horizontal ruler is fixed immediately below the top toolbar from the left ruler strip to the sidebar edge, the vertical ruler is fixed against the far-left workspace edge down to the timeline, and the corner sits at their intersection. Tick values continue to follow Clip coordinates while panning/scrolling. Main-stage ruler layout remains unchanged. -->
@@ -8,7 +9,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v177</title>
+<title>Luke Animate v178</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -11424,7 +11425,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 115,
+    version: 116,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -11556,6 +11557,7 @@ ctx.fill();</textarea>
     },
     setFrame(frame){ return this.setTime(this.frameToTime(frame)); },
     getAutoKeyframe(){ return !!autoKeyframe; },
+    setAutoKeyframe(enabled){ setAutoKeyframe(!!enabled); return !!autoKeyframe; },
     setObjectFieldForCurrentTime(object, field, value, options){
       if(!object || !field) return false;
       pushUndo();
