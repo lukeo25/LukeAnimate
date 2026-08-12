@@ -1,4 +1,8 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.30
+/* Luke Animate Dem Bones + MyCharacter GPT v16.31
+   v16.31 locks DemBones evaluation to Luke Animate's project frame clock.
+   At 30 fps the rig evaluates exactly once per 1/30-second timeline frame,
+   including with the DemBones panel closed; browser 60/120 Hz RAF cadence
+   no longer changes the animation sampling rate.
    v16.29 restores the intended two-mode rig contract:
    - Edit Bone/Bones edit the REST skeleton and envelopes only. The artwork does not deform.
    - Animate evaluates the current pose FROM that rest skeleton and deforms the bound curves.
@@ -79,7 +83,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.30";
+  var TOOL_VERSION = "16.31";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -171,6 +175,19 @@
   function currentTime(){ return n(API.time,0); }
   function currentFrame(){ return typeof API.getCurrentFrame==="function"?API.getCurrentFrame():Math.max(1,Math.round(currentTime()*n(API.fps,30))+1); }
   function frameTime(frame){ return typeof API.frameToTime==="function"?API.frameToTime(frame):Math.max(0,(Math.max(1,frame)-1)/n(API.fps,30)); }
+
+  /*
+    DemBones is frame-based. Rendering may happen at 60/120 Hz, but bone poses
+    must be sampled on the Luke Animate project frame clock (30 fps by default).
+  */
+  function projectFps(api){
+    return Math.max(1,n(api&&api.fps!==undefined?api.fps:API.fps,30));
+  }
+  function projectFrameSampleTime(time,api){
+    var fps=projectFps(api);
+    var value=Math.max(0,n(time,0));
+    return Math.floor(value*fps+1e-7)/fps;
+  }
   function sceneObjects(){ var a=API.getDrawObjects(); return Array.isArray(a)?a:[]; }
   function clips(){ return API.getClips()||{}; }
   function selectedObjects(cacheSelection){
@@ -808,10 +825,11 @@
 
   function syncDemBonesRuntimePlayback(time){
     var changed=false;
+    var sampleTime=projectFrameSampleTime(time,API);
     allLiveDemBonesRigs().forEach(function(rig){
       if(!rig)return;
       syncRigRefs(rig);
-      if(syncRigDisplayGeometry(rig,time))changed=true;
+      if(syncRigDisplayGeometry(rig,sampleTime))changed=true;
     });
     return changed;
   }
@@ -820,9 +838,9 @@
     var time=n(fallbackTime,currentTime());
     var part=data?characterPartForRigId(data.rigId):null;
     if(part&&api&&isFinite(Number(api.mainTimelineTime))){
-      return Number(api.mainTimelineTime);
+      time=Number(api.mainTimelineTime);
     }
-    return time;
+    return projectFrameSampleTime(time,api||API);
   }
 
   function syncCharacterPartRigRefs(part){
@@ -7000,16 +7018,18 @@
        the UI panel is closed. The object evaluator already renders the posed
        geometry, but this also keeps hit testing, selection bounds and native
        stage operations in step with the visible deformation. */
-    var closedRuntimeLastTime=NaN;
+    var closedRuntimeLastFrame=-1;
     function closedRuntimeFrame(){
       try{
         if(!state.open){
+          var fps=projectFps(API);
           var runtimeTime=currentTime();
-          if(state.drag||!isFinite(closedRuntimeLastTime)||Math.abs(runtimeTime-closedRuntimeLastTime)>0.000001){
+          var runtimeFrame=Math.floor(Math.max(0,runtimeTime)*fps+1e-7);
+          if(state.drag||runtimeFrame!==closedRuntimeLastFrame){
             syncDemBonesRuntimePlayback(runtimeTime);
-            closedRuntimeLastTime=runtimeTime;
+            closedRuntimeLastFrame=runtimeFrame;
           }
-        }else closedRuntimeLastTime=NaN;
+        }else closedRuntimeLastFrame=-1;
       }catch(ignoreClosedRuntime){}
       requestAnimationFrame(closedRuntimeFrame);
     }
@@ -7026,7 +7046,7 @@
     API.setSelectionInspectorSuppressed(TOOL_ID,true);
     API.setConfiguredToolActive(GROUP_ID,ITEM_ID,true);
     API.bringFloatingPanelToFront(state.panel);API.clampFloatingPanelToViewport(state.panel);
-    renderAll();notify('Dem Bones v16.30 ready.',false);
+    renderAll();notify('Dem Bones v16.31 ready · '+projectFps(API)+' fps.',false);
   }
   function close(){
     if(state.characterDummyActive)finishCharacterDummyControl();
