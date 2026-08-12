@@ -1,4 +1,17 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.31
+/* Luke Animate Dem Bones + MyCharacter GPT v16.32
+   v16.32 fixes blank/corrupted WebM export frames caused by two background
+   loops (the closed-panel runtime sync RAF and the 160ms UI interval) that
+   mutate live object.points/bezierHandles on their own clock purely for
+   hit-testing/UI convenience. That clock is independent of the exporter's
+   exact per-frame timeline and was racing the real per-frame render, which
+   is already driven by the pure, correctly-timed evaluator(). Both loops now
+   no-op for the whole duration of API.isExporting, so nothing outside the
+   evaluator's own render-time computation is allowed to touch object
+   geometry while a WebM is being captured. evaluator() and
+   syncRigDisplayGeometry() also now discard any deformed geometry that comes
+   back empty or containing non-finite (NaN/Infinity) numbers - a bad
+   weights/skin edge case that previously produced an invisible shape -
+   and fall back to the object's last-good geometry instead.
    v16.31 locks DemBones evaluation to Luke Animate's project frame clock.
    At 30 fps the rig evaluates exactly once per 1/30-second timeline frame,
    including with the DemBones panel closed; browser 60/120 Hz RAF cadence
@@ -83,7 +96,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.31";
+  var TOOL_VERSION = "16.32";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -187,6 +200,22 @@
     var fps=projectFps(api);
     var value=Math.max(0,n(time,0));
     return Math.floor(value*fps+1e-7)/fps;
+  }
+
+  /*
+    v16.32: guard against a deformed-geometry result that is empty or has
+    picked up a non-finite (NaN/Infinity) coordinate - e.g. a divide-by-zero
+    in the envelope/weight math right after a rig is (re)bound. Point-by-point
+    canvas drawing silently skips NaN segments, which is what an "invisible"
+    shape / blank export frame actually looks like under the hood. Callers
+    treat a false result the same as deformedObjectGeometry() returning null:
+    keep showing the object's last-good geometry instead of a broken one.
+  */
+  function isFiniteGeometry(geometry){
+    if(!geometry||!Array.isArray(geometry.points)||!geometry.points.length)return false;
+    return geometry.points.every(function(p){
+      return p&&isFinite(p.x)&&isFinite(p.y);
+    });
   }
   function sceneObjects(){ var a=API.getDrawObjects(); return Array.isArray(a)?a:[]; }
   function clips(){ return API.getClips()||{}; }
@@ -3355,7 +3384,7 @@
     rigObjects(rig).forEach(function(object){
       if(object&&object.demBones&&object.demBones.raster)return;
       var geometry=deformedObjectGeometry(object,time);
-      if(!geometry)return;
+      if(!geometry||!isFiniteGeometry(geometry))return;
 
       object.points=geometry.points.map(function(point){
         return{x:n(point.x,0),y:n(point.y,0)};
@@ -3424,7 +3453,7 @@
       ?demBonesEvaluationTime(object.demBones,time,api)
       :time;
     var geometry=deformedObjectGeometry(object,geometryTime);
-    if(!geometry)return effective;
+    if(!geometry||!isFiniteGeometry(geometry))return effective;
 
     var out=Object.assign({},effective);
     out.points=geometry.points;
@@ -7003,6 +7032,12 @@
     window.addEventListener('mouseup',function(){if(state.characterDummyActive){setTimeout(function(){if(state.characterDummyActive){ensureCharacterDummyKeyFromCurrent();API.refreshUI();if(state.open&&state.tab==='character')renderBody();}},0);}},true);
     window.addEventListener('pointerup',function(){if(state.characterDummyActive){setTimeout(function(){if(state.characterDummyActive){ensureCharacterDummyKeyFromCurrent();API.refreshUI();if(state.open&&state.tab==='character')renderBody();}},0);}},true);
     setInterval(function(){
+      /* v16.32: this interval only exists to keep hit-testing, selection
+         bounds and timeline-row hiding in step for the UI while DemBones is
+         idle. The actual rendered pixels come from evaluator(), which is
+         already sampled at the exporter's exact per-frame time. Let nothing
+         else touch object geometry or the DOM while a WebM is capturing. */
+      if(API.isExporting)return;
       if(state.open){
         if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());
       }else{
@@ -7021,7 +7056,14 @@
     var closedRuntimeLastFrame=-1;
     function closedRuntimeFrame(){
       try{
-        if(!state.open){
+        /* v16.32: same reasoning as the interval above - this loop is a
+           convenience sync for hit-testing while the panel is closed, and
+           its own async clock has nothing to do with the exporter's exact
+           per-frame timeline. Suspend it entirely during export so it can
+           never fight the frame the evaluator just correctly rendered. */
+        if(API.isExporting){
+          closedRuntimeLastFrame=-1;
+        }else if(!state.open){
           var fps=projectFps(API);
           var runtimeTime=currentTime();
           var runtimeFrame=Math.floor(Math.max(0,runtimeTime)*fps+1e-7);
@@ -7046,7 +7088,7 @@
     API.setSelectionInspectorSuppressed(TOOL_ID,true);
     API.setConfiguredToolActive(GROUP_ID,ITEM_ID,true);
     API.bringFloatingPanelToFront(state.panel);API.clampFloatingPanelToViewport(state.panel);
-    renderAll();notify('Dem Bones v16.31 ready · '+projectFps(API)+' fps.',false);
+    renderAll();notify('Dem Bones v16.32 ready · '+projectFps(API)+' fps.',false);
   }
   function close(){
     if(state.characterDummyActive)finishCharacterDummyControl();
