@@ -8,7 +8,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v182</title>
+<title>Luke Animate v183</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3200,7 +3200,12 @@ ctx.fill();</textarea>
     startPending: false,
     manualCapture: false,
     lastRequestedFrame: -1,
-    totalFrames: 1
+    totalFrames: 1,
+    captureCanvas: null,
+    captureContext: null,
+    captureStream: null,
+    recorderStarted: false,
+    currentFrameIndex: 0
   };
 
   let bgMode = 'transparent'; // 'transparent' or 'color'
@@ -17283,15 +17288,31 @@ ctx.fill();</textarea>
     const dt = Math.max(0, (now - lastFrame)/1000);
     lastFrame = now;
     /*
-      v182 WEBM FIX: recording uses the EXACT SAME playback clock as Play.
-      exportPlayback.active is now only an export/UI flag; it no longer owns a
-      second timeline clock. This prevents the recorder from capturing a static
-      pose while normal preview playback is animating correctly.
+      v183 WEBM EXPORT CLOCK
+      ----------------------
+      Preview continues to use the normal Play clock. WebM export uses an exact
+      project-frame clock so the canvas is evaluated at frame 1, frame 2, frame 3
+      etc. before each exported bitmap is copied to the recorder canvas.
+
+      This is deliberately separate from MediaRecorder's own capture timing.
+      The recorder never decides which Luke Animate pose is drawn.
     */
-    if(playing){
+    if(exportPlayback.active && exportPlayback.recorderStarted){
+      const fps = Math.max(1, exportPlayback.fps || getTimelineFPS());
+      const elapsed = Math.max(0, (now - exportPlayback.startedAt) / 1000);
+      const frameIndex = Math.max(
+        0,
+        Math.min(
+          Math.max(0, exportPlayback.totalFrames - 1),
+          Math.floor(elapsed * fps + 1e-7)
+        )
+      );
+      exportPlayback.currentFrameIndex = frameIndex;
+      t = frameIndex / fps;
+    }else if(playing){
       t += dt;
       if(timelineDuration > 0 && t >= timelineDuration){
-        if(loopTimeline && !exportPlayback.active){
+        if(loopTimeline){
           t = t % timelineDuration;
           if(audioLoaded && playing){ audioEl.currentTime = 0; if(audioEl.paused) playAudioIfLoaded(); }
           // event-based effects (ripple rings, fireworks/explosion bursts, lightning
@@ -17375,6 +17396,48 @@ ctx.fill();</textarea>
     renderClipPivotCross();
     renderRegisteredStageOverlays();
     renderOffstageObjectProxies();
+
+    /*
+      v183 WEBM FRAME COPY
+      --------------------
+      Record from a dedicated canvas, not directly from the live editor canvas.
+      After the COMPLETE Luke Animate frame (including nested Clips and external
+      object evaluators such as DemBones) has been rendered, copy those exact
+      pixels into the recorder canvas and explicitly request that frame.
+
+      This removes any dependency on whether captureStream notices a mutation on
+      the editor canvas itself.
+    */
+    if(
+      exportPlayback.active &&
+      exportPlayback.recorderStarted &&
+      exportPlayback.captureCanvas &&
+      exportPlayback.captureContext
+    ){
+      const exportFrame = Math.max(0, exportPlayback.currentFrameIndex || 0);
+      if(exportFrame !== exportPlayback.lastRequestedFrame){
+        const captureCanvas = exportPlayback.captureCanvas;
+        const captureContext = exportPlayback.captureContext;
+
+        if(captureCanvas.width !== W || captureCanvas.height !== H){
+          captureCanvas.width = W;
+          captureCanvas.height = H;
+        }
+
+        captureContext.clearRect(0,0,W,H);
+        captureContext.drawImage(canvas,0,0,W,H,0,0,W,H);
+
+        if(
+          exportPlayback.manualCapture &&
+          exportPlayback.videoTrack &&
+          typeof exportPlayback.videoTrack.requestFrame === 'function'
+        ){
+          try{ exportPlayback.videoTrack.requestFrame(); }catch(error){}
+        }
+
+        exportPlayback.lastRequestedFrame = exportFrame;
+      }
+    }
 
     requestAnimationFrame(render);
   }
@@ -17593,12 +17656,30 @@ ctx.fill();</textarea>
     }
 
     /*
-      v182: use the normal canvas capture stream while the SAME `playing`
-      playback loop that drives Preview advances the timeline.
+      v183: record a DEDICATED export canvas.
+      The normal editor canvas is rendered first; each completed frame is then
+      copied into this canvas. Chrome/Edge can use requestFrame() so every frame
+      handed to MediaRecorder is an explicitly rendered Luke Animate frame.
     */
-    const stream = canvas.captureStream(fps);
-    const canvasVideoTrack = stream.getVideoTracks ? stream.getVideoTracks()[0] : null;
-    const manualCanvasCapture = false;
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = W;
+    exportCanvas.height = H;
+    const exportContext = exportCanvas.getContext('2d', { alpha:true });
+
+    let stream = exportCanvas.captureStream(0);
+    let canvasVideoTrack = stream.getVideoTracks ? stream.getVideoTracks()[0] : null;
+    let manualCanvasCapture = !!(
+      canvasVideoTrack &&
+      typeof canvasVideoTrack.requestFrame === 'function'
+    );
+
+    if(!manualCanvasCapture){
+      try{
+        (stream.getTracks ? stream.getTracks() : []).forEach(track=>track.stop());
+      }catch(ignoreZeroRateStop){}
+      stream = exportCanvas.captureStream(fps);
+      canvasVideoTrack = stream.getVideoTracks ? stream.getVideoTracks()[0] : null;
+    }
 
     let recordStream = stream;
     let usingAudio = false;
@@ -17627,6 +17708,15 @@ ctx.fill();</textarea>
       exportPlayback.videoTrack = null;
       exportPlayback.manualCapture = false;
       exportPlayback.lastRequestedFrame = -1;
+      exportPlayback.recorderStarted = false;
+      try{
+        if(exportPlayback.captureStream && exportPlayback.captureStream.getTracks){
+          exportPlayback.captureStream.getTracks().forEach(track=>track.stop());
+        }
+      }catch(ignoreCaptureCleanup){}
+      exportPlayback.captureStream = null;
+      exportPlayback.captureContext = null;
+      exportPlayback.captureCanvas = null;
       playing = restorePlaying;
       t = restoreTime;
       syncActiveSceneFrameForTime(t, true);
@@ -17656,6 +17746,11 @@ ctx.fill();</textarea>
     exportPlayback.videoTrack = canvasVideoTrack;
     exportPlayback.manualCapture = manualCanvasCapture;
     exportPlayback.lastRequestedFrame = -1;
+    exportPlayback.captureCanvas = exportCanvas;
+    exportPlayback.captureContext = exportContext;
+    exportPlayback.captureStream = stream;
+    exportPlayback.recorderStarted = false;
+    exportPlayback.currentFrameIndex = 0;
     exportPlayback.startPending = true;
     const exportDuration = exportPlayback.duration;
 
@@ -17679,14 +17774,16 @@ ctx.fill();</textarea>
     requestAnimationFrame(()=> requestAnimationFrame(()=>{
       if(!mediaRecorder || !exportPlayback.active || !exportPlayback.startPending) return;
       exportPlayback.startedAt = performance.now();
-      mediaRecorder.start();
+      mediaRecorder.start(250);
       exportPlayback.startPending = false;
 
-      // Start the SAME playback circuit used by the Play button.
+      // Export owns an exact frame-index clock. Preview Play remains untouched.
       t = 0;
+      playing = false;
       lastFrame = performance.now();
-      playing = true;
+      exportPlayback.currentFrameIndex = 0;
       exportPlayback.lastRequestedFrame = -1;
+      exportPlayback.recorderStarted = true;
 
       if(usingAudio) playAudioIfLoaded();
       btnStop.disabled = false;
@@ -17696,10 +17793,10 @@ ctx.fill();</textarea>
         if(!mediaRecorder || mediaRecorder.state !== 'recording') return;
         const elapsed = (performance.now()-startedAt)/1000;
         recTime.textContent = `SAVING ${Math.min(elapsed,exportDuration).toFixed(1)}s / ${exportDuration.toFixed(2)}s`;
-        // Allow one capture interval after the timeline reaches its end so the
-        // final rendered pose is present in the WebM, then stop recording.
+        // Allow one extra frame interval so frame N has been rendered, copied
+        // to the export canvas and requested before MediaRecorder is stopped.
         const stopAfter = exportDuration + (1 / Math.max(1, fps));
-        if(elapsed >= stopAfter || (!playing && t >= timelineDuration - 1e-9)){
+        if(elapsed >= stopAfter){
           mediaRecorder.stop();
           return;
         }
@@ -17720,6 +17817,15 @@ ctx.fill();</textarea>
       exportPlayback.videoTrack = null;
       exportPlayback.manualCapture = false;
       exportPlayback.lastRequestedFrame = -1;
+      exportPlayback.recorderStarted = false;
+      try{
+        if(exportPlayback.captureStream && exportPlayback.captureStream.getTracks){
+          exportPlayback.captureStream.getTracks().forEach(track=>track.stop());
+        }
+      }catch(ignoreCaptureCancelCleanup){}
+      exportPlayback.captureStream = null;
+      exportPlayback.captureContext = null;
+      exportPlayback.captureCanvas = null;
       playing = exportPlayback.previousPlaying;
       t = exportPlayback.previousTime;
       syncActiveSceneFrameForTime(t, true);
