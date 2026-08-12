@@ -1,4 +1,13 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.25
+/* Luke Animate Dem Bones + MyCharacter GPT v16.28
+   v16.28 fixes the remaining live-deformation failure. The skin bind pose is now
+   captured BEFORE an Edit Bone drag starts and old rigs are upgraded without
+   rebinding to the moved bone position. It also corrects the singleton version
+   so loading this script actually replaces v16.24-v16.27 code in an open session.
+   v16.27 restores the core skinning contract: moving/editing an ordinary bone deforms
+   the bound SVG/native curves instead of merely moving the bone overlay. The rig now
+   keeps a stable skin-bind skeleton separate from the editable/current skeleton, so
+   curves deform from the bind pose to the bone pose. Edit Bone no longer silently
+   re-binds the artwork on mouse-up, which was cancelling the deformation.
    v16.26 fixes the Part Dummy as a true parent transform in Character/Edit Bone as well as Animate.
    Moving, rotating or scaling a Dummy key now transforms the artwork, all ordinary bones
    and their envelopes together, while the ordinary bones continue to deform the already
@@ -65,7 +74,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.24";
+  var TOOL_VERSION = "16.28";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1072,8 +1081,10 @@
     return x*x*x*(x*(x*6-15)+10);
   }
 
-  function envelopeWeightForPoint(point,bone){
-    var info=pointToSegmentInfo(point,bone.restHead,bone.restTail);
+  function envelopeWeightForPoint(point,bone,bindTransform){
+    var head=bindTransform&&bindTransform.head?bindTransform.head:bone.restHead;
+    var tail=bindTransform&&bindTransform.tail?bindTransform.tail:bone.restTail;
+    var info=pointToSegmentInfo(point,head,tail);
     var radius=Math.max(
       1,
       n(bone.envStart,30)+
@@ -1092,12 +1103,13 @@
       Math.max(.001,n(bone.strength,1));
   }
 
-  function buildPointWeights(point,rig){
+  function buildPointWeights(point,rig,bindMap){
     var list=[];
+    bindMap=bindMap||null;
 
     (rig.bones||[]).forEach(function(b){
       if(String(b&&b.type||'').toLowerCase()==='dummy')return;
-      var w=envelopeWeightForPoint(point,b);
+      var w=envelopeWeightForPoint(point,b,bindMap&&bindMap[b.id]);
       if(w>.000001)list.push({
         boneId:b.id,
         weight:w
@@ -1109,10 +1121,11 @@
 
       (rig.bones||[]).forEach(function(b){
         if(String(b&&b.type||'').toLowerCase()==='dummy')return;
+        var q=bindMap&&bindMap[b.id];
         var d=distancePointToSegment(
           point,
-          b.restHead,
-          b.restTail
+          q&&q.head?q.head:b.restHead,
+          q&&q.tail?q.tail:b.restTail
         );
 
         if(!nearest||d<nearest.d)nearest={
@@ -1144,18 +1157,18 @@
         y:n(p.y,0)
       };
     });
+    var bindMap=skinBindTransformMap(rig);
 
-    d.version=4;
+    d.version=5;
     d.restPoints=points;
     d.weights=points.map(function(p){
-      return buildPointWeights(p,rig);
+      return buildPointWeights(p,rig,bindMap);
     });
 
     /*
       Native Luke Animate Bezier handles are offsets from each anchor. Skin
       their absolute control points separately, then reconstruct the offsets
-      after deformation. This is the critical v8 change that stops imported
-      SVG/native curves from developing lumpy or wrongly oriented bends.
+      after deformation.
     */
     if(
       !d.raster&&
@@ -1181,8 +1194,8 @@
         };
 
         return{
-          in:buildPointWeights(inPoint,rig),
-          out:buildPointWeights(outPoint,rig)
+          in:buildPointWeights(inPoint,rig,bindMap),
+          out:buildPointWeights(outPoint,rig,bindMap)
         };
       });
     }else{
@@ -1190,12 +1203,41 @@
       d.handleWeights=[];
     }
 
-    d.weightModel="envelope-v2-smooth";
+    d.weightModel="envelope-v2-smooth-bind-v1";
+  }
+
+  function reweightObjectSkinData(o,rig){
+    if(!o||!o.demBones)return;
+    var d=o.demBones;
+    if(!Array.isArray(d.restPoints)||!d.restPoints.length){rebuildObjectSkinData(o,rig);return;}
+    var bindMap=skinBindTransformMap(rig);
+    d.weights=d.restPoints.map(function(p){return buildPointWeights(p,rig,bindMap);});
+    if(!d.raster&&Array.isArray(d.restBezierHandles)&&d.restBezierHandles.length===d.restPoints.length){
+      d.handleWeights=d.restBezierHandles.map(function(handle,index){
+        var anchor=d.restPoints[index];
+        return{
+          in:buildPointWeights({x:anchor.x+n(handle.inX,0),y:anchor.y+n(handle.inY,0)},rig,bindMap),
+          out:buildPointWeights({x:anchor.x+n(handle.outX,0),y:anchor.y+n(handle.outY,0)},rig,bindMap)
+        };
+      });
+    }
+    d.version=5;
+    d.weightModel="envelope-v2-smooth-bind-v1";
+  }
+
+  function reweightRigSkinData(rig){
+    if(!rig)return;
+    normaliseRigBones(rig);
+    ensureRigSkinBind(rig);
+    rigObjects(rig).forEach(function(o){reweightObjectSkinData(o,rig);});
+    syncRigRefs(rig);
   }
 
   function rebuildRigSkinData(rig){
     if(!rig)return;
     normaliseRigBones(rig);
+    /* Explicit/full Bind establishes the immutable skin source skeleton. */
+    captureRigSkinBind(rig);
 
     rigObjects(rig).forEach(function(o){
       rebuildObjectSkinData(o,rig);
@@ -1329,7 +1371,13 @@
     state.selectedBoneId=bone.id;
     state.mode="add-bone";
     enforceRestChains();
-    bindRig(false);
+    if(rig.skinBindBones){
+      extendRigSkinBindWithBone(rig,bone);
+      reweightRigSkinData(rig);
+    }else{
+      bindRig(false);
+    }
+    syncRigDisplayGeometry(rig,currentTime());
     renderAll();
     notify(bone.name+" added"+(bone.parentId?" to the chain":"")+". Drag again to continue.",false);
   }
@@ -1358,7 +1406,9 @@
     state.drag=null;
     state.tab="bones";
     state.mode="dummy-adjust";
-    rebuildRigSkinData(rig);
+    ensureRigSkinBind(rig);
+    extendRigSkinBindWithBone(rig,bone);
+    syncRigRefs(rig);
     var characterPart=characterPartForRigId(rig.id);
     if(characterPart)syncCharacterPartRigRefs(characterPart);
     renderAll();API.refreshUI();
@@ -1411,9 +1461,10 @@
     }else state.mode="select";
 
     normaliseRigBones(rig);
+    if(rig.skinBindBones)delete rig.skinBindBones[bone.id];
 
     if(rig.bones.length){
-      rebuildRigSkinData(rig);
+      reweightRigSkinData(rig);
     }else{
       rigObjects(rig).forEach(function(o){
         if(o&&o.demBones){
@@ -1470,6 +1521,172 @@
       map[b.id]={head:clone(b.restHead),tail:clone(b.restTail),angle:a,length:l,scale:1};
     });
     return map;
+  }
+
+  /*
+    v16.27 SKIN BIND POSE
+    --------------------
+    Bone restHead/restTail are editable controls. They must NOT also be used as
+    the immutable source skeleton for skinning, otherwise moving an Edit Bone
+    moves both the source and destination skeleton together and the curve never
+    deforms. Keep a separate bind snapshot on the rig.
+  */
+  function captureRigSkinBind(rig){
+    if(!rig)return null;
+    normaliseRigBones(rig);
+    var bind={};
+    (rig.bones||[]).forEach(function(b){
+      if(!b||!b.id)return;
+      bind[b.id]={
+        head:clone(b.restHead),
+        tail:clone(b.restTail),
+        angle:angleOf(b.restHead,b.restTail),
+        length:Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y)),
+        scale:1
+      };
+    });
+    rig.skinBindBones=bind;
+    return bind;
+  }
+
+  function ensureRigSkinBind(rig){
+    if(!rig)return {};
+    normaliseRigBones(rig);
+    var stored=rig.skinBindBones&&typeof rig.skinBindBones==='object'?rig.skinBindBones:null;
+    if(!stored)stored=captureRigSkinBind(rig)||{};
+    (rig.bones||[]).forEach(function(b){
+      if(!b||!b.id||stored[b.id])return;
+      stored[b.id]={
+        head:clone(b.restHead),
+        tail:clone(b.restTail),
+        angle:angleOf(b.restHead,b.restTail),
+        length:Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y)),
+        scale:1
+      };
+    });
+    rig.skinBindBones=stored;
+    return stored;
+  }
+
+  function skinBindTransformMap(rig){
+    var stored=ensureRigSkinBind(rig),out={};
+    (rig&&rig.bones||[]).forEach(function(b){
+      var q=stored[b.id];
+      if(!q)return;
+      var head=clone(q.head),tail=clone(q.tail);
+      out[b.id]={
+        head:head,tail:tail,
+        angle:isFinite(Number(q.angle))?Number(q.angle):angleOf(head,tail),
+        length:Math.max(.001,n(q.length,Math.hypot(tail.x-head.x,tail.y-head.y))),
+        scale:1
+      };
+    });
+    return out;
+  }
+
+  function extendRigSkinBindWithBone(rig,bone){
+    if(!rig||!bone)return;
+    var bind=ensureRigSkinBind(rig);
+    bind[bone.id]={
+      head:clone(bone.restHead),
+      tail:clone(bone.restTail),
+      angle:angleOf(bone.restHead,bone.restTail),
+      length:Math.max(.001,Math.hypot(bone.restTail.x-bone.restHead.x,bone.restTail.y-bone.restHead.y)),
+      scale:1
+    };
+    rig.skinBindBones=bind;
+  }
+
+  /*
+    v16.28 PRE-EDIT SKIN PREPARATION
+    --------------------------------
+    Older rigs may not yet have skinBindBones or the v16.27 weight model.
+    The critical rule is that this migration MUST happen before the user moves
+    a bone. Otherwise the first evaluation can capture the already-moved bone
+    as the bind pose, making the artwork appear rigid while the bone wanders
+    away from it.
+
+    Preserve demBones.restPoints as the immutable mesh source whenever they
+    already exist. Only fall back to the currently displayed points when a
+    legacy object genuinely has no stored rest geometry.
+  */
+  function prepareRigSkinForEditing(rig){
+    if(!rig)return false;
+    normaliseRigBones(rig);
+
+    if(!rig.skinBindBones||typeof rig.skinBindBones!=="object"){
+      captureRigSkinBind(rig);
+    }else{
+      ensureRigSkinBind(rig);
+    }
+
+    var bindMap=skinBindTransformMap(rig);
+    var changed=false;
+
+    rigObjects(rig).forEach(function(object){
+      if(!object||!object.demBones)return;
+      var data=object.demBones;
+
+      if(!Array.isArray(data.restPoints)||!data.restPoints.length){
+        var fallbackPoints=Array.isArray(object.points)?object.points:[];
+        data.restPoints=fallbackPoints.map(function(point){
+          return{x:n(point.x,0),y:n(point.y,0)};
+        });
+        changed=true;
+      }
+
+      if(
+        !data.raster&&
+        Array.isArray(object.bezierHandles)&&
+        object.bezierHandles.length===data.restPoints.length&&
+        (
+          !Array.isArray(data.restBezierHandles)||
+          data.restBezierHandles.length!==data.restPoints.length
+        )
+      ){
+        data.restBezierHandles=copySkinBezierHandles(
+          object.bezierHandles,
+          data.restPoints.length
+        );
+        changed=true;
+      }
+
+      data.weights=data.restPoints.map(function(point){
+        return buildPointWeights(point,rig,bindMap);
+      });
+
+      if(
+        !data.raster&&
+        Array.isArray(data.restBezierHandles)&&
+        data.restBezierHandles.length===data.restPoints.length
+      ){
+        data.handleWeights=data.restBezierHandles.map(function(handle,index){
+          var anchor=data.restPoints[index];
+          return{
+            in:buildPointWeights(
+              {x:anchor.x+n(handle.inX,0),y:anchor.y+n(handle.inY,0)},
+              rig,
+              bindMap
+            ),
+            out:buildPointWeights(
+              {x:anchor.x+n(handle.outX,0),y:anchor.y+n(handle.outY,0)},
+              rig,
+              bindMap
+            )
+          };
+        });
+      }else{
+        data.handleWeights=[];
+      }
+
+      data.version=5;
+      data.weightModel="envelope-v2-smooth-bind-v1";
+      data.rig=rig;
+      changed=true;
+    });
+
+    syncRigRefs(rig);
+    return changed;
   }
 
   function rigControlDummy(rig){
@@ -2674,6 +2891,9 @@
 
   function openCharacterAllBonesEdit(part,bone){
     if(!state.character.parts.length)return false;
+    (state.character.parts||[]).forEach(function(characterPart){
+      if(characterPart&&characterPart.rig)prepareRigSkinForEditing(characterPart.rig);
+    });
     if(state.characterDummyActive)finishCharacterDummyControl();
     if(state.adjustingPartId)finishPartPlacementAdjust(true);
     if(!returnToCharacterRoot())return false;
@@ -2835,6 +3055,7 @@
   function activateStandaloneRigForEdit(hit){
     if(!hit||!hit.rig)return false;
     state.activeRig=hit.rig;
+    prepareRigSkinForEditing(state.activeRig);
     syncRigRefs(state.activeRig);
     state.selectedBoneId=state.activeRig.bones&&state.activeRig.bones.length?state.activeRig.bones[0].id:"";
     state.selectedCurveId=hit.object&&hit.object.type!=="image"?hit.object.id:"";
@@ -2992,7 +3213,7 @@
     normaliseRigBones(rig);
 
     if(
-      data.weightModel!=="envelope-v2-smooth"||
+      data.weightModel!=="envelope-v2-smooth-bind-v1"||
       !Array.isArray(data.weights)||
       data.weights.length!==data.restPoints.length||
       (
@@ -3006,15 +3227,25 @@
         )
       )
     ){
-      rebuildObjectSkinData(object,rig);
+      /*
+        Never auto-rebind from the currently displayed object geometry here.
+        Upgrade the weights against the stable pre-edit bind pose instead.
+      */
+      prepareRigSkinForEditing(rig);
       data=object.demBones;
     }
 
-    var rest=restTransformMap(rig);
+    /*
+      v16.27: deform FROM the immutable bind skeleton TO the current bone
+      skeleton. In Edit Bone the current restHead/restTail are the destination
+      pose, so dragging a bone visibly deforms the curve instead of moving only
+      the overlay. Animate adds keyed pose on top of that edited skeleton.
+    */
+    var rest=skinBindTransformMap(rig);
     var editingRestOnly=state.tab==="editbone";
-    /* Solve ordinary bone deformation locally, then apply the Part Dummy once
-       to the complete mesh. This makes Dummy scaling a real parent transform. */
-    var posed=editingRestOnly?rest:posedTransformMap(rig,time,{ignoreRigControl:true});
+    var posed=editingRestOnly
+      ?restTransformMap(rig)
+      :posedTransformMap(rig,time,{ignoreRigControl:true});
     var base=editingRestOnly?data.restPoints:interpolatePointKey(rig,object.id,time,data.restPoints);
 
     var points=base.map(function(point,index){
@@ -3454,6 +3685,13 @@
       b.restTail.x+=dx;
       b.restTail.y+=dy;
     });
+    if(rig&&rig.skinBindBones){
+      Object.keys(rig.skinBindBones).forEach(function(id){
+        var q=rig.skinBindBones[id];if(!q)return;
+        if(q.head){q.head.x=n(q.head.x,0)+dx;q.head.y=n(q.head.y,0)+dy;}
+        if(q.tail){q.tail.x=n(q.tail.x,0)+dx;q.tail.y=n(q.tail.y,0)+dy;}
+      });
+    }
     return rig;
   }
 
@@ -4110,6 +4348,7 @@
     focusCharacterPartCard(part);
     state.character.selectedPartId=part.id;
     state.activeRig=part.rig;
+    prepareRigSkinForEditing(state.activeRig);
     syncCharacterPartRigRefs(part);
     syncRigRefs(state.activeRig);
     if(!state.selectedBoneId||!(state.activeRig.bones||[]).some(function(b){return String(b.id)===String(state.selectedBoneId);}))
@@ -4146,6 +4385,7 @@
 
     focusCharacterPartCard(part);
     state.activeRig=part.rig;
+    prepareRigSkinForEditing(state.activeRig);
     syncCharacterPartRigRefs(part);
 
     if(state.activeRig){
@@ -5269,7 +5509,8 @@
     if(envEnd)b.envEnd=Math.max(2,n(envEnd.value,b.envEnd));
     if(strength)b.strength=Math.max(.05,n(strength.value,b.strength));
 
-    rebuildRigSkinData(state.activeRig);
+    reweightRigSkinData(state.activeRig);
+    syncRigDisplayGeometry(state.activeRig,currentTime());
     API.refreshUI();
   }
 
@@ -5792,6 +6033,7 @@
       if(!allHit){event.preventDefault();event.stopImmediatePropagation();return;}
       event.preventDefault();event.stopImmediatePropagation();
       focusCharacterPartCard(allHit.part);state.activeRig=allHit.part.rig;syncCharacterPartRigRefs(allHit.part);syncRigRefs(state.activeRig);state.selectedBoneId=allHit.bone.id;
+      prepareRigSkinForEditing(allHit.part.rig);
       API.pushUndo();
       var allPoint=currentScenePointToPartLocal(allHit.part,selectedScenePoint(event),currentTime());
       if(isDummyBone(allHit.bone)){
@@ -5853,6 +6095,7 @@
     if(!hit){if(state.tab==="editbone"||state.tab==="animate"){event.preventDefault();event.stopImmediatePropagation();}return;}
     event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;
     if(state.tab==="editbone"){
+      prepareRigSkinForEditing(state.activeRig);
       API.pushUndo();
       if(isDummyBone(hit.bone)){
         var editDummyMap=posedTransformMap(state.activeRig,currentTime());
@@ -5926,7 +6169,7 @@
       var cpBone=state.drag.bone,cpAnchor=state.drag.end==="start"?cpBone.restHead:cpBone.restTail;
       var cpRadius=clamp(Math.hypot(cpLocal.x-cpAnchor.x,cpLocal.y-cpAnchor.y),2,500);
       if(state.drag.end==="start")cpBone.envStart=round3(cpRadius);else cpBone.envEnd=round3(cpRadius);
-      state.activeRig=state.drag.part.rig;rebuildRigSkinData(state.activeRig);syncCharacterPartRigRefs(state.drag.part);API.refreshUI();return;
+      state.activeRig=state.drag.part.rig;reweightRigSkinData(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());syncCharacterPartRigRefs(state.drag.part);API.refreshUI();return;
     }
     if(state.drag.kind==="character-edit-rest"){
       var localNow=currentScenePointToPartLocal(state.drag.part,p,currentTime());
@@ -5956,7 +6199,9 @@
         }
       }
       cb.restLength=Math.max(.001,Math.hypot(cb.restTail.x-cb.restHead.x,cb.restTail.y-cb.restHead.y));cb.restAngle=angleOf(cb.restHead,cb.restTail);
-      enforceRestChains();normaliseRigBones(state.activeRig);syncCharacterPartRigRefs(state.drag.part);API.refreshUI();return;
+      enforceRestChains();normaliseRigBones(state.activeRig);
+      syncRigDisplayGeometry(state.activeRig,currentTime());
+      syncCharacterPartRigRefs(state.drag.part);API.refreshUI();return;
     }
     if(state.drag.kind==="maybe-add"){state.drag.current=p;if(Math.hypot(p.x-state.drag.start.x,p.y-state.drag.start.y)>=scenePixels(8)){state.drag.kind="add";state.addPreview={head:clone(state.drag.start),tail:clone(p)};}API.refreshUI();return;}
     if(state.drag.kind==="add"){state.drag.current=p;if(state.addPreview)state.addPreview.tail=clone(p);API.refreshUI();return;}
@@ -5966,7 +6211,7 @@
       if(envelopeControl)envelopePoint=inverseRigControlPoint(envelopePoint,envelopeControl);
       var eb=state.drag.bone,anchor=state.drag.end==="start"?eb.restHead:eb.restTail,radius=clamp(Math.hypot(envelopePoint.x-anchor.x,envelopePoint.y-anchor.y),2,500);
       if(state.drag.end==="start")eb.envStart=round3(radius);else eb.envEnd=round3(radius);
-      rebuildRigSkinData(state.activeRig);API.refreshUI();return;
+      reweightRigSkinData(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();return;
     }
     if(state.drag.kind==="edit-rest"){
       var b=state.drag.bone;
@@ -5996,7 +6241,8 @@
           state.drag.parent.restAngle=angleOf(state.drag.parent.restHead,state.drag.parent.restTail);
         }
       }
-      b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));b.restAngle=angleOf(b.restHead,b.restTail);enforceRestChains();normaliseRigBones(state.activeRig);API.refreshUI();return;
+      b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));b.restAngle=angleOf(b.restHead,b.restTail);enforceRestChains();normaliseRigBones(state.activeRig);
+      syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();return;
     }
     if(state.drag.kind==="animate-bone"){
       updateAnimatedBoneDrag(state.drag,p);
@@ -6019,10 +6265,10 @@
         syncCharacterPartRigRefs(characterAddPart);
       }
     }
-    else if(finished.kind==="character-edit-rest"){state.activeRig=finished.part.rig;bindRig(false);syncCharacterPartRigRefs(finished.part);notify("Rest bone updated for "+finished.part.name+".",false);}
-    else if(finished.kind==="character-resize-envelope"){state.activeRig=finished.part.rig;rebuildRigSkinData(state.activeRig);syncCharacterPartRigRefs(finished.part);notify("Envelope resized for "+finished.part.name+".",false);}
-    else if(finished.kind==="edit-rest"){bindRig(false);notify("Rest bone updated.",false);}
-    else if(finished.kind==="resize-envelope"){rebuildRigSkinData(state.activeRig);notify("Envelope resized.",false);}
+    else if(finished.kind==="character-edit-rest"){state.activeRig=finished.part.rig;syncRigDisplayGeometry(state.activeRig,currentTime());syncCharacterPartRigRefs(finished.part);notify("Bone moved — bound curves deformed with it for "+finished.part.name+".",false);}
+    else if(finished.kind==="character-resize-envelope"){state.activeRig=finished.part.rig;reweightRigSkinData(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());syncCharacterPartRigRefs(finished.part);notify("Envelope resized for "+finished.part.name+".",false);}
+    else if(finished.kind==="edit-rest"){syncRigDisplayGeometry(state.activeRig,currentTime());notify("Bone moved — bound curves deformed with it.",false);}
+    else if(finished.kind==="resize-envelope"){reweightRigSkinData(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());notify("Envelope resized.",false);}
     else if(finished.kind==="animate-bone"){API.refreshUI();notify("Bone pose keyed on frame "+currentFrame()+".",false);}
     else if(finished.kind==="closed-animate-bone"){syncCharacterPartRigRefs(finished.part);syncRigDisplayGeometry(finished.part.rig,currentTime());API.refreshUI();}
     else if(finished.kind==="closed-active-rig-bone"){syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();}
@@ -6490,7 +6736,7 @@
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> choose Add Dummy to create a box control, then position it immediately by dragging inside, scaling from a corner or rotating from the round handle. Add Dummy turns Add Bone OFF. A bone can only be drawn after you deliberately click Add Bone. The first Dummy is the Part controller: in Animate, dragging inside moves the complete part, a corner scales its curves and bones together, and the round handle rotates them together.</p><p class="db-help"><b>MyCharacter:</b> double-click the Character on stage to open all parts and all bones for editing. Every Character also has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> choose Add Dummy to create a box control, then position it immediately by dragging inside, scaling from a corner or rotating from the round handle. Add Dummy turns Add Bone OFF. A bone can only be drawn after you deliberately click Add Bone. The first Dummy is the Part controller: dragging it transforms the complete part. Ordinary bones always deform the bound curves; Edit Bone changes the skeleton and the artwork follows immediately, while Animate adds keyed poses on top.</p><p class="db-help"><b>MyCharacter:</b> double-click the Character on stage to open all parts and all bones for editing. Every Character also has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   var boneCursorCache={};
@@ -6548,9 +6794,9 @@
     p.querySelectorAll('[data-db-bone-id]').forEach(function(row){row.onclick=function(event){if(event&&event.target&&event.target.closest('[data-db-delete-bone-id]'))return;state.selectedBoneId=row.getAttribute('data-db-bone-id');if(state.tab==='bones'){var listedBone=selectedBone();state.mode=listedBone&&isDummyBone(listedBone)?'dummy-adjust':'select';}renderAll();};});p.querySelectorAll('[data-db-delete-bone-id]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}deleteBoneById(button.getAttribute('data-db-delete-bone-id'));};});p.querySelectorAll('[data-db-add-bone]').forEach(function(b){b.onclick=function(){if(!state.activeRig){notify('Build or load a part first.',true);return;}state.drag=null;state.addPreview=null;state.mode='add-bone';renderAll();notify('Add Bone active. Drag exactly where you want the bone. Keep dragging again to extend the chain.',false);};});p.querySelectorAll('[data-db-add-dummy]').forEach(function(b){b.onclick=function(){finishCharacterDummyControl();addDummyBone();};});p.querySelectorAll('[data-db-bind-rig]').forEach(function(b){b.onclick=bindRig;});p.querySelectorAll('[data-db-clear-bones]').forEach(function(b){b.onclick=clearBones;});p.querySelectorAll('[data-db-delete-bone]').forEach(function(b){b.onclick=deleteBone;});
     var editBoneSelect=p.querySelector('[data-db-edit-bone-select]');if(editBoneSelect)editBoneSelect.onchange=function(){state.selectedBoneId=editBoneSelect.value;renderAll();};
     var editBoneName=p.querySelector('[data-db-edit-bone-name]');if(editBoneName)editBoneName.onchange=function(){var b=selectedBone();if(!b)return;API.pushUndo();b.name=(editBoneName.value||b.name||'Bone').trim()||b.name||'Bone';renderAll();API.refreshUI();};
-    var editBoneType=p.querySelector('[data-db-edit-bone-type]');if(editBoneType)editBoneType.onchange=function(){var b=selectedBone();if(!b)return;API.pushUndo();b.type=editBoneType.value||'bone';normaliseRigBones(state.activeRig);bindRig(false);renderAll();};
-    var editBoneParent=p.querySelector('[data-db-edit-bone-parent]');if(editBoneParent)editBoneParent.onchange=function(){var b=selectedBone();if(!b)return;API.pushUndo();b.parentId=editBoneParent.value||'';normaliseRigBones(state.activeRig);enforceRestChains();bindRig(false);renderAll();};
-    var editBoneStrength=p.querySelector('[data-db-bone-strength-num]');if(editBoneStrength)editBoneStrength.onchange=function(){var b=selectedBone();if(!b)return;API.pushUndo();b.strength=Math.max(.05,n(editBoneStrength.value,b.strength||1));rebuildRigSkinData(state.activeRig);renderAll();API.refreshUI();};
+    var editBoneType=p.querySelector('[data-db-edit-bone-type]');if(editBoneType)editBoneType.onchange=function(){var b=selectedBone();if(!b)return;API.pushUndo();b.type=editBoneType.value||'bone';normaliseRigBones(state.activeRig);ensureRigSkinBind(state.activeRig);reweightRigSkinData(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());renderAll();API.refreshUI();};
+    var editBoneParent=p.querySelector('[data-db-edit-bone-parent]');if(editBoneParent)editBoneParent.onchange=function(){var b=selectedBone();if(!b)return;API.pushUndo();b.parentId=editBoneParent.value||'';normaliseRigBones(state.activeRig);enforceRestChains();syncRigDisplayGeometry(state.activeRig,currentTime());renderAll();API.refreshUI();};
+    var editBoneStrength=p.querySelector('[data-db-bone-strength-num]');if(editBoneStrength)editBoneStrength.onchange=function(){var b=selectedBone();if(!b)return;API.pushUndo();b.strength=Math.max(.05,n(editBoneStrength.value,b.strength||1));reweightRigSkinData(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());renderAll();API.refreshUI();};
     p.querySelectorAll('[data-db-show-envelopes]').forEach(function(input){input.onchange=function(){state.showEnvelopes=!!input.checked;API.refreshUI();};});
     bindPair('[data-db-pose-dx]','[data-db-pose-dx-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-dy]','[data-db-pose-dy-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-rotation]','[data-db-pose-rotation-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-scale]','[data-db-pose-scale-num]',previewBonePoseFromInputs);p.querySelectorAll('[data-db-set-bone-key]').forEach(function(b){b.onclick=setBoneKey;});p.querySelectorAll('[data-db-delete-bone-key]').forEach(function(b){b.onclick=deleteBoneKey;});
     var curveSel=p.querySelector('[data-db-curve-select]');if(curveSel)curveSel.onchange=function(){state.selectedCurveId=curveSel.value;state.selectedPointIndex=0;state.curvePointAddMode=false;renderAll();};p.querySelectorAll('[data-db-point-row]').forEach(function(row){row.onclick=function(e){if(e.target.tagName==='INPUT')return;state.selectedPointIndex=n(row.getAttribute('data-db-point-index'),0);renderAll();};});p.querySelectorAll('[data-db-point-x],[data-db-point-y]').forEach(function(inp){inp.onchange=function(){var o=findObjectById(state.selectedCurveId),i=n(inp.getAttribute('data-db-point-x')||inp.getAttribute('data-db-point-y'),0);if(!o||!o.points||!o.points[i])return;API.pushUndo();var x=o.points[i].x,y=o.points[i].y;if(inp.hasAttribute('data-db-point-x'))x=n(inp.value,x);else y=n(inp.value,y);setCurvePointSourcePosition(o,i,x,y);renderAll();};});p.querySelectorAll('[data-db-add-curve-point]').forEach(function(b){b.onclick=function(){state.curvePointAddMode=!state.curvePointAddMode;state.mode=state.curvePointAddMode?'add-curve-point':'select';renderAll();notify(state.curvePointAddMode?'Click a curve segment to insert a point. Ctrl+click also works.':'Add Point cancelled.',false);};});p.querySelectorAll('[data-db-subdivide-curve]').forEach(function(b){b.onclick=subdivideSelectedCurve;});p.querySelectorAll('[data-db-center-on-bone]').forEach(function(b){b.onclick=centerSelectedCurveOnBone;});p.querySelectorAll('[data-db-delete-source-point]').forEach(function(b){b.onclick=deleteSelectedCurvePoint;});p.querySelectorAll('[data-db-set-point-key]').forEach(function(b){b.onclick=setCurvePointKey;});p.querySelectorAll('[data-db-delete-point-key]').forEach(function(b){b.onclick=deleteCurvePointKey;});
@@ -6630,7 +6876,7 @@
     API.setSelectionInspectorSuppressed(TOOL_ID,true);
     API.setConfiguredToolActive(GROUP_ID,ITEM_ID,true);
     API.bringFloatingPanelToFront(state.panel);API.clampFloatingPanelToViewport(state.panel);
-    renderAll();notify('Dem Bones ready.',false);
+    renderAll();notify('Dem Bones v16.28 ready.',false);
   }
   function close(){
     if(state.characterDummyActive)finishCharacterDummyControl();
