@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.14
+/* Luke Animate Dem Bones + MyCharacter GPT v16.15
+   v16.15 restores post-add Character bone editing and bone creation in-place,
+   and closing the floating panel no longer navigates/finalises the stage.
    Native Luke Animate floating tool.
 
    v16.14 makes Character part selection stable:
@@ -36,7 +38,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.14";
+  var TOOL_VERSION = "16.15";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -3439,6 +3441,27 @@
     return changed;
   }
 
+  function activateCharacterPartRigTab(part,nextTab){
+    if(!part||!part.rig||!part.clipId||!clips()[part.clipId])return false;
+    if(state.adjustingPartId)finishPartPlacementAdjust(true);
+    if(!returnToCharacterRoot())return false;
+    focusCharacterPartCard(part);
+    state.character.selectedPartId=part.id;
+    state.activeRig=part.rig;
+    syncCharacterPartRigRefs(part);
+    syncRigRefs(state.activeRig);
+    if(!state.selectedBoneId||!(state.activeRig.bones||[]).some(function(b){return String(b.id)===String(state.selectedBoneId);}))
+      state.selectedBoneId=state.activeRig.bones&&state.activeRig.bones.length?state.activeRig.bones[0].id:"";
+    state.selectedCurveId="";
+    state.characterAllBonesEdit=(nextTab==="bones"||nextTab==="editbone");
+    state.tab=nextTab;
+    state.mode=nextTab==="bones"?"add-bone":"select";
+    if(nextTab==="bones"||nextTab==="editbone")state.showEnvelopes=true;
+    API.refreshUI();
+    renderAll();
+    return true;
+  }
+
   function activateCharacterPartMode(part,mode){
     state.characterAllBonesEdit=false;
     if(!part||!part.clipId||!clips()[part.clipId]){
@@ -3474,6 +3497,7 @@
     state.tab=mode==="animate"?"animate":"editbone";
     state.mode="select";
     state.showEnvelopes=mode!=="animate";
+    state.characterAllBonesEdit=mode!=="animate";
 
     API.refreshUI();
     renderAll();
@@ -4962,18 +4986,32 @@
       return;
     }
 
-    if(state.characterAllBonesEdit&&state.tab==="editbone"){
-      var allEnvHit=characterAllEditEnvelopeHandleHit(event);
-      if(allEnvHit){
-        event.preventDefault();event.stopImmediatePropagation();API.pushUndo();
-        state.character.selectedPartId=allEnvHit.part.id;state.activeRig=allEnvHit.part.rig;state.selectedBoneId=allEnvHit.bone.id;
-        state.drag={kind:"character-resize-envelope",pointerId:event.pointerId,part:allEnvHit.part,bone:allEnvHit.bone,end:allEnvHit.end,side:allEnvHit.side};
-        return;
+    if(state.characterAllBonesEdit&&(state.tab==="editbone"||state.tab==="bones")){
+      if(state.tab==="editbone"){
+        var allEnvHit=characterAllEditEnvelopeHandleHit(event);
+        if(allEnvHit){
+          event.preventDefault();event.stopImmediatePropagation();API.pushUndo();
+          focusCharacterPartCard(allEnvHit.part);state.activeRig=allEnvHit.part.rig;state.selectedBoneId=allEnvHit.bone.id;
+          state.drag={kind:"character-resize-envelope",pointerId:event.pointerId,part:allEnvHit.part,bone:allEnvHit.bone,end:allEnvHit.end,side:allEnvHit.side};
+          return;
+        }
       }
       var allHit=characterAllEditBoneHit(event);
+      if(state.tab==="bones"){
+        event.preventDefault();event.stopImmediatePropagation();
+        var addPart=allHit?allHit.part:partById(state.character.selectedPartId);
+        if(!addPart||!addPart.rig){notify("Select a Character part before adding a bone.",true);return;}
+        focusCharacterPartCard(addPart);state.activeRig=addPart.rig;syncCharacterPartRigRefs(addPart);syncRigRefs(state.activeRig);
+        if(allHit)state.selectedBoneId=allHit.bone.id;
+        var addScenePoint=selectedScenePoint(event);
+        var addLocalPoint=currentScenePointToPartLocal(addPart,addScenePoint,currentTime());
+        state.drag={kind:allHit?"character-maybe-add":"character-add",pointerId:event.pointerId,part:addPart,startScene:addScenePoint,startLocal:addLocalPoint,currentLocal:clone(addLocalPoint)};
+        if(!allHit)state.addPreview={characterPartId:addPart.id,head:clone(addLocalPoint),tail:clone(addLocalPoint)};
+        renderAll();API.refreshUI();return;
+      }
       if(!allHit){event.preventDefault();event.stopImmediatePropagation();return;}
       event.preventDefault();event.stopImmediatePropagation();API.pushUndo();
-      state.character.selectedPartId=allHit.part.id;state.activeRig=allHit.part.rig;syncCharacterPartRigRefs(allHit.part);syncRigRefs(state.activeRig);state.selectedBoneId=allHit.bone.id;
+      focusCharacterPartCard(allHit.part);state.activeRig=allHit.part.rig;syncCharacterPartRigRefs(allHit.part);syncRigRefs(state.activeRig);state.selectedBoneId=allHit.bone.id;
       var allPoint=currentScenePointToPartLocal(allHit.part,selectedScenePoint(event),currentTime());
       var allParent=allHit.bone.parentId?(allHit.part.rig.bones||[]).filter(function(candidate){return String(candidate.id)===String(allHit.bone.parentId);})[0]||null:null;
       state.drag={kind:"character-edit-rest",pointerId:event.pointerId,part:allHit.part,bone:allHit.bone,parent:allParent,handle:allHit.handle,startPointer:allPoint,startHead:clone(allHit.bone.restHead),startTail:clone(allHit.bone.restTail),startParentTail:allParent?clone(allParent.restTail):null};
@@ -5033,6 +5071,23 @@
       API.refreshUI();return;
     }
     if(!state.open)return;
+    if(state.drag.kind==="character-maybe-add"){
+      var cmScene=selectedScenePoint(event);
+      var cmLocal=currentScenePointToPartLocal(state.drag.part,cmScene,currentTime());
+      state.drag.currentLocal=clone(cmLocal);
+      if(Math.hypot(cmScene.x-state.drag.startScene.x,cmScene.y-state.drag.startScene.y)>=scenePixels(8)){
+        state.drag.kind="character-add";
+        state.addPreview={characterPartId:state.drag.part.id,head:clone(state.drag.startLocal),tail:clone(cmLocal)};
+      }
+      API.refreshUI();return;
+    }
+    if(state.drag.kind==="character-add"){
+      var caLocal=currentScenePointToPartLocal(state.drag.part,p,currentTime());
+      state.drag.currentLocal=clone(caLocal);
+      if(!state.addPreview)state.addPreview={characterPartId:state.drag.part.id,head:clone(state.drag.startLocal),tail:clone(caLocal)};
+      else state.addPreview.tail=clone(caLocal);
+      API.refreshUI();return;
+    }
     if(state.drag.kind==="character-resize-envelope"){
       var cpLocal=currentScenePointToPartLocal(state.drag.part,p,currentTime());
       var cpBone=state.drag.bone,cpAnchor=state.drag.end==="start"?cpBone.restHead:cpBone.restTail;
@@ -5095,6 +5150,15 @@
     if(state.drag.pointerId!==undefined&&event.pointerId!==state.drag.pointerId)return;
     event.preventDefault();event.stopImmediatePropagation();var finished=state.drag;
     if(finished.kind==="add"&&state.addPreview){var type=state.panel&&state.panel.querySelector("[data-db-bone-type]")?state.panel.querySelector("[data-db-bone-type]").value:"bone";addBone(state.addPreview.head,state.addPreview.tail,type);}
+    else if(finished.kind==="character-add"&&state.addPreview){
+      var characterAddPart=finished.part||partById(state.addPreview.characterPartId);
+      if(characterAddPart&&characterAddPart.rig){
+        state.activeRig=characterAddPart.rig;focusCharacterPartCard(characterAddPart);syncCharacterPartRigRefs(characterAddPart);syncRigRefs(state.activeRig);
+        var characterAddType=state.panel&&state.panel.querySelector("[data-db-bone-type]")?state.panel.querySelector("[data-db-bone-type]").value:"bone";
+        addBone(state.addPreview.head,state.addPreview.tail,characterAddType);
+        syncCharacterPartRigRefs(characterAddPart);
+      }
+    }
     else if(finished.kind==="character-edit-rest"){state.activeRig=finished.part.rig;bindRig(false);syncCharacterPartRigRefs(finished.part);notify("Rest bone updated for "+finished.part.name+".",false);}
     else if(finished.kind==="character-resize-envelope"){state.activeRig=finished.part.rig;rebuildRigSkinData(state.activeRig);syncCharacterPartRigRefs(finished.part);notify("Envelope resized for "+finished.part.name+".",false);}
     else if(finished.kind==="edit-rest"){bindRig(false);notify("Rest bone updated.",false);}
@@ -5270,8 +5334,16 @@
       return;
     }
 
-    if(state.characterAllBonesEdit&&state.tab==="editbone"){
+    if(state.characterAllBonesEdit&&(state.tab==="editbone"||state.tab==="bones")){
       drawCharacterAllEditBones(ctx);
+      if(state.tab==="bones"&&state.addPreview&&state.addPreview.characterPartId){
+        var previewPart=partById(state.addPreview.characterPartId);
+        if(previewPart){
+          var previewHead=partLocalPointToCurrentCharacterScene(previewPart,state.addPreview.head,currentTime());
+          var previewTail=partLocalPointToCurrentCharacterScene(previewPart,state.addPreview.tail,currentTime());
+          drawBone(ctx,{name:"New Bone"},{head:previewHead,tail:previewTail},true);
+        }
+      }
       return;
     }
 
@@ -5571,7 +5643,18 @@
     ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;
     state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.png=panel.querySelector('[data-db-png]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');
     API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;
-    panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){var nextTab=b.getAttribute('data-db-tab');if(nextTab!=='editbone')state.characterAllBonesEdit=false;if(state.adjustingPartId&&nextTab!=='character')finishPartPlacementAdjust(true);if(state.tab==='character'&&nextTab!=='character'&&state.character.rootClipId&&API.getEditingClipId()===state.character.rootClipId){state.activeRig=null;state.selectedBoneId='';state.selectedCurveId='';}state.tab=nextTab;state.curvePointAddMode=false;state.mode=state.tab==='bones'?'add-bone':'select';if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}renderAll();};});
+    panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){
+      var nextTab=b.getAttribute('data-db-tab');
+      state.curvePointAddMode=false;
+      if(state.adjustingPartId&&nextTab!=='character')finishPartPlacementAdjust(true);
+      var selectedPart=partById(state.character.selectedPartId);
+      if(selectedPart&&['bones','editbone'].indexOf(nextTab)>=0&&activateCharacterPartRigTab(selectedPart,nextTab))return;
+      if(nextTab!=='editbone'&&nextTab!=='bones')state.characterAllBonesEdit=false;
+      state.tab=nextTab;
+      state.mode=state.tab==='bones'?'add-bone':'select';
+      if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}
+      renderAll();
+    };});
     state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};
     state.fileInputs.png.onchange=function(){var f=this.files&&this.files[0];if(f)loadPngFile(f);this.value='';};
     state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};
@@ -5640,16 +5723,18 @@
   }
   function close(){
     if(state.adjustingPartId)finishPartPlacementAdjust(true);
+
     /*
-      Closing DemBones after a Character exists is a final assembly handoff:
-      leave one Character on Main Scene, discard loose Build Parts artwork,
-      but keep the Character skeleton overlay available.
+      v16.15: closing the floating panel is now UI-only. Do not exit the
+      Character Clip, finalise it again, change its selection, or rebuild the
+      stage. Those navigation side effects were what made the stage jump left.
+      Parts are already finalised when they are added to MyCharacter.
     */
-    if(state.character.parts.length){
-      finaliseCharacterOnStage(
-        true
-      );
-    }
+    var stageWrap=null,viewLeft=0,viewTop=0,viewWidth=0,viewHeight=0;
+    try{
+      stageWrap=document.getElementById('stage-wrap');
+      if(stageWrap){viewLeft=stageWrap.scrollLeft;viewTop=stageWrap.scrollTop;viewWidth=stageWrap.clientWidth;viewHeight=stageWrap.clientHeight;}
+    }catch(ignoreCloseViewport){}
 
     state.open=false;
     state.characterAllBonesEdit=false;
@@ -5675,6 +5760,16 @@
     updateStageCursor();
 
     API.refreshUI();
+    if(stageWrap){
+      requestAnimationFrame(function(){
+        try{
+          var widthDelta=viewWidth-stageWrap.clientWidth;
+          var heightDelta=viewHeight-stageWrap.clientHeight;
+          stageWrap.scrollLeft=Math.max(0,viewLeft+widthDelta*0.5);
+          stageWrap.scrollTop=Math.max(0,viewTop+heightDelta*0.5);
+        }catch(ignoreRestoreViewport){}
+      });
+    }
   }
 
   var plugin={version:TOOL_VERSION,open:open,close:close,get panel(){return state.panel;},get state(){return state;},refresh:function(){syncRigRefs(state.activeRig);renderAll();API.refreshUI();}};
