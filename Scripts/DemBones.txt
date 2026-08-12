@@ -1,4 +1,9 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.28
+/* Luke Animate Dem Bones + MyCharacter GPT v16.30
+   v16.29 restores the intended two-mode rig contract:
+   - Edit Bone/Bones edit the REST skeleton and envelopes only. The artwork does not deform.
+   - Animate evaluates the current pose FROM that rest skeleton and deforms the bound curves.
+   - Rest edits are committed as the new bind setup on pointer release, without baking deformation.
+   - Character-wide Animate uses Character coordinate conversion so bones stay over their parts.
    v16.28 fixes the remaining live-deformation failure. The skin bind pose is now
    captured BEFORE an Edit Bone drag starts and old rigs are upgraded without
    rebinding to the moved bone position. It also corrects the singleton version
@@ -74,7 +79,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.28";
+  var TOOL_VERSION = "16.30";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -770,6 +775,47 @@
     return rig;
   }
 
+  /*
+    v16.30 CLOSED-PANEL RUNTIME
+    --------------------------
+    DemBones is a stage animation system, not a panel effect. Once a rig exists,
+    its keyed bone pose and Dummy parent transform must continue to drive the
+    artwork whether the floating panel is open or closed. Collect every live rig
+    reachable from Character parts, loose Build Parts and stored draw objects so
+    playback never depends on state.activeRig.
+  */
+  function allLiveDemBonesRigs(){
+    var byId=Object.create(null),out=[];
+    function add(rig){
+      if(!rig||rig.id===undefined||rig.id===null)return;
+      var id=String(rig.id);
+      if(byId[id])return;
+      var live=liveRigById(id,rig)||rig;
+      byId[id]=live;
+      out.push(live);
+    }
+    add(state.activeRig);
+    (state.character&&state.character.parts||[]).forEach(function(part){if(part)add(part.rig);});
+    Object.keys(state.looseBuildParts||{}).forEach(function(id){var entry=state.looseBuildParts[id];if(entry)add(entry.rig);});
+    allObjectArrays().forEach(function(list){
+      (list||[]).forEach(function(object){
+        if(object&&object.demBones)add(liveRigForDemBonesData(object.demBones)||object.demBones.rig);
+        if(object&&object.demBonesExpression)add(liveRigById(object.demBonesExpression.rigId,object.demBonesExpression.rig));
+      });
+    });
+    return out;
+  }
+
+  function syncDemBonesRuntimePlayback(time){
+    var changed=false;
+    allLiveDemBonesRigs().forEach(function(rig){
+      if(!rig)return;
+      syncRigRefs(rig);
+      if(syncRigDisplayGeometry(rig,time))changed=true;
+    });
+    return changed;
+  }
+
   function demBonesEvaluationTime(data,fallbackTime,api){
     var time=n(fallbackTime,currentTime());
     var part=data?characterPartForRigId(data.rigId):null;
@@ -1157,9 +1203,9 @@
         y:n(p.y,0)
       };
     });
-    var bindMap=skinBindTransformMap(rig);
+    var bindMap=restTransformMap(rig);
 
-    d.version=5;
+    d.version=6;
     d.restPoints=points;
     d.weights=points.map(function(p){
       return buildPointWeights(p,rig,bindMap);
@@ -1203,14 +1249,14 @@
       d.handleWeights=[];
     }
 
-    d.weightModel="envelope-v2-smooth-bind-v1";
+    d.weightModel="envelope-v3-rest-setup-v1";
   }
 
   function reweightObjectSkinData(o,rig){
     if(!o||!o.demBones)return;
     var d=o.demBones;
     if(!Array.isArray(d.restPoints)||!d.restPoints.length){rebuildObjectSkinData(o,rig);return;}
-    var bindMap=skinBindTransformMap(rig);
+    var bindMap=restTransformMap(rig);
     d.weights=d.restPoints.map(function(p){return buildPointWeights(p,rig,bindMap);});
     if(!d.raster&&Array.isArray(d.restBezierHandles)&&d.restBezierHandles.length===d.restPoints.length){
       d.handleWeights=d.restBezierHandles.map(function(handle,index){
@@ -1221,16 +1267,29 @@
         };
       });
     }
-    d.version=5;
-    d.weightModel="envelope-v2-smooth-bind-v1";
+    d.version=6;
+    d.weightModel="envelope-v3-rest-setup-v1";
   }
 
   function reweightRigSkinData(rig){
     if(!rig)return;
     normaliseRigBones(rig);
-    ensureRigSkinBind(rig);
+    /* The current rest skeleton IS the setup/bind skeleton. Keep the legacy
+       skinBindBones snapshot synchronized for saved-file compatibility. */
+    captureRigSkinBind(rig);
     rigObjects(rig).forEach(function(o){reweightObjectSkinData(o,rig);});
     syncRigRefs(rig);
+  }
+
+  function commitRigRestSetup(rig){
+    if(!rig)return false;
+    normaliseRigBones(rig);
+    captureRigSkinBind(rig);
+    rigObjects(rig).forEach(function(o){
+      if(o&&o.demBones)reweightObjectSkinData(o,rig);
+    });
+    syncRigRefs(rig);
+    return true;
   }
 
   function rebuildRigSkinData(rig){
@@ -1614,13 +1673,10 @@
     if(!rig)return false;
     normaliseRigBones(rig);
 
-    if(!rig.skinBindBones||typeof rig.skinBindBones!=="object"){
-      captureRigSkinBind(rig);
-    }else{
-      ensureRigSkinBind(rig);
-    }
-
-    var bindMap=skinBindTransformMap(rig);
+    /* Edit Bone is setup mode. The current restHead/restTail skeleton is the
+       source skeleton for future animation. Never derive it from a posed frame. */
+    captureRigSkinBind(rig);
+    var bindMap=restTransformMap(rig);
     var changed=false;
 
     rigObjects(rig).forEach(function(object){
@@ -1679,8 +1735,8 @@
         data.handleWeights=[];
       }
 
-      data.version=5;
-      data.weightModel="envelope-v2-smooth-bind-v1";
+      data.version=6;
+      data.weightModel="envelope-v3-rest-setup-v1";
       data.rig=rig;
       changed=true;
     });
@@ -3207,13 +3263,12 @@
     var data=object.demBones;
     var rig=liveRigForDemBonesData(data);
     if(!rig)return null;
-
     if(!Array.isArray(data.restPoints)||!data.restPoints.length)return null;
 
     normaliseRigBones(rig);
 
     if(
-      data.weightModel!=="envelope-v2-smooth-bind-v1"||
+      data.weightModel!=="envelope-v3-rest-setup-v1"||
       !Array.isArray(data.weights)||
       data.weights.length!==data.restPoints.length||
       (
@@ -3227,34 +3282,37 @@
         )
       )
     ){
-      /*
-        Never auto-rebind from the currently displayed object geometry here.
-        Upgrade the weights against the stable pre-edit bind pose instead.
-      */
       prepareRigSkinForEditing(rig);
       data=object.demBones;
     }
 
     /*
-      v16.27: deform FROM the immutable bind skeleton TO the current bone
-      skeleton. In Edit Bone the current restHead/restTail are the destination
-      pose, so dragging a bone visibly deforms the curve instead of moving only
-      the overlay. Animate adds keyed pose on top of that edited skeleton.
+      v16.29 CONTRACT
+      --------------
+      REST/SETUP MODE (Bones, Edit Bone, Curves): source and destination are
+      both the current rest skeleton, therefore ordinary bones NEVER deform
+      the artwork while they are being positioned.
+
+      ANIMATION/PLAYBACK: deform from the current rest skeleton to the keyed
+      posed skeleton. This is the only place ordinary skeletal deformation is
+      evaluated.
     */
-    var rest=skinBindTransformMap(rig);
-    var editingRestOnly=state.tab==="editbone";
-    var posed=editingRestOnly
-      ?restTransformMap(rig)
+    var rest=restTransformMap(rig);
+    var setupMode=!!(state.open&&(state.tab==="bones"||state.tab==="editbone"||state.tab==="curves"));
+    var posed=setupMode
+      ?rest
       :posedTransformMap(rig,time,{ignoreRigControl:true});
-    var base=editingRestOnly?data.restPoints:interpolatePointKey(rig,object.id,time,data.restPoints);
+    var base=setupMode
+      ?data.restPoints
+      :interpolatePointKey(rig,object.id,time,data.restPoints);
 
     var points=base.map(function(point,index){
       return deformPoint(point,data.weights[index],rest,posed);
     });
-
     var handles=deformBezierHandles(base,points,data,rest,posed);
-    /* The Dummy is a parent transform, not an ordinary bone. Even while the
-       Edit Bone tab is open its keyed transform must still carry the mesh. */
+
+    /* Dummy remains a parent transform. It may rigidly move/rotate/scale the
+       complete part, but that is separate from ordinary bone deformation. */
     var control=rigControlDummyTransform(rig,time);
     if(control){
       points=points.map(function(point){return applyRigControlPoint(point,control);});
@@ -3268,11 +3326,7 @@
       }
     }
 
-    return{
-      points:points,
-      closedPath:!!data.closedPath,
-      bezierHandles:handles
-    };
+    return{points:points,closedPath:!!data.closedPath,bezierHandles:handles};
   }
 
   function syncRigDisplayGeometry(rig,time){
@@ -4354,10 +4408,10 @@
     if(!state.selectedBoneId||!(state.activeRig.bones||[]).some(function(b){return String(b.id)===String(state.selectedBoneId);}))
       state.selectedBoneId=state.activeRig.bones&&state.activeRig.bones.length?state.activeRig.bones[0].id:"";
     state.selectedCurveId="";
-    state.characterAllBonesEdit=(nextTab==="bones"||nextTab==="editbone");
+    state.characterAllBonesEdit=(nextTab==="bones"||nextTab==="editbone"||nextTab==="animate");
     state.tab=nextTab;
     state.mode="select";
-    if(nextTab==="bones"||nextTab==="editbone")state.showEnvelopes=true;
+    if(nextTab==="bones"||nextTab==="editbone")state.showEnvelopes=true;else if(nextTab==="animate")state.showEnvelopes=false;
     API.refreshUI();
     renderAll();
     return true;
@@ -4399,7 +4453,7 @@
     state.tab=mode==="animate"?"animate":"editbone";
     state.mode="select";
     state.showEnvelopes=mode!=="animate";
-    state.characterAllBonesEdit=mode!=="animate";
+    state.characterAllBonesEdit=true;
 
     API.refreshUI();
     renderAll();
@@ -5918,9 +5972,15 @@
           event.preventDefault();event.stopImmediatePropagation();
           state.closedBonePartId=closedHit.part.id;state.closedBoneId=closedHit.bone.id;
           API.pushUndo();
-          var localPointer=characterPointToPartLocal(closedHit.part,selectedScenePoint(event),currentTime());
-          var map=posedTransformMap(closedHit.part.rig,currentTime());
-          state.drag={kind:"closed-animate-bone",pointerId:event.pointerId,part:closedHit.part,bone:closedHit.bone,handle:closedHit.handle,startPointer:localPointer,startPose:clone(interpolatePose(closedHit.bone,currentTime())),startTransform:clone(map[closedHit.bone.id]),key:ensureBoneKeyForDrag(closedHit.bone,currentTime())};
+          prepareRigSkinForEditing(closedHit.part.rig);
+          var closedIsDummy=isDummyBone(closedHit.bone);
+          var closedControl=rigControlDummyTransform(closedHit.part.rig,currentTime());
+          var localPointer=currentScenePointToPartLocal(closedHit.part,selectedScenePoint(event),currentTime());
+          if(!closedIsDummy&&closedControl)localPointer=inverseRigControlPoint(localPointer,closedControl);
+          var map=closedIsDummy
+            ?posedTransformMap(closedHit.part.rig,currentTime())
+            :posedTransformMap(closedHit.part.rig,currentTime(),{ignoreRigControl:true});
+          state.drag={kind:"closed-animate-bone",pointerId:event.pointerId,part:closedHit.part,bone:closedHit.bone,handle:closedHit.handle,startPointer:localPointer,startPose:clone(interpolatePose(closedHit.bone,currentTime())),startTransform:clone(map[closedHit.bone.id]),key:ensureBoneKeyForDrag(closedHit.bone,currentTime()),inverseDummyControl:(!closedIsDummy&&closedControl)?clone(closedControl):null};
           ensureRigKeyedAtTime(closedHit.part.rig,currentTime(),closedHit.bone.id);
           API.refreshUI();return;
         }
@@ -5930,8 +5990,15 @@
         if(looseBoneHit){
           event.preventDefault();event.stopImmediatePropagation();API.pushUndo();
           state.closedBonePartId=null;state.closedBoneId=looseBoneHit.bone.id;
-          var looseMap=posedTransformMap(state.activeRig,currentTime());
-          state.drag={kind:"closed-active-rig-bone",pointerId:event.pointerId,bone:looseBoneHit.bone,handle:looseBoneHit.handle,startPointer:selectedScenePoint(event),startPose:clone(interpolatePose(looseBoneHit.bone,currentTime())),startTransform:clone(looseMap[looseBoneHit.bone.id]),key:ensureBoneKeyForDrag(looseBoneHit.bone,currentTime())};
+          prepareRigSkinForEditing(state.activeRig);
+          var closedLooseIsDummy=isDummyBone(looseBoneHit.bone);
+          var closedLooseControl=rigControlDummyTransform(state.activeRig,currentTime());
+          var closedLoosePointer=selectedScenePoint(event);
+          if(!closedLooseIsDummy&&closedLooseControl)closedLoosePointer=inverseRigControlPoint(closedLoosePointer,closedLooseControl);
+          var looseMap=closedLooseIsDummy
+            ?posedTransformMap(state.activeRig,currentTime())
+            :posedTransformMap(state.activeRig,currentTime(),{ignoreRigControl:true});
+          state.drag={kind:"closed-active-rig-bone",pointerId:event.pointerId,bone:looseBoneHit.bone,handle:looseBoneHit.handle,startPointer:closedLoosePointer,startPose:clone(interpolatePose(looseBoneHit.bone,currentTime())),startTransform:clone(looseMap[looseBoneHit.bone.id]),key:ensureBoneKeyForDrag(looseBoneHit.bone,currentTime()),inverseDummyControl:(!closedLooseIsDummy&&closedLooseControl)?clone(closedLooseControl):null};
           ensureRigKeyedAtTime(state.activeRig,currentTime(),looseBoneHit.bone.id);
           API.refreshUI();return;
         }
@@ -5987,6 +6054,35 @@
         return;
       }
       return;
+    }
+
+    if(state.characterAllBonesEdit&&state.tab==="animate"){
+      var characterAnimateHit=characterAnimationBoneHit(event);
+      if(!characterAnimateHit){event.preventDefault();event.stopImmediatePropagation();return;}
+      event.preventDefault();event.stopImmediatePropagation();
+      focusCharacterPartCard(characterAnimateHit.part);
+      state.activeRig=characterAnimateHit.part.rig;
+      syncCharacterPartRigRefs(characterAnimateHit.part);
+      syncRigRefs(state.activeRig);
+      state.selectedBoneId=characterAnimateHit.bone.id;
+      API.pushUndo();
+      var characterAnimatePointer=currentScenePointToPartLocal(characterAnimateHit.part,selectedScenePoint(event),currentTime());
+      var characterAnimateIsDummy=isDummyBone(characterAnimateHit.bone);
+      var characterAnimateControl=rigControlDummyTransform(state.activeRig,currentTime());
+      if(!characterAnimateIsDummy&&characterAnimateControl)characterAnimatePointer=inverseRigControlPoint(characterAnimatePointer,characterAnimateControl);
+      var characterAnimateMap=characterAnimateIsDummy
+        ?posedTransformMap(state.activeRig,currentTime())
+        :posedTransformMap(state.activeRig,currentTime(),{ignoreRigControl:true});
+      state.drag={
+        kind:"character-animate-bone",pointerId:event.pointerId,part:characterAnimateHit.part,
+        bone:characterAnimateHit.bone,handle:characterAnimateHit.handle,
+        startPointer:characterAnimatePointer,startPose:clone(interpolatePose(characterAnimateHit.bone,currentTime())),
+        startTransform:clone(characterAnimateMap[characterAnimateHit.bone.id]),
+        key:ensureBoneKeyForDrag(characterAnimateHit.bone,currentTime()),
+        inverseDummyControl:(!characterAnimateIsDummy&&characterAnimateControl)?clone(characterAnimateControl):null
+      };
+      ensureRigKeyedAtTime(state.activeRig,currentTime(),characterAnimateHit.bone.id);
+      renderAll();API.refreshUI();return;
     }
 
     if(state.characterAllBonesEdit&&(state.tab==="editbone"||state.tab==="bones")){
@@ -6108,7 +6204,15 @@
       state.drag={kind:"edit-rest",pointerId:event.pointerId,bone:hit.bone,parent:parent,handle:hit.handle,startPointer:restPoint,startHead:clone(hit.bone.restHead),startTail:clone(hit.bone.restTail),startParentTail:parent?clone(parent.restTail):null};renderAll();return;
     }
     if(state.tab==="animate"){
-      API.pushUndo();var map=posedTransformMap(state.activeRig,currentTime());state.drag={kind:"animate-bone",pointerId:event.pointerId,bone:hit.bone,handle:hit.handle,startPointer:point,startPose:clone(interpolatePose(hit.bone,currentTime())),startTransform:clone(map[hit.bone.id]),key:ensureBoneKeyForDrag(hit.bone,currentTime())};ensureRigKeyedAtTime(state.activeRig,currentTime(),hit.bone.id);renderAll();return;
+      API.pushUndo();
+      var animateIsDummy=isDummyBone(hit.bone);
+      var animateControl=rigControlDummyTransform(state.activeRig,currentTime());
+      var animatePointer=(!animateIsDummy&&animateControl)?inverseRigControlPoint(point,animateControl):point;
+      var map=animateIsDummy
+        ?posedTransformMap(state.activeRig,currentTime())
+        :posedTransformMap(state.activeRig,currentTime(),{ignoreRigControl:true});
+      state.drag={kind:"animate-bone",pointerId:event.pointerId,bone:hit.bone,handle:hit.handle,startPointer:animatePointer,startPose:clone(interpolatePose(hit.bone,currentTime())),startTransform:clone(map[hit.bone.id]),key:ensureBoneKeyForDrag(hit.bone,currentTime()),inverseDummyControl:(!animateIsDummy&&animateControl)?clone(animateControl):null};
+      ensureRigKeyedAtTime(state.activeRig,currentTime(),hit.bone.id);renderAll();return;
     }
     renderAll();
   }
@@ -6122,17 +6226,28 @@
       return;
     }
     if(state.drag.kind==="closed-animate-bone"){
-      var lp=characterPointToPartLocal(state.drag.part,p,currentTime());updateAnimatedBoneDrag(state.drag,lp);
+      var lp=currentScenePointToPartLocal(state.drag.part,p,currentTime());
+      if(state.drag.inverseDummyControl)lp=inverseRigControlPoint(lp,state.drag.inverseDummyControl);
+      updateAnimatedBoneDrag(state.drag,lp);
       syncCharacterPartRigRefs(state.drag.part);
       syncRigDisplayGeometry(state.drag.part.rig,currentTime());
       API.refreshUI();return;
     }
     if(state.drag.kind==="closed-active-rig-bone"){
-      updateAnimatedBoneDrag(state.drag,p);
+      var closedLooseMovePoint=state.drag.inverseDummyControl?inverseRigControlPoint(p,state.drag.inverseDummyControl):p;
+      updateAnimatedBoneDrag(state.drag,closedLooseMovePoint);
       syncRigDisplayGeometry(state.activeRig,currentTime());
       API.refreshUI();return;
     }
     if(!state.open)return;
+    if(state.drag.kind==="character-animate-bone"){
+      var characterAnimateLocal=currentScenePointToPartLocal(state.drag.part,p,currentTime());
+      if(state.drag.inverseDummyControl)characterAnimateLocal=inverseRigControlPoint(characterAnimateLocal,state.drag.inverseDummyControl);
+      updateAnimatedBoneDrag(state.drag,characterAnimateLocal);
+      syncCharacterPartRigRefs(state.drag.part);
+      syncRigDisplayGeometry(state.drag.part.rig,currentTime());
+      API.refreshUI();return;
+    }
     if(state.drag.kind==="character-edit-dummy-transform"){
       var cedLocal=currentScenePointToPartLocal(state.drag.part,p,currentTime());
       updateAnimatedBoneDrag(state.drag,cedLocal);
@@ -6245,7 +6360,8 @@
       syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();return;
     }
     if(state.drag.kind==="animate-bone"){
-      updateAnimatedBoneDrag(state.drag,p);
+      var animateMovePoint=state.drag.inverseDummyControl?inverseRigControlPoint(p,state.drag.inverseDummyControl):p;
+      updateAnimatedBoneDrag(state.drag,animateMovePoint);
       syncRigDisplayGeometry(state.activeRig,currentTime());
       API.refreshUI();return;
     }
@@ -6265,11 +6381,12 @@
         syncCharacterPartRigRefs(characterAddPart);
       }
     }
-    else if(finished.kind==="character-edit-rest"){state.activeRig=finished.part.rig;syncRigDisplayGeometry(state.activeRig,currentTime());syncCharacterPartRigRefs(finished.part);notify("Bone moved — bound curves deformed with it for "+finished.part.name+".",false);}
-    else if(finished.kind==="character-resize-envelope"){state.activeRig=finished.part.rig;reweightRigSkinData(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());syncCharacterPartRigRefs(finished.part);notify("Envelope resized for "+finished.part.name+".",false);}
-    else if(finished.kind==="edit-rest"){syncRigDisplayGeometry(state.activeRig,currentTime());notify("Bone moved — bound curves deformed with it.",false);}
-    else if(finished.kind==="resize-envelope"){reweightRigSkinData(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());notify("Envelope resized.",false);}
-    else if(finished.kind==="animate-bone"){API.refreshUI();notify("Bone pose keyed on frame "+currentFrame()+".",false);}
+    else if(finished.kind==="character-edit-rest"){state.activeRig=finished.part.rig;commitRigRestSetup(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());syncCharacterPartRigRefs(finished.part);notify("Bone setup updated for "+finished.part.name+". Artwork remains undeformed until Animate.",false);}
+    else if(finished.kind==="character-resize-envelope"){state.activeRig=finished.part.rig;commitRigRestSetup(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());syncCharacterPartRigRefs(finished.part);notify("Envelope resized for "+finished.part.name+".",false);}
+    else if(finished.kind==="edit-rest"){commitRigRestSetup(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());notify("Bone setup updated. Artwork remains undeformed until Animate.",false);}
+    else if(finished.kind==="resize-envelope"){commitRigRestSetup(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());notify("Envelope resized.",false);}
+    else if(finished.kind==="animate-bone"){syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();notify("Bone pose keyed on frame "+currentFrame()+".",false);}
+    else if(finished.kind==="character-animate-bone"){syncCharacterPartRigRefs(finished.part);syncRigDisplayGeometry(finished.part.rig,currentTime());API.refreshUI();notify("Bone pose keyed on frame "+currentFrame()+" for "+finished.part.name+".",false);}
     else if(finished.kind==="closed-animate-bone"){syncCharacterPartRigRefs(finished.part);syncRigDisplayGeometry(finished.part.rig,currentTime());API.refreshUI();}
     else if(finished.kind==="closed-active-rig-bone"){syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();}
     else if(finished.kind==="character-edit-dummy-transform"){syncCharacterPartRigRefs(finished.part);syncRigDisplayGeometry(finished.part.rig,currentTime());API.refreshUI();}
@@ -6474,7 +6591,11 @@
       return;
     }
 
-    if(state.characterAllBonesEdit&&(state.tab==="editbone"||state.tab==="bones")){
+    if(state.characterAllBonesEdit&&(state.tab==="editbone"||state.tab==="bones"||state.tab==="animate")){
+      if(state.tab==="animate"){
+        drawCharacterAnimationBones(ctx);
+        return;
+      }
       drawCharacterAllEditBones(ctx);
       if(state.tab==="bones"&&state.addPreview&&state.addPreview.characterPartId){
         var previewPart=partById(state.addPreview.characterPartId);
@@ -6812,8 +6933,8 @@
       state.curvePointAddMode=false;
       if(state.characterDummyActive&&nextTab!=='character')finishCharacterDummyControl();if(state.adjustingPartId&&nextTab!=='character')finishPartPlacementAdjust(true);
       var selectedPart=partById(state.character.selectedPartId);
-      if(selectedPart&&['bones','editbone'].indexOf(nextTab)>=0&&activateCharacterPartRigTab(selectedPart,nextTab))return;
-      if(nextTab!=='editbone'&&nextTab!=='bones')state.characterAllBonesEdit=false;
+      if(selectedPart&&['bones','editbone','animate'].indexOf(nextTab)>=0&&activateCharacterPartRigTab(selectedPart,nextTab))return;
+      if(nextTab!=='editbone'&&nextTab!=='bones'&&nextTab!=='animate')state.characterAllBonesEdit=false;
       state.tab=nextTab;
       state.mode='select';
       if(state.tab==='character'&&state.character.parts.length){returnToCharacterRoot();syncCharacterSelectionFromStage();}
@@ -6863,7 +6984,36 @@
     window.addEventListener('pointerup',finishNativeAdjustPointer,true);
     window.addEventListener('mouseup',function(){if(state.characterDummyActive){setTimeout(function(){if(state.characterDummyActive){ensureCharacterDummyKeyFromCurrent();API.refreshUI();if(state.open&&state.tab==='character')renderBody();}},0);}},true);
     window.addEventListener('pointerup',function(){if(state.characterDummyActive){setTimeout(function(){if(state.characterDummyActive){ensureCharacterDummyKeyFromCurrent();API.refreshUI();if(state.open&&state.tab==='character')renderBody();}},0);}},true);
-    setInterval(function(){if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());hideDemBonesTimelineRows();if(state.characterDummyActive)setAdjustAutoKeyframe(true);if(state.adjustingPartId){setAdjustAutoKeyframe(false);var adjustingPart=partById(state.adjustingPartId);if(adjustingPart)focusCharacterPartCard(adjustingPart);}if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}},160);
+    setInterval(function(){
+      if(state.open){
+        if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());
+      }else{
+        syncDemBonesRuntimePlayback(currentTime());
+      }
+      hideDemBonesTimelineRows();
+      if(state.characterDummyActive)setAdjustAutoKeyframe(true);
+      if(state.adjustingPartId){setAdjustAutoKeyframe(false);var adjustingPart=partById(state.adjustingPartId);if(adjustingPart)focusCharacterPartCard(adjustingPart);}
+      if(state.open&&state.panel){var f=state.panel.querySelector('[data-db-frame]');if(f&&f.textContent!==String(currentFrame())){f.textContent=currentFrame();if(state.tab==='animate')renderBody();}if(state.tab==='character'){var changed=syncCharacterSelectionFromStage();if(changed)renderBody();}}
+    },160);
+
+    /* Keep the actual mesh geometry current at animation-frame cadence while
+       the UI panel is closed. The object evaluator already renders the posed
+       geometry, but this also keeps hit testing, selection bounds and native
+       stage operations in step with the visible deformation. */
+    var closedRuntimeLastTime=NaN;
+    function closedRuntimeFrame(){
+      try{
+        if(!state.open){
+          var runtimeTime=currentTime();
+          if(state.drag||!isFinite(closedRuntimeLastTime)||Math.abs(runtimeTime-closedRuntimeLastTime)>0.000001){
+            syncDemBonesRuntimePlayback(runtimeTime);
+            closedRuntimeLastTime=runtimeTime;
+          }
+        }else closedRuntimeLastTime=NaN;
+      }catch(ignoreClosedRuntime){}
+      requestAnimationFrame(closedRuntimeFrame);
+    }
+    requestAnimationFrame(closedRuntimeFrame);
   }
 
   function open(){
@@ -6876,7 +7026,7 @@
     API.setSelectionInspectorSuppressed(TOOL_ID,true);
     API.setConfiguredToolActive(GROUP_ID,ITEM_ID,true);
     API.bringFloatingPanelToFront(state.panel);API.clampFloatingPanelToViewport(state.panel);
-    renderAll();notify('Dem Bones v16.28 ready.',false);
+    renderAll();notify('Dem Bones v16.30 ready.',false);
   }
   function close(){
     if(state.characterDummyActive)finishCharacterDummyControl();
@@ -6897,6 +7047,11 @@
     state.open=false;
     state.characterAllBonesEdit=false;
     state.mode='select';
+
+    /* Closing the panel must not stop DemBones. Immediately resolve every rig
+       at the current timeline time using animation/playback semantics. */
+    syncAllCharacterRigRefs();
+    syncDemBonesRuntimePlayback(currentTime());
     state.curvePointAddMode=false;
     state.drag=null;
     state.addPreview=null;
