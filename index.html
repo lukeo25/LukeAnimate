@@ -1,3 +1,4 @@
+
 <!-- LukeAnimate GPT v172: image/text layer timing parity. Image, video and text drawing layers now expose explicit timeline start-trim, end-trim and whole-block move controls plus fade-in/fade-out transparency handles. Layer fades multiply the object's normal/keyframed opacity during preview and WebM export, and persist with canonical Wick drawing frames. Existing object keyframes, layer exposure, rig-aware off-stage proxies and WebM stage cropping are preserved. -->
 <!-- LukeAnimate GPT v171: rig-aware off-stage proxies. DemBones curves that share one rigId now produce one combined editor-only proxy bounding box for the whole rig instead of one box per curve. StickRig parts resolve to one containing StickRig/root proxy while editing that rig Clip, while top-level StickRig roots remain one proxy each. Dragging a rig proxy moves every represented member through the existing transform/Auto-Keyframe system; manual + Keyframe writes a transform key to every represented member. Proxy boxes remain editor-only and never enter WebM capture. -->
 <!-- LukeAnimate GPT v169: nested Clip rulers are true editing-viewport rulers. While editing a Clip, the horizontal ruler is fixed immediately below the top toolbar from the left ruler strip to the sidebar edge, the vertical ruler is fixed against the far-left workspace edge down to the timeline, and the corner sits at their intersection. Tick values continue to follow Clip coordinates while panning/scrolling. Main-stage ruler layout remains unchanged. -->
@@ -17288,23 +17289,31 @@ ctx.fill();</textarea>
     const dt = Math.max(0, (now - lastFrame)/1000);
     lastFrame = now;
     /*
-      v183 WEBM EXPORT CLOCK
+      v184 WEBM EXPORT CLOCK
       ----------------------
       Preview continues to use the normal Play clock. WebM export uses an exact
       project-frame clock so the canvas is evaluated at frame 1, frame 2, frame 3
       etc. before each exported bitmap is copied to the recorder canvas.
 
-      This is deliberately separate from MediaRecorder's own capture timing.
-      The recorder never decides which Luke Animate pose is drawn.
+      v183 derived the target frame from real elapsed wall-clock time
+      (Math.floor(elapsed*fps)). If a single render - including nested Clips
+      and external evaluators such as DemBones - ever took longer than one
+      frame interval to draw, elapsed time would jump past intermediate frame
+      numbers and those frames were never rendered or captured at all: a
+      silent drop, not a visible error. exportFrameStep() below now owns
+      advancing exportPlayback.currentFrameIndex one frame at a time and only
+      moves on once this exact render has drawn and been handed to the
+      recorder, so every frame from 0..totalFrames-1 is guaranteed to be
+      rendered and captured exactly once. This clock now only reads that
+      index; it no longer computes it from the clock.
     */
     if(exportPlayback.active && exportPlayback.recorderStarted){
       const fps = Math.max(1, exportPlayback.fps || getTimelineFPS());
-      const elapsed = Math.max(0, (now - exportPlayback.startedAt) / 1000);
       const frameIndex = Math.max(
         0,
         Math.min(
           Math.max(0, exportPlayback.totalFrames - 1),
-          Math.floor(elapsed * fps + 1e-7)
+          exportPlayback.currentFrameIndex || 0
         )
       );
       exportPlayback.currentFrameIndex = frameIndex;
@@ -17789,20 +17798,59 @@ ctx.fill();</textarea>
       btnStop.disabled = false;
 
       const startedAt = exportPlayback.startedAt;
-      const tick = ()=>{
+
+      /*
+        v184 DETERMINISTIC FRAME STEPPER
+        ---------------------------------
+        Replaces the old elapsed-time "tick" watchdog. render() no longer
+        decides which frame to draw from the clock - it just draws whatever
+        exportPlayback.currentFrameIndex currently is. This loop is the only
+        thing that advances that index, and it only ever advances by exactly
+        one, and only after confirming (via lastRequestedFrame, set by the
+        v183 WEBM FRAME COPY block once render() has drawn and copied that
+        exact frame) that the frame it just asked for has actually been
+        rendered and handed to the recorder. A frame that takes longer than
+        1/fps to render no longer gets skipped - it simply makes this export
+        take a little longer in real time, which is invisible in the
+        resulting video. Real-time pacing (waiting out the remaining budget
+        for frames that render fast) is preserved so a normal/light export
+        still produces correctly-timed video and doesn't rush to finish.
+      */
+      const frameStep = ()=>{
         if(!mediaRecorder || mediaRecorder.state !== 'recording') return;
+
+        const targetFrame = exportPlayback.currentFrameIndex;
+        if(exportPlayback.lastRequestedFrame !== targetFrame){
+          // render() hasn't drawn+captured this frame index yet - keep waiting,
+          // do NOT touch currentFrameIndex while a frame is still in flight.
+          requestAnimationFrame(frameStep);
+          return;
+        }
+
         const elapsed = (performance.now()-startedAt)/1000;
-        recTime.textContent = `SAVING ${Math.min(elapsed,exportDuration).toFixed(1)}s / ${exportDuration.toFixed(2)}s`;
-        // Allow one extra frame interval so frame N has been rendered, copied
-        // to the export canvas and requested before MediaRecorder is stopped.
-        const stopAfter = exportDuration + (1 / Math.max(1, fps));
-        if(elapsed >= stopAfter){
+        recTime.textContent = `SAVING ${Math.min((targetFrame+1)/fps,exportDuration).toFixed(1)}s / ${exportDuration.toFixed(2)}s`;
+
+        const nextFrame = targetFrame + 1;
+        if(nextFrame >= exportPlayback.totalFrames){
           mediaRecorder.stop();
           return;
         }
-        requestAnimationFrame(tick);
+
+        // If we're running ahead of real time (this frame was cheap to render),
+        // hold here until its real-time slot elapses so playback speed in the
+        // output stays correct. If we're behind (an expensive DemBones frame),
+        // move on immediately - never skip, just fall further behind schedule
+        // and let the export take the extra real time it needs.
+        const scheduledAt = nextFrame / fps;
+        const waitMs = Math.max(0, (scheduledAt - elapsed) * 1000);
+        exportPlayback.currentFrameIndex = nextFrame;
+        if(waitMs > 1){
+          setTimeout(()=> requestAnimationFrame(frameStep), waitMs);
+        }else{
+          requestAnimationFrame(frameStep);
+        }
       };
-      requestAnimationFrame(tick);
+      requestAnimationFrame(frameStep);
     }));
   });
 
