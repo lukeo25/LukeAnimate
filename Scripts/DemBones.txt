@@ -36,6 +36,8 @@
    picker opens with that exact rig selected. Loading never guesses by part
    name, and it does not silently add the file to the Character.
 
+   v16.20 restores reliable Character double-click editing and makes Part Dummy boxes behave like direct transform controls. Double-clicking the Character always opens the all-parts/all-bones Edit Bone view. A Part Dummy can be clicked in Build Character or with the panel closed to select its box; its corner scale handles and rotate handle then remain directly draggable. Clicking the assembled Character itself selects the automatic Character Dummy and exposes Luke Animate's normal scale/rotate bounding box; double-clicking instead opens all parts and bones for editing.
+
    v16.19 changes Part Dummies to box controls with direct move, scale and rotate handles. Part Dummies
    do not deform their own artwork, can be pin targets, and pass animated scale
    to pinned parts. The Character root Dummy is the Character Clip transform,
@@ -52,7 +54,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.19";
+  var TOOL_VERSION = "16.20";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -2326,6 +2328,7 @@
 
   function openCharacterAllBonesEdit(part,bone){
     if(!state.character.parts.length)return false;
+    if(state.characterDummyActive)finishCharacterDummyControl();
     if(state.adjustingPartId)finishPartPlacementAdjust(true);
     if(!returnToCharacterRoot())return false;
     if(!state.open)open();
@@ -2544,6 +2547,65 @@
       if(p.x>=x1&&p.x<=x2&&p.y>=y1&&p.y<=y2){var area=(x2-x1)*(y2-y1);if(!best||area<best.area)best={part:part,area:area};}
     });
     return best;
+  }
+
+  function characterUnionShapeHit(event){
+    if(!state.character.parts.length)return null;
+    var point=selectedScenePoint(event);
+    var union={x1:Infinity,y1:Infinity,x2:-Infinity,y2:-Infinity};
+    var valid=false;
+    state.character.parts.forEach(function(part){
+      if(!part||!part.rig)return;
+      var localBounds=combinedBounds(rigObjects(part.rig));
+      if(!(localBounds.x2>localBounds.x1&&localBounds.y2>localBounds.y1))return;
+      var transform=resolvedPartTransform(part,currentTime(),{});
+      var corners=[
+        {x:localBounds.x1,y:localBounds.y1},{x:localBounds.x2,y:localBounds.y1},
+        {x:localBounds.x2,y:localBounds.y2},{x:localBounds.x1,y:localBounds.y2}
+      ].map(function(pt){return partLocalPointToCharacterScene(transform,pt);});
+      var editing=typeof API.getEditingClipId==='function'?API.getEditingClipId():null;
+      if(!editing)corners=corners.map(function(pt){return characterRootPointToMainScene(pt,currentTime());});
+      corners.forEach(function(pt){
+        union.x1=Math.min(union.x1,pt.x);union.y1=Math.min(union.y1,pt.y);
+        union.x2=Math.max(union.x2,pt.x);union.y2=Math.max(union.y2,pt.y);valid=true;
+      });
+    });
+    if(!valid)return null;
+    var pad=scenePixels(10);
+    if(point.x<union.x1-pad||point.x>union.x2+pad||point.y<union.y1-pad||point.y>union.y2+pad)return null;
+    return partById(state.character.selectedPartId)||state.character.parts[0]||null;
+  }
+
+  function stageEventInsideCanvas(event){
+    if(!event||!API.canvas||!API.canvas.getBoundingClientRect)return false;
+    var rect=API.canvas.getBoundingClientRect();
+    return event.clientX>=rect.left&&event.clientX<=rect.right&&event.clientY>=rect.top&&event.clientY<=rect.bottom;
+  }
+
+  function handleStageDoubleClick(event){
+    if(!stageEventInsideCanvas(event))return false;
+    if(event.target&&event.target.closest&&event.target.closest('.la-dembones-full'))return false;
+    if(state.character.parts.length){
+      var boneHitNow=characterAnimationBoneHit(event);
+      var shapeHitNow=boneHitNow?null:characterPartShapeHit(event);
+      var part=boneHitNow?boneHitNow.part:(shapeHitNow&&shapeHitNow.part);
+      if(!part)part=characterUnionShapeHit(event);
+      if(part){
+        event.preventDefault();
+        event.stopPropagation();
+        if(event.stopImmediatePropagation)event.stopImmediatePropagation();
+        openCharacterAllBonesEdit(part,boneHitNow?boneHitNow.bone:null);
+        return true;
+      }
+    }
+    if(state.open)return false;
+    var loose=stageRiggedShapeHit(event);
+    if(!loose)return false;
+    event.preventDefault();
+    event.stopPropagation();
+    if(event.stopImmediatePropagation)event.stopImmediatePropagation();
+    activateStandaloneRigForEdit(loose);open();renderAll();API.refreshUI();
+    return true;
   }
 
   function characterPartBoneWorldRecords(part,time){
@@ -5219,6 +5281,7 @@
 
   function onPointerDown(event){
     if(!state.open){
+      if(state.characterDummyActive)return;
       if(state.bKeyDown){
         if(state.character.committed&&state.character.showBones){
           var shapeHit=characterPartShapeHit(event);
@@ -5238,8 +5301,10 @@
         var closedHit=characterAnimationBoneHit(event);
         if(closedHit){
           event.preventDefault();event.stopImmediatePropagation();
-          API.pushUndo();
+          var closedWasSelected=Number(state.closedBonePartId)===Number(closedHit.part.id)&&String(state.closedBoneId)===String(closedHit.bone.id);
           state.closedBonePartId=closedHit.part.id;state.closedBoneId=closedHit.bone.id;
+          if(isDummyBone(closedHit.bone)&&!closedWasSelected){API.refreshUI();return;}
+          API.pushUndo();
           var localPointer=characterPointToPartLocal(closedHit.part,selectedScenePoint(event),currentTime());
           var map=posedTransformMap(closedHit.part.rig,currentTime());
           state.drag={kind:"closed-animate-bone",pointerId:event.pointerId,part:closedHit.part,bone:closedHit.bone,handle:closedHit.handle,startPointer:localPointer,startPose:clone(interpolatePose(closedHit.bone,currentTime())),startTransform:clone(map[closedHit.bone.id]),key:ensureBoneKeyForDrag(closedHit.bone,currentTime())};
@@ -5258,15 +5323,49 @@
           API.refreshUI();return;
         }
       }
+      if(state.character.committed&&characterUnionShapeHit(event)){
+        event.preventDefault();event.stopImmediatePropagation();
+        selectCharacterDummy();
+        return;
+      }
       return;
     }
     if(!["character","bones","editbone","animate","curves","expression"].includes(state.tab))return;
     if(event.target&&event.target.closest&&event.target.closest(".la-dembones-full"))return;
     if(state.tab==="character"){
+      if(state.characterDummyActive)return;
       if(state.character.pinPickSourceId){
         var pinHit=characterPinHit(event);event.preventDefault();event.stopImmediatePropagation();
         if(pinHit)completePartPin(partById(state.character.pinPickSourceId),pinHit.target,pinHit.bone,pinHit.attachPoint);
         else notify("Click directly on a visible bone.",true);
+        return;
+      }
+
+      /* Part Dummies are direct transform controls even while Build Character is open.
+         First click selects the Dummy and exposes its handles. A subsequent drag on
+         the box, corner or rotate handle creates/updates its animation key. */
+      var characterDummyBoneHit=characterAnimationBoneHit(event);
+      if(characterDummyBoneHit&&isDummyBone(characterDummyBoneHit.bone)){
+        event.preventDefault();event.stopImmediatePropagation();
+        var alreadySelected=state.activeRig===characterDummyBoneHit.part.rig&&String(state.selectedBoneId)===String(characterDummyBoneHit.bone.id);
+        focusCharacterPartCard(characterDummyBoneHit.part);
+        state.character.selectedPartId=characterDummyBoneHit.part.id;
+        state.activeRig=characterDummyBoneHit.part.rig;
+        syncCharacterPartRigRefs(characterDummyBoneHit.part);syncRigRefs(state.activeRig);
+        state.selectedBoneId=characterDummyBoneHit.bone.id;
+        state.closedBonePartId=characterDummyBoneHit.part.id;state.closedBoneId=characterDummyBoneHit.bone.id;
+        if(!alreadySelected){renderAll();API.refreshUI();return;}
+        API.pushUndo();
+        var dummyLocalPointer=characterPointToPartLocal(characterDummyBoneHit.part,selectedScenePoint(event),currentTime());
+        var dummyPoseMap=posedTransformMap(characterDummyBoneHit.part.rig,currentTime());
+        state.drag={kind:"closed-animate-bone",pointerId:event.pointerId,part:characterDummyBoneHit.part,bone:characterDummyBoneHit.bone,handle:characterDummyBoneHit.handle,startPointer:dummyLocalPointer,startPose:clone(interpolatePose(characterDummyBoneHit.bone,currentTime())),startTransform:clone(dummyPoseMap[characterDummyBoneHit.bone.id]),key:ensureBoneKeyForDrag(characterDummyBoneHit.bone,currentTime())};
+        ensureRigKeyedAtTime(characterDummyBoneHit.part.rig,currentTime(),characterDummyBoneHit.bone.id);
+        API.refreshUI();return;
+      }
+      if(state.character.committed&&characterUnionShapeHit(event)){
+        event.preventDefault();event.stopImmediatePropagation();
+        selectCharacterDummy();
+        return;
       }
       return;
     }
@@ -5295,8 +5394,11 @@
         renderAll();API.refreshUI();return;
       }
       if(!allHit){event.preventDefault();event.stopImmediatePropagation();return;}
-      event.preventDefault();event.stopImmediatePropagation();API.pushUndo();
+      event.preventDefault();event.stopImmediatePropagation();
+      var allDummyWasSelected=isDummyBone(allHit.bone)&&state.activeRig===allHit.part.rig&&String(state.selectedBoneId)===String(allHit.bone.id);
       focusCharacterPartCard(allHit.part);state.activeRig=allHit.part.rig;syncCharacterPartRigRefs(allHit.part);syncRigRefs(state.activeRig);state.selectedBoneId=allHit.bone.id;
+      if(isDummyBone(allHit.bone)&&!allDummyWasSelected){renderAll();API.refreshUI();return;}
+      API.pushUndo();
       var allPoint=currentScenePointToPartLocal(allHit.part,selectedScenePoint(event),currentTime());
       var allParent=allHit.bone.parentId?(allHit.part.rig.bones||[]).filter(function(candidate){return String(candidate.id)===String(allHit.bone.parentId);})[0]||null:null;
       state.drag={kind:"character-edit-rest",pointerId:event.pointerId,part:allHit.part,bone:allHit.bone,parent:allParent,handle:allHit.handle,startPointer:allPoint,startHead:clone(allHit.bone.restHead),startTail:clone(allHit.bone.restTail),startParentTail:allParent?clone(allParent.restTail):null};
@@ -5323,6 +5425,9 @@
       if(state.mode!=="add-bone")return;event.preventDefault();event.stopImmediatePropagation();state.addPreview={head:point,tail:point};state.drag={kind:"add",pointerId:event.pointerId,start:point,current:point};return;
     }
     if(!hit){if(state.tab==="editbone"||state.tab==="animate"){event.preventDefault();event.stopImmediatePropagation();}return;}
+    if(isDummyBone(hit.bone)&&String(state.selectedBoneId)!==String(hit.bone.id)){
+      event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;renderAll();API.refreshUI();return;
+    }
     event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;
     if(state.tab==="editbone"){
       API.pushUndo();var parent=hit.bone.parentId?boneById(hit.bone.parentId):null;
@@ -5896,7 +6001,7 @@
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. Add Dummy creates a non-deforming box control: drag inside to move, corners to scale, and the round handle to rotate.</p><p class="db-help"><b>MyCharacter:</b> every Character has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> drag bones directly on the stage. Add Dummy creates a non-deforming box control. Click it once to select it and reveal the handles; drag inside to move, a corner to scale, and the round handle to rotate.</p><p class="db-help"><b>MyCharacter:</b> double-click the Character on stage to open all parts and all bones for editing. Every Character also has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   var boneCursorCache={};
@@ -5997,19 +6102,10 @@
   function bindGlobal(){
     if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;
     surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);surface.addEventListener('contextmenu',function(e){var hitPart=characterRightClickHit(e);if(!hitPart)return;e.preventDefault();e.stopImmediatePropagation();showCharacterContextMenu(e.clientX,e.clientY,hitPart);},true);
-    surface.addEventListener('dblclick',function(e){
-      if(state.character.parts.length){
-        var bone=characterAnimationBoneHit(e),shape=bone?null:characterPartShapeHit(e),part=bone?bone.part:(shape&&shape.part);
-        if(part){
-          e.preventDefault();e.stopImmediatePropagation();
-          openCharacterAllBonesEdit(part,bone?bone.bone:null);
-          return;
-        }
-      }
-      if(state.open)return;
-      var loose=stageRiggedShapeHit(e);if(!loose)return;
-      e.preventDefault();e.stopImmediatePropagation();activateStandaloneRigForEdit(loose);open();renderAll();API.refreshUI();
-    },true);
+    surface.addEventListener('dblclick',handleStageDoubleClick,true);
+    /* Capture at window level as well so Luke Animate's native Clip double-click
+       cannot consume the gesture before DemBones sees the assembled Character. */
+    window.addEventListener('dblclick',function(e){handleStageDoubleClick(e);},true);
     window.addEventListener('keydown',function(e){
       var target=e.target,typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));
       if(!typing&&(e.key==='b'||e.key==='B'))state.bKeyDown=true;
