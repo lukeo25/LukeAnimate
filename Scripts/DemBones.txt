@@ -38,6 +38,7 @@
 
    v16.20 restores reliable Character double-click editing and makes Part Dummy boxes behave like direct transform controls. Double-clicking the Character always opens the all-parts/all-bones Edit Bone view. A Part Dummy can be clicked in Build Character or with the panel closed to select its box; its corner scale handles and rotate handle then remain directly draggable. Clicking the assembled Character itself selects the automatic Character Dummy and exposes Luke Animate's normal scale/rotate bounding box; double-clicking instead opens all parts and bones for editing.
    v16.21 fixes Dummy scale inheritance so the complete pinned child part, including its curves and displayed bones, scales with the Dummy instead of only shifting around the attachment point.
+   v16.22 restores direct Dummy manipulation. Part Dummies begin move/scale/rotate on the same mouse press instead of requiring a select-only click first. The automatic Character Dummy now has its own DemBones box, corner scale handles and rotate handle, so its transforms no longer depend on Luke Animate's native selection handles. Character Dummy move, scale and rotate write a real key at the current frame and affect the complete Character.
 
    v16.19 changes Part Dummies to box controls with direct move, scale and rotate handles. Part Dummies
    do not deform their own artwork, can be pin targets, and pass animated scale
@@ -55,7 +56,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.21";
+  var TOOL_VERSION = "16.22";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1605,7 +1606,7 @@
     (state.character.parts||[]).forEach(function(part){if(part)part.collapsed=true;});
     setAdjustAutoKeyframe(true);
     API.selectDrawObject(instance);API.refreshUI();renderAll();
-    notify("Character Dummy selected. Move, rotate or scale it; the transform is keyframed.",false);
+    notify("Character Dummy selected. Drag inside the box to move, a corner to scale, or the round handle to rotate. The transform is keyframed.",false);
     return true;
   }
 
@@ -1615,6 +1616,153 @@
     var effective=instance;
     if(typeof API.getEffectiveObject==='function'){try{effective=API.getEffectiveObject(instance,currentTime())||instance;}catch(ignoreDummyEffective){}}
     return transformFromPartInstance(effective,{x:instance.x,y:instance.y,scale:instance.scale,scaleX:instance.scaleX,scaleY:instance.scaleY,rotation:instance.rotation,opacity:instance.opacity});
+  }
+
+
+  function characterDummyLocalBounds(time){
+    if(!state.character.parts.length)return null;
+    var bounds={x1:Infinity,y1:Infinity,x2:-Infinity,y2:-Infinity},valid=false;
+    (state.character.parts||[]).forEach(function(part){
+      if(!part||!part.rig)return;
+      var localBounds=combinedBounds(rigObjects(part.rig));
+      if(!(localBounds.x2>localBounds.x1&&localBounds.y2>localBounds.y1))return;
+      var transform=resolvedPartTransform(part,time,{});
+      [
+        {x:localBounds.x1,y:localBounds.y1},{x:localBounds.x2,y:localBounds.y1},
+        {x:localBounds.x2,y:localBounds.y2},{x:localBounds.x1,y:localBounds.y2}
+      ].forEach(function(point){
+        var q=partLocalPointToCharacterScene(transform,point);
+        bounds.x1=Math.min(bounds.x1,q.x);bounds.y1=Math.min(bounds.y1,q.y);
+        bounds.x2=Math.max(bounds.x2,q.x);bounds.y2=Math.max(bounds.y2,q.y);valid=true;
+      });
+    });
+    if(!valid)return null;
+    if(!(bounds.x2>bounds.x1)){bounds.x1-=10;bounds.x2+=10;}
+    if(!(bounds.y2>bounds.y1)){bounds.y1-=10;bounds.y2+=10;}
+    return bounds;
+  }
+
+  function characterDummyBoxGeometry(time){
+    var bounds=characterDummyLocalBounds(time);
+    var instance=characterRootInstance();
+    if(!bounds||!instance)return null;
+    var local={
+      nw:{x:bounds.x1,y:bounds.y1},ne:{x:bounds.x2,y:bounds.y1},
+      se:{x:bounds.x2,y:bounds.y2},sw:{x:bounds.x1,y:bounds.y2},
+      center:{x:(bounds.x1+bounds.x2)/2,y:(bounds.y1+bounds.y2)/2}
+    };
+    var scene={};
+    Object.keys(local).forEach(function(key){scene[key]=characterRootPointToMainScene(local[key],time);});
+    var stage={};
+    Object.keys(scene).forEach(function(key){stage[key]=stagePointFromScene(scene[key]);});
+    var topMid={x:(stage.nw.x+stage.ne.x)/2,y:(stage.nw.y+stage.ne.y)/2};
+    var centerStage=stage.center;
+    var ox=topMid.x-centerStage.x,oy=topMid.y-centerStage.y,olen=Math.max(.001,Math.hypot(ox,oy));
+    var rotateDistance=stagePixelsFromClient(28);
+    stage.rotate={x:topMid.x+ox/olen*rotateDistance,y:topMid.y+oy/olen*rotateDistance};
+    stage.topMid=topMid;
+    return{bounds:bounds,local:local,scene:scene,stage:stage};
+  }
+
+  function characterDummyHit(event){
+    if(!state.characterDummyActive)return null;
+    var geom=characterDummyBoxGeometry(currentTime());
+    if(!geom)return null;
+    var pStage=eventStagePoint(event),threshold=stagePixelsFromClient(12),best=null;
+    [
+      {handle:'character-dummy-scale-nw',p:geom.stage.nw},
+      {handle:'character-dummy-scale-ne',p:geom.stage.ne},
+      {handle:'character-dummy-scale-se',p:geom.stage.se},
+      {handle:'character-dummy-scale-sw',p:geom.stage.sw},
+      {handle:'character-dummy-rotate',p:geom.stage.rotate}
+    ].forEach(function(item){
+      var d=Math.hypot(pStage.x-item.p.x,pStage.y-item.p.y);
+      if(d<=threshold&&(!best||d<best.distance))best={handle:item.handle,distance:d,geometry:geom};
+    });
+    if(best)return best;
+    var pScene=selectedScenePoint(event);
+    var pLocal=mainScenePointToCharacterRoot(pScene,currentTime());
+    if(pLocal.x>=geom.bounds.x1&&pLocal.x<=geom.bounds.x2&&pLocal.y>=geom.bounds.y1&&pLocal.y<=geom.bounds.y2){
+      return{handle:'character-dummy-move',distance:0,geometry:geom};
+    }
+    return null;
+  }
+
+  function ensureCharacterDummyDirectKey(instance,time){
+    if(!instance)return null;
+    instance.keyframes=Array.isArray(instance.keyframes)?instance.keyframes:[];
+    var tolerance=.5/Math.max(1,n(API.fps,30));
+    var key=instance.keyframes.filter(function(item){return Math.abs(n(item&&item.time,0)-time)<=tolerance;})[0];
+    if(key)return key;
+    var effective=instance;
+    if(typeof API.getEffectiveObject==='function'){
+      try{effective=API.getEffectiveObject(instance,time)||instance;}catch(ignoreDummyDirectEffective){}
+    }
+    key={
+      time:time,easing:'linear',
+      x:n(effective.x,instance.x),y:n(effective.y,instance.y),
+      scale:Math.max(.01,n(effective.scale,instance.scale)),
+      scaleX:Math.max(.01,n(effective.scaleX,instance.scaleX)),
+      scaleY:Math.max(.01,n(effective.scaleY,instance.scaleY)),
+      rotation:n(effective.rotation,instance.rotation),opacity:clamp(n(effective.opacity,instance.opacity),0,1)
+    };
+    instance.keyframes.push(key);
+    instance.keyframes.sort(function(a,b){return n(a&&a.time,0)-n(b&&b.time,0);});
+    return key;
+  }
+
+  function beginCharacterDummyDirectDrag(event,hit){
+    if(!hit||!state.characterDummyActive)return false;
+    var instance=markCharacterRootDummy(characterRootInstance());
+    if(!instance)return false;
+    var time=currentTime(),effective=instance;
+    if(typeof API.getEffectiveObject==='function'){
+      try{effective=API.getEffectiveObject(instance,time)||instance;}catch(ignoreBeginDummyEffective){}
+    }
+    API.pushUndo();
+    var key=ensureCharacterDummyDirectKey(instance,time);
+    var pointer=selectedScenePoint(event);
+    var start={
+      x:n(effective.x,instance.x),y:n(effective.y,instance.y),
+      scale:Math.max(.01,n(effective.scale,instance.scale)),
+      scaleX:Math.max(.01,n(effective.scaleX,instance.scaleX)),
+      scaleY:Math.max(.01,n(effective.scaleY,instance.scaleY)),
+      rotation:n(effective.rotation,instance.rotation)
+    };
+    var pivot={x:start.x,y:start.y};
+    var cornerScene=null;
+    var cornerKey=String(hit.handle||'').replace('character-dummy-scale-','');
+    if(hit.geometry&&hit.geometry.scene&&hit.geometry.scene[cornerKey])cornerScene=hit.geometry.scene[cornerKey];
+    state.drag={
+      kind:'character-dummy-transform',pointerId:event.pointerId,handle:hit.handle,
+      instance:instance,key:key,start:start,startPointer:pointer,pivot:pivot,
+      startAngle:Math.atan2(pointer.y-pivot.y,pointer.x-pivot.x),
+      startCornerDistance:cornerScene?Math.max(.001,Math.hypot(cornerScene.x-pivot.x,cornerScene.y-pivot.y)):1
+    };
+    return true;
+  }
+
+  function updateCharacterDummyDirectDrag(drag,pointer){
+    if(!drag||!drag.instance||!drag.key)return false;
+    var key=drag.key,start=drag.start,pivot=drag.pivot;
+    if(drag.handle==='character-dummy-move'){
+      key.x=round3(start.x+(pointer.x-drag.startPointer.x));
+      key.y=round3(start.y+(pointer.y-drag.startPointer.y));
+    }else if(String(drag.handle||'').indexOf('character-dummy-scale-')===0){
+      var distance=Math.max(.001,Math.hypot(pointer.x-pivot.x,pointer.y-pivot.y));
+      var ratio=distance/Math.max(.001,drag.startCornerDistance);
+      key.scale=round3(Math.max(.01,Math.min(100,start.scale*ratio)));
+      key.scaleX=round3(start.scaleX);
+      key.scaleY=round3(start.scaleY);
+    }else if(drag.handle==='character-dummy-rotate'){
+      var angle=Math.atan2(pointer.y-pivot.y,pointer.x-pivot.x);
+      var delta=(angle-drag.startAngle)*180/Math.PI;
+      while(delta>180)delta-=360;while(delta<-180)delta+=360;
+      key.rotation=round3(start.rotation+delta);
+    }else return false;
+    syncAllCharacterRigRefs();
+    API.refreshUI();
+    return true;
   }
 
   function ensureCharacterDummyKeyFromCurrent(){
@@ -5312,7 +5460,11 @@
 
   function onPointerDown(event){
     if(!state.open){
-      if(state.characterDummyActive)return;
+      if(state.characterDummyActive){
+        var closedRootDummyHit=characterDummyHit(event);
+        if(closedRootDummyHit){event.preventDefault();event.stopImmediatePropagation();beginCharacterDummyDirectDrag(event,closedRootDummyHit);}
+        return;
+      }
       if(state.bKeyDown){
         if(state.character.committed&&state.character.showBones){
           var shapeHit=characterPartShapeHit(event);
@@ -5332,9 +5484,7 @@
         var closedHit=characterAnimationBoneHit(event);
         if(closedHit){
           event.preventDefault();event.stopImmediatePropagation();
-          var closedWasSelected=Number(state.closedBonePartId)===Number(closedHit.part.id)&&String(state.closedBoneId)===String(closedHit.bone.id);
           state.closedBonePartId=closedHit.part.id;state.closedBoneId=closedHit.bone.id;
-          if(isDummyBone(closedHit.bone)&&!closedWasSelected){API.refreshUI();return;}
           API.pushUndo();
           var localPointer=characterPointToPartLocal(closedHit.part,selectedScenePoint(event),currentTime());
           var map=posedTransformMap(closedHit.part.rig,currentTime());
@@ -5364,7 +5514,15 @@
     if(!["character","bones","editbone","animate","curves","expression"].includes(state.tab))return;
     if(event.target&&event.target.closest&&event.target.closest(".la-dembones-full"))return;
     if(state.tab==="character"){
-      if(state.characterDummyActive)return;
+      if(state.characterDummyActive){
+        var rootDummyHit=characterDummyHit(event);
+        if(rootDummyHit){
+          event.preventDefault();event.stopImmediatePropagation();
+          beginCharacterDummyDirectDrag(event,rootDummyHit);
+          return;
+        }
+        return;
+      }
       if(state.character.pinPickSourceId){
         var pinHit=characterPinHit(event);event.preventDefault();event.stopImmediatePropagation();
         if(pinHit)completePartPin(partById(state.character.pinPickSourceId),pinHit.target,pinHit.bone,pinHit.attachPoint);
@@ -5378,14 +5536,12 @@
       var characterDummyBoneHit=characterAnimationBoneHit(event);
       if(characterDummyBoneHit&&isDummyBone(characterDummyBoneHit.bone)){
         event.preventDefault();event.stopImmediatePropagation();
-        var alreadySelected=state.activeRig===characterDummyBoneHit.part.rig&&String(state.selectedBoneId)===String(characterDummyBoneHit.bone.id);
         focusCharacterPartCard(characterDummyBoneHit.part);
         state.character.selectedPartId=characterDummyBoneHit.part.id;
         state.activeRig=characterDummyBoneHit.part.rig;
         syncCharacterPartRigRefs(characterDummyBoneHit.part);syncRigRefs(state.activeRig);
         state.selectedBoneId=characterDummyBoneHit.bone.id;
         state.closedBonePartId=characterDummyBoneHit.part.id;state.closedBoneId=characterDummyBoneHit.bone.id;
-        if(!alreadySelected){renderAll();API.refreshUI();return;}
         API.pushUndo();
         var dummyLocalPointer=characterPointToPartLocal(characterDummyBoneHit.part,selectedScenePoint(event),currentTime());
         var dummyPoseMap=posedTransformMap(characterDummyBoneHit.part.rig,currentTime());
@@ -5426,9 +5582,7 @@
       }
       if(!allHit){event.preventDefault();event.stopImmediatePropagation();return;}
       event.preventDefault();event.stopImmediatePropagation();
-      var allDummyWasSelected=isDummyBone(allHit.bone)&&state.activeRig===allHit.part.rig&&String(state.selectedBoneId)===String(allHit.bone.id);
       focusCharacterPartCard(allHit.part);state.activeRig=allHit.part.rig;syncCharacterPartRigRefs(allHit.part);syncRigRefs(state.activeRig);state.selectedBoneId=allHit.bone.id;
-      if(isDummyBone(allHit.bone)&&!allDummyWasSelected){renderAll();API.refreshUI();return;}
       API.pushUndo();
       var allPoint=currentScenePointToPartLocal(allHit.part,selectedScenePoint(event),currentTime());
       var allParent=allHit.bone.parentId?(allHit.part.rig.bones||[]).filter(function(candidate){return String(candidate.id)===String(allHit.bone.parentId);})[0]||null:null;
@@ -5456,9 +5610,6 @@
       if(state.mode!=="add-bone")return;event.preventDefault();event.stopImmediatePropagation();state.addPreview={head:point,tail:point};state.drag={kind:"add",pointerId:event.pointerId,start:point,current:point};return;
     }
     if(!hit){if(state.tab==="editbone"||state.tab==="animate"){event.preventDefault();event.stopImmediatePropagation();}return;}
-    if(isDummyBone(hit.bone)&&String(state.selectedBoneId)!==String(hit.bone.id)){
-      event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;renderAll();API.refreshUI();return;
-    }
     event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;
     if(state.tab==="editbone"){
       API.pushUndo();var parent=hit.bone.parentId?boneById(hit.bone.parentId):null;
@@ -5474,6 +5625,10 @@
     if(!state.drag)return;
     if(state.drag.pointerId!==undefined&&event.pointerId!==state.drag.pointerId)return;
     var p=selectedScenePoint(event);event.preventDefault();event.stopImmediatePropagation();
+    if(state.drag.kind==="character-dummy-transform"){
+      updateCharacterDummyDirectDrag(state.drag,p);
+      return;
+    }
     if(state.drag.kind==="closed-animate-bone"){
       var lp=characterPointToPartLocal(state.drag.part,p,currentTime());updateAnimatedBoneDrag(state.drag,lp);
       syncCharacterPartRigRefs(state.drag.part);
@@ -5599,6 +5754,7 @@
     else if(finished.kind==="animate-bone"){API.refreshUI();notify("Bone pose keyed on frame "+currentFrame()+".",false);}
     else if(finished.kind==="closed-animate-bone"){syncCharacterPartRigRefs(finished.part);syncRigDisplayGeometry(finished.part.rig,currentTime());API.refreshUI();}
     else if(finished.kind==="closed-active-rig-bone"){syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();}
+    else if(finished.kind==="character-dummy-transform"){ensureCharacterDummyKeyFromCurrent();syncAllCharacterRigRefs();API.refreshUI();}
     state.drag=null;state.addPreview=null;
     if(state.open){state.mode=state.tab==="bones"?"add-bone":"select";if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());renderAll();}
     else API.refreshUI();
@@ -5740,12 +5896,18 @@
   }
 
   function drawCharacterRootDummy(ctx){
-    /*
-      The Character Dummy is the real Character Clip instance. Do not draw a
-      second cross/marker over it: selecting Character Dummy uses Luke Animate's
-      normal object bounding box with scale and rotate handles.
-    */
-    return;
+    if(!state.characterDummyActive)return;
+    var geom=characterDummyBoxGeometry(currentTime());
+    if(!geom)return;
+    var g=geom.stage;
+    ctx.save();
+    ctx.strokeStyle='#0e9c86';ctx.fillStyle='rgba(14,156,134,.05)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(g.nw.x,g.nw.y);ctx.lineTo(g.ne.x,g.ne.y);ctx.lineTo(g.se.x,g.se.y);ctx.lineTo(g.sw.x,g.sw.y);ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.moveTo(g.topMid.x,g.topMid.y);ctx.lineTo(g.rotate.x,g.rotate.y);ctx.stroke();
+    ctx.fillStyle='#ffffff';ctx.strokeStyle='#0e9c86';ctx.lineWidth=2;
+    [g.nw,g.ne,g.se,g.sw].forEach(function(p){ctx.beginPath();ctx.rect(p.x-6,p.y-6,12,12);ctx.fill();ctx.stroke();});
+    ctx.beginPath();ctx.arc(g.rotate.x,g.rotate.y,7,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.restore();
   }
 
   function overlayRenderer(ctx){
