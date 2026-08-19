@@ -1,16 +1,17 @@
 /*
-  Luke Animate Layer Locking v3.0
-  DOM-driven layer locking so the control is visible even when Luke Animate's
-  internal editor variables are scoped inside the main application script.
+  Luke Animate Layer Locking v4.0
+  Individual per-layer locking only.
+  A lock control appears only on a real editable timeline layer row.
+  No bulk Lock All, Unlock All or Lock Others controls are added to the timeline.
 */
 (function(){
   'use strict';
 
-  if(window.__lukeAnimateLayerLockV3) return;
-  window.__lukeAnimateLayerLockV3 = true;
+  if(window.__lukeAnimateLayerLockV4) return;
+  window.__lukeAnimateLayerLockV4 = true;
 
-  const STORAGE_PREFIX = 'LukeAnimate.LayerLock.v3.';
-  const STYLE_ID = 'luke-animate-layer-lock-v3-style';
+  const STORAGE_PREFIX = 'LukeAnimate.LayerLock.v4.';
+  const STYLE_ID = 'luke-animate-layer-lock-v4-style';
   const LOCK_SELECTOR = '.timeline-layer-lock-button';
   let lastUnlockedKey = null;
   let restoringSelection = false;
@@ -33,14 +34,19 @@
     }catch(_e){}
   }
 
+  function removeOldBulkControls(){
+    document.querySelectorAll('.timeline-lock-bulk-controls,#btn-lock-others,#btn-unlock-all').forEach(el=>{
+      const row = el.closest && el.closest('.btn-row');
+      if(row && row.children.length <= 2) row.remove();
+      else el.remove();
+    });
+  }
+
   function addStyles(){
     if(document.getElementById(STYLE_ID)) return;
     const style=document.createElement('style');
     style.id=STYLE_ID;
     style.textContent=`
-      .timeline-track-name{
-        min-width:76px;
-      }
       .timeline-layer-lock-button{
         flex:0 0 17px !important;
         width:17px !important;
@@ -80,27 +86,6 @@
       .timeline-track-row.layer-locked .timeline-track{
         opacity:.72;
       }
-      .timeline-lock-bulk-controls{
-        display:flex;
-        gap:5px;
-        align-items:center;
-        margin:2px 0 5px 0;
-        padding-left:0;
-      }
-      .timeline-lock-bulk-controls button{
-        height:22px;
-        padding:2px 7px;
-        border:1px solid #c7ccd3;
-        border-radius:5px;
-        background:#fff;
-        color:#586575;
-        font:600 10px/1 Arial,sans-serif;
-        cursor:pointer;
-      }
-      .timeline-lock-bulk-controls button:hover{
-        color:var(--accent,#0e9c86);
-        border-color:var(--accent,#0e9c86);
-      }
     `;
     document.head.appendChild(style);
   }
@@ -117,7 +102,6 @@
     if(row.classList.contains('wick-drawing-layer')) return 'wick';
     if(row.classList.contains('fx-timeline-layer')) return 'fx';
     if(row.dataset.timelineKind === 'legacy-object-row') return 'object';
-    if(row.classList.contains('native-clip-part-row')) return 'clip-part';
     return 'row';
   }
 
@@ -126,10 +110,7 @@
     const kind=rowKind(row);
     let stable='';
     if(row.dataset.timelineKey) stable=String(row.dataset.timelineKey);
-    else if(row.dataset.nativeClipPartKey) stable=String(row.dataset.nativeClipPartKey);
-    else if(row.dataset.demBonesRigId || row.dataset.demBonesBoneId){
-      stable=String(row.dataset.demBonesRigId||'')+':'+String(row.dataset.demBonesBoneId||'');
-    }else{
+    else{
       const name=row.querySelector('.timeline-track-name');
       stable=cleanName(name ? name.textContent : '') || String(index);
     }
@@ -157,53 +138,6 @@
     button.setAttribute('aria-label',button.title);
   }
 
-  function setRowLocked(row,locked){
-    const key=row.dataset.layerLockKey;
-    if(!key) return;
-    writeLocked(key,locked);
-    row.classList.toggle('layer-locked',locked);
-    const button=row.querySelector(LOCK_SELECTOR);
-    if(button) setButtonState(button,locked);
-    if(locked && isRowActive(row)) restoreUnlockedSelection(row);
-  }
-
-  function insertLockButton(row,index){
-    const name=row.querySelector('.timeline-track-name');
-    if(!name) return;
-    const key=rowKey(row,index);
-    const locked=readLocked(key);
-    row.classList.toggle('layer-locked',locked);
-
-    let button=name.querySelector(LOCK_SELECTOR);
-    if(!button){
-      button=document.createElement('button');
-      button.type='button';
-      button.className='timeline-layer-lock-button';
-      const del=name.querySelector('.wick-layer-delete-button');
-      if(del) del.insertAdjacentElement('afterend',button);
-      else name.insertBefore(button,name.firstChild);
-    }
-    setButtonState(button,locked);
-    button.onclick=event=>{
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      event.stopPropagation();
-      setRowLocked(row,!row.classList.contains('layer-locked'));
-    };
-  }
-
-  function decorateRows(){
-    if(decorating) return;
-    decorating=true;
-    try{
-      eligibleRows().forEach((row,index)=>insertLockButton(row,index));
-      updateLastUnlockedKey();
-      addBulkControls();
-    }finally{
-      decorating=false;
-    }
-  }
-
   function isRowActive(row){
     const name=row.querySelector('.timeline-track-name');
     return !!(
@@ -213,8 +147,7 @@
   }
 
   function currentActiveRow(){
-    const rows=eligibleRows();
-    return rows.find(isRowActive) || null;
+    return eligibleRows().find(isRowActive) || null;
   }
 
   function updateLastUnlockedKey(){
@@ -254,7 +187,11 @@
     const rows=eligibleRows();
     let target=null;
     if(lastUnlockedKey){
-      target=rows.find(row=>row!==excludeRow && row.dataset.layerLockKey===lastUnlockedKey && !row.classList.contains('layer-locked')) || null;
+      target=rows.find(row=>
+        row!==excludeRow &&
+        row.dataset.layerLockKey===lastUnlockedKey &&
+        !row.classList.contains('layer-locked')
+      ) || null;
     }
     if(!target){
       target=rows.find(row=>row!==excludeRow && !row.classList.contains('layer-locked')) || null;
@@ -269,6 +206,60 @@
     }catch(_e){}
   }
 
+  function setRowLocked(row,locked){
+    const key=row.dataset.layerLockKey;
+    if(!key) return;
+    writeLocked(key,locked);
+    row.classList.toggle('layer-locked',locked);
+    const button=row.querySelector(LOCK_SELECTOR);
+    if(button) setButtonState(button,locked);
+    if(locked && isRowActive(row)) restoreUnlockedSelection(row);
+  }
+
+  function insertLockButton(row,index){
+    const name=row.querySelector('.timeline-track-name');
+    if(!name) return;
+
+    const key=rowKey(row,index);
+    const locked=readLocked(key);
+    row.classList.toggle('layer-locked',locked);
+
+    let button=name.querySelector(LOCK_SELECTOR);
+    if(!button){
+      button=document.createElement('button');
+      button.type='button';
+      button.className='timeline-layer-lock-button';
+
+      const del=name.querySelector('.wick-layer-delete-button');
+      if(del){
+        del.insertAdjacentElement('afterend',button);
+      }else{
+        name.insertBefore(button,name.firstChild);
+      }
+    }
+
+    setButtonState(button,locked);
+    button.onclick=event=>{
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      setRowLocked(row,!row.classList.contains('layer-locked'));
+    };
+  }
+
+  function decorateRows(){
+    if(decorating) return;
+    decorating=true;
+    try{
+      removeOldBulkControls();
+      const rows=eligibleRows();
+      rows.forEach((row,index)=>insertLockButton(row,index));
+      updateLastUnlockedKey();
+    }finally{
+      decorating=false;
+    }
+  }
+
   function enforceLockedSelection(){
     if(restoringSelection) return false;
     const active=currentActiveRow();
@@ -278,45 +269,6 @@
     }
     updateLastUnlockedKey();
     return false;
-  }
-
-  function addBulkControls(){
-    if(document.querySelector('.timeline-lock-bulk-controls')) return;
-    const wrap=document.getElementById('timeline-wrap');
-    const tracks=document.getElementById('timeline-tracks');
-    if(!wrap || !tracks) return;
-
-    const controls=document.createElement('div');
-    controls.className='timeline-lock-bulk-controls';
-
-    const lockOthers=document.createElement('button');
-    lockOthers.type='button';
-    lockOthers.textContent='🔒 Lock Others';
-    lockOthers.title='Keep the current layer editable and lock the other layers';
-
-    const unlockAll=document.createElement('button');
-    unlockAll.type='button';
-    unlockAll.textContent='🔓 Unlock All';
-    unlockAll.title='Unlock all timeline layers';
-
-    controls.appendChild(lockOthers);
-    controls.appendChild(unlockAll);
-    tracks.parentNode.insertBefore(controls,tracks);
-
-    lockOthers.addEventListener('click',()=>{
-      decorateRows();
-      const rows=eligibleRows();
-      const active=currentActiveRow() || rows.find(row=>!row.classList.contains('layer-locked')) || null;
-      if(!active) return;
-      rows.forEach(row=>setRowLocked(row,row!==active));
-      lastUnlockedKey=active.dataset.layerLockKey || null;
-    });
-
-    unlockAll.addEventListener('click',()=>{
-      decorateRows();
-      eligibleRows().forEach(row=>setRowLocked(row,false));
-      updateLastUnlockedKey();
-    });
   }
 
   function blockLockedTimelineEvents(){
@@ -369,7 +321,10 @@
       event.stopPropagation();
     },true);
 
-    const endGesture=()=>{ stageGestureBlocked=false; enforceLockedSelection(); };
+    const endGesture=()=>{
+      stageGestureBlocked=false;
+      enforceLockedSelection();
+    };
     document.addEventListener('pointerup',endGesture,true);
     document.addEventListener('mouseup',endGesture,true);
     document.addEventListener('pointercancel',endGesture,true);
@@ -388,20 +343,29 @@
         enforceLockedSelection();
       });
     });
-    observer.observe(tracks,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
+    observer.observe(tracks,{
+      childList:true,
+      subtree:true,
+      attributes:true,
+      attributeFilter:['class']
+    });
   }
 
   function initialise(){
     addStyles();
+    removeOldBulkControls();
     decorateRows();
     blockLockedTimelineEvents();
     installStageGuard();
     installObserver();
     setTimeout(decorateRows,100);
     setTimeout(decorateRows,500);
-    console.info('Luke Animate layer locking v3 loaded.');
+    console.info('Luke Animate layer locking v4 loaded: individual layer locks only.');
   }
 
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',initialise,{once:true});
-  else initialise();
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',initialise,{once:true});
+  }else{
+    initialise();
+  }
 })();
