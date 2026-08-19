@@ -1,36 +1,59 @@
 /*
-  Luke Animate Layer Locking v4.0
+  Luke Animate Layer Locking v5.0
   Individual per-layer locking only.
-  A lock control appears only on a real editable timeline layer row.
-  No bulk Lock All, Unlock All or Lock Others controls are added to the timeline.
+  Locked layers remain visible and render normally, but are removed from the
+  editable selection, rejected by stage selection, and blocked from dragging.
 */
 (function(){
   'use strict';
 
-  if(window.__lukeAnimateLayerLockV4) return;
-  window.__lukeAnimateLayerLockV4 = true;
+  if(window.__lukeAnimateLayerLockV5) return;
+  window.__lukeAnimateLayerLockV5 = true;
 
-  const STORAGE_PREFIX = 'LukeAnimate.LayerLock.v4.';
-  const STYLE_ID = 'luke-animate-layer-lock-v4-style';
+  const STORAGE_PREFIX = 'LukeAnimate.LayerLock.v5.';
+  const OLD_STORAGE_PREFIX = 'LukeAnimate.LayerLock.v4.';
+  const STYLE_ID = 'luke-animate-layer-lock-v5-style';
   const LOCK_SELECTOR = '.timeline-layer-lock-button';
-  let lastUnlockedKey = null;
-  let restoringSelection = false;
   let decorating = false;
-  let stageGestureBlocked = false;
+  let cancellingGesture = false;
+  let wrappersInstalled = false;
 
-  function storageKey(key){
-    return STORAGE_PREFIX + location.pathname + '::' + key;
+  function safeDrawObjects(){
+    try{ return Array.isArray(drawObjects) ? drawObjects : []; }
+    catch(_e){ return []; }
   }
 
-  function readLocked(key){
-    try{ return localStorage.getItem(storageKey(key)) === '1'; }
-    catch(_e){ return false; }
+  function safeDrawingLayers(){
+    try{ return Array.isArray(wickDrawingLayers) ? wickDrawingLayers : []; }
+    catch(_e){ return []; }
   }
 
-  function writeLocked(key, locked){
+  function safeEffectLayers(){
+    try{ return Array.isArray(layers) ? layers : []; }
+    catch(_e){ return []; }
+  }
+
+  function storageKey(prefix,key){
+    return prefix + location.pathname + '::' + key;
+  }
+
+  function readStoredLocked(key){
     try{
-      if(locked) localStorage.setItem(storageKey(key),'1');
-      else localStorage.removeItem(storageKey(key));
+      const current = localStorage.getItem(storageKey(STORAGE_PREFIX,key));
+      if(current === '1') return true;
+      const old = localStorage.getItem(storageKey(OLD_STORAGE_PREFIX,key));
+      if(old === '1'){
+        localStorage.setItem(storageKey(STORAGE_PREFIX,key),'1');
+        return true;
+      }
+    }catch(_e){}
+    return false;
+  }
+
+  function writeStoredLocked(key,locked){
+    try{
+      if(locked) localStorage.setItem(storageKey(STORAGE_PREFIX,key),'1');
+      else localStorage.removeItem(storageKey(STORAGE_PREFIX,key));
     }catch(_e){}
   }
 
@@ -131,6 +154,71 @@
     });
   }
 
+  function drawingLayerById(id){
+    if(id===undefined || id===null) return null;
+    const key=String(id);
+    return safeDrawingLayers().find(layer=>layer && String(layer.id)===key) || null;
+  }
+
+  function legacyRowObject(row){
+    const rows=eligibleRows().filter(item=>item.dataset.timelineKind==='legacy-object-row');
+    const index=rows.indexOf(row);
+    return index>=0 ? (safeDrawObjects()[index] || null) : null;
+  }
+
+  function effectRowLayer(row){
+    const rows=eligibleRows().filter(item=>item.classList.contains('fx-timeline-layer'));
+    const index=rows.indexOf(row);
+    return index>=0 ? (safeEffectLayers()[index] || null) : null;
+  }
+
+  function rowModel(row){
+    if(!row) return null;
+    if(row.classList.contains('wick-drawing-layer') && row.dataset.timelineKey){
+      return drawingLayerById(row.dataset.timelineKey);
+    }
+    if(row.classList.contains('fx-timeline-layer')) return effectRowLayer(row);
+    if(row.dataset.timelineKind==='legacy-object-row') return legacyRowObject(row);
+    return null;
+  }
+
+  function objectLocked(obj){
+    if(!obj) return false;
+    if(obj.layerLocked===true) return true;
+    if(obj.timelineLayerId){
+      const layer=drawingLayerById(obj.timelineLayerId);
+      if(layer && layer.layerLocked===true) return true;
+    }
+    return false;
+  }
+
+  function setCanonicalLock(row,locked){
+    const model=rowModel(row);
+    if(model) model.layerLocked=!!locked;
+
+    if(row.classList.contains('wick-drawing-layer') && row.dataset.timelineKey){
+      const id=String(row.dataset.timelineKey);
+      const layer=drawingLayerById(id);
+      if(layer && Array.isArray(layer.frames)){
+        layer.frames.forEach(frame=>{
+          if(frame && frame.object) frame.object.layerLocked=!!locked;
+        });
+      }
+      safeDrawObjects().forEach(obj=>{
+        if(obj && String(obj.timelineLayerId||'')===id) obj.layerLocked=!!locked;
+      });
+    }else if(row.dataset.timelineKind==='legacy-object-row'){
+      const obj=legacyRowObject(row);
+      if(obj) obj.layerLocked=!!locked;
+    }
+  }
+
+  function canonicalRowLocked(row,key){
+    const model=rowModel(row);
+    if(model && typeof model.layerLocked==='boolean') return model.layerLocked;
+    return readStoredLocked(key);
+  }
+
   function setButtonState(button,locked){
     button.classList.toggle('locked',locked);
     button.textContent=locked?'🔒':'🔓';
@@ -138,90 +226,63 @@
     button.setAttribute('aria-label',button.title);
   }
 
-  function isRowActive(row){
-    const name=row.querySelector('.timeline-track-name');
-    return !!(
-      row.classList.contains('active') ||
-      (name && name.classList.contains('active-layer'))
-    );
+  function refreshSelectionUI(){
+    try{ if(typeof updateSelectedCountUI==='function') updateSelectedCountUI(); }catch(_e){}
+    try{ if(typeof updateInspector==='function') updateInspector(); }catch(_e){}
+    try{ if(typeof renderTransformHandles==='function') renderTransformHandles(); }catch(_e){}
+    try{ if(typeof renderOffstageObjectProxies==='function') renderOffstageObjectProxies(); }catch(_e){}
+    try{ if(typeof renderOverlay==='function') renderOverlay(); }catch(_e){}
   }
 
-  function currentActiveRow(){
-    return eligibleRows().find(isRowActive) || null;
-  }
-
-  function updateLastUnlockedKey(){
-    const active=currentActiveRow();
-    if(active && !active.classList.contains('layer-locked')){
-      lastUnlockedKey=active.dataset.layerLockKey || null;
-    }
-  }
-
-  function selectableTarget(row){
-    const name=row.querySelector('.timeline-track-name');
-    if(!name) return row;
-    return name.querySelector('.wick-layer-name-text') || name;
-  }
-
-  function clickRow(row){
-    if(!row || row.classList.contains('layer-locked')) return false;
-    const target=selectableTarget(row);
-    if(!target) return false;
-    restoringSelection=true;
+  function purgeLockedSelection(){
+    let changed=false;
     try{
-      target.dispatchEvent(new MouseEvent('click',{
-        bubbles:true,
-        cancelable:true,
-        view:window,
-        button:0
-      }));
-      lastUnlockedKey=row.dataset.layerLockKey || lastUnlockedKey;
-      return true;
-    }finally{
-      setTimeout(()=>{restoringSelection=false;},0);
-    }
-  }
-
-  function restoreUnlockedSelection(excludeRow){
-    if(restoringSelection) return;
-    const rows=eligibleRows();
-    let target=null;
-    if(lastUnlockedKey){
-      target=rows.find(row=>
-        row!==excludeRow &&
-        row.dataset.layerLockKey===lastUnlockedKey &&
-        !row.classList.contains('layer-locked')
-      ) || null;
-    }
-    if(!target){
-      target=rows.find(row=>row!==excludeRow && !row.classList.contains('layer-locked')) || null;
-    }
-    if(target){
-      clickRow(target);
-      return;
-    }
-    try{
-      document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true,cancelable:true}));
-      document.dispatchEvent(new KeyboardEvent('keyup',{key:'Escape',code:'Escape',bubbles:true,cancelable:true}));
+      if(selectedDrawIndices && typeof selectedDrawIndices.forEach==='function'){
+        Array.from(selectedDrawIndices).forEach(index=>{
+          const obj=safeDrawObjects()[index];
+          if(objectLocked(obj)){
+            selectedDrawIndices.delete(index);
+            changed=true;
+          }
+        });
+      }
     }catch(_e){}
+
+    try{
+      if(typeof activeIndex==='number' && activeIndex>=0){
+        const layer=safeEffectLayers()[activeIndex];
+        if(layer && layer.layerLocked===true){
+          activeIndex=-1;
+          changed=true;
+        }
+      }
+    }catch(_e){}
+
+    if(changed) refreshSelectionUI();
+    return changed;
   }
 
   function setRowLocked(row,locked){
     const key=row.dataset.layerLockKey;
     if(!key) return;
-    writeLocked(key,locked);
+    writeStoredLocked(key,locked);
+    setCanonicalLock(row,locked);
     row.classList.toggle('layer-locked',locked);
     const button=row.querySelector(LOCK_SELECTOR);
     if(button) setButtonState(button,locked);
-    if(locked && isRowActive(row)) restoreUnlockedSelection(row);
+    if(locked){
+      purgeLockedSelection();
+      cancellingGesture=true;
+      setTimeout(()=>{cancellingGesture=false;},0);
+    }
   }
 
   function insertLockButton(row,index){
     const name=row.querySelector('.timeline-track-name');
     if(!name) return;
-
     const key=rowKey(row,index);
-    const locked=readLocked(key);
+    const locked=canonicalRowLocked(row,key);
+    setCanonicalLock(row,locked);
     row.classList.toggle('layer-locked',locked);
 
     let button=name.querySelector(LOCK_SELECTOR);
@@ -229,13 +290,9 @@
       button=document.createElement('button');
       button.type='button';
       button.className='timeline-layer-lock-button';
-
       const del=name.querySelector('.wick-layer-delete-button');
-      if(del){
-        del.insertAdjacentElement('afterend',button);
-      }else{
-        name.insertBefore(button,name.firstChild);
-      }
+      if(del) del.insertAdjacentElement('afterend',button);
+      else name.insertBefore(button,name.firstChild);
     }
 
     setButtonState(button,locked);
@@ -252,23 +309,56 @@
     decorating=true;
     try{
       removeOldBulkControls();
-      const rows=eligibleRows();
-      rows.forEach((row,index)=>insertLockButton(row,index));
-      updateLastUnlockedKey();
+      eligibleRows().forEach((row,index)=>insertLockButton(row,index));
+      purgeLockedSelection();
     }finally{
       decorating=false;
     }
   }
 
-  function enforceLockedSelection(){
-    if(restoringSelection) return false;
-    const active=currentActiveRow();
-    if(active && active.classList.contains('layer-locked')){
-      restoreUnlockedSelection(active);
-      return true;
-    }
-    updateLastUnlockedKey();
-    return false;
+  function installCoreSelectionGuards(){
+    if(wrappersInstalled) return;
+    wrappersInstalled=true;
+
+    try{
+      if(typeof selectDrawObject==='function' && !selectDrawObject.__layerLockV5Wrapped){
+        const original=selectDrawObject;
+        const wrapped=function(index){
+          const obj=safeDrawObjects()[index];
+          if(objectLocked(obj)){
+            purgeLockedSelection();
+            return false;
+          }
+          return original.apply(this,arguments);
+        };
+        wrapped.__layerLockV5Wrapped=true;
+        selectDrawObject=wrapped;
+      }
+    }catch(_e){}
+
+    try{
+      if(typeof selectEffectLayer==='function' && !selectEffectLayer.__layerLockV5Wrapped){
+        const original=selectEffectLayer;
+        const wrapped=function(index){
+          const layer=safeEffectLayers()[index];
+          if(layer && layer.layerLocked===true) return false;
+          return original.apply(this,arguments);
+        };
+        wrapped.__layerLockV5Wrapped=true;
+        selectEffectLayer=wrapped;
+      }
+    }catch(_e){}
+
+    try{
+      if(typeof LukeAnimate!=='undefined' && LukeAnimate && typeof LukeAnimate.getSelectedDrawObjects==='function' && !LukeAnimate.getSelectedDrawObjects.__layerLockV5Wrapped){
+        const original=LukeAnimate.getSelectedDrawObjects.bind(LukeAnimate);
+        const wrapped=function(){
+          return (original()||[]).filter(obj=>obj && !objectLocked(obj));
+        };
+        wrapped.__layerLockV5Wrapped=true;
+        LukeAnimate.getSelectedDrawObjects=wrapped;
+      }
+    }catch(_e){}
   }
 
   function blockLockedTimelineEvents(){
@@ -286,48 +376,94 @@
     });
   }
 
-  function installStageGuard(){
-    const overlay=document.getElementById('edit-overlay');
-    if(!overlay) return;
+  function currentActiveLockedRow(){
+    return eligibleRows().find(row=>{
+      if(!row.classList.contains('layer-locked')) return false;
+      const name=row.querySelector('.timeline-track-name');
+      return row.classList.contains('active') || !!(name && name.classList.contains('active-layer'));
+    }) || null;
+  }
 
-    const afterStageInput=event=>{
-      if(restoringSelection) return;
-      const run=()=>{
-        const blocked=enforceLockedSelection();
-        if(blocked){
-          stageGestureBlocked=true;
-          try{
-            overlay.dispatchEvent(new PointerEvent('pointercancel',{
-              bubbles:true,
-              cancelable:false,
-              pointerId:event.pointerId||1,
-              pointerType:event.pointerType||'mouse'
-            }));
-          }catch(_e){}
-        }
-      };
-      queueMicrotask(run);
-      setTimeout(run,0);
+  function editSurfaceTarget(target){
+    if(!target || !target.closest) return false;
+    return !!target.closest(
+      '#edit-overlay,.xform-handle,.xform-axis-handle,.xform-rotate-handle,.clip-pivot-cross,.offstage-object-proxy,.shape-point-handle,.bezier-anchor-handle,.bezier-control-handle,.pen-edit-anchor,.pen-edit-control,.pen-edit-bend,.pen-edit-width'
+    );
+  }
+
+  function installStageMovementGuard(){
+    document.addEventListener('pointerdown',event=>{
+      if(!editSurfaceTarget(event.target)) return;
+      purgeLockedSelection();
+      if(currentActiveLockedRow()){
+        cancellingGesture=true;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+      }
+    },true);
+
+    document.addEventListener('mousedown',event=>{
+      if(!editSurfaceTarget(event.target)) return;
+      purgeLockedSelection();
+      if(currentActiveLockedRow()){
+        cancellingGesture=true;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+      }
+    },true);
+
+    const afterStart=()=>{
+      queueMicrotask(()=>{
+        const removed=purgeLockedSelection();
+        if(removed) cancellingGesture=true;
+      });
+      setTimeout(()=>{
+        const removed=purgeLockedSelection();
+        if(removed) cancellingGesture=true;
+      },0);
     };
 
-    overlay.addEventListener('pointerdown',afterStageInput,false);
-    overlay.addEventListener('mousedown',afterStageInput,false);
-    overlay.addEventListener('click',afterStageInput,false);
+    const overlay=document.getElementById('edit-overlay');
+    if(overlay){
+      overlay.addEventListener('pointerdown',afterStart,false);
+      overlay.addEventListener('mousedown',afterStart,false);
+      overlay.addEventListener('click',afterStart,false);
+    }
 
     document.addEventListener('pointermove',event=>{
-      if(!stageGestureBlocked) return;
+      if(!cancellingGesture) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
     },true);
 
-    const endGesture=()=>{
-      stageGestureBlocked=false;
-      enforceLockedSelection();
+    document.addEventListener('mousemove',event=>{
+      if(!cancellingGesture) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+    },true);
+
+    const finish=()=>{
+      purgeLockedSelection();
+      cancellingGesture=false;
     };
-    document.addEventListener('pointerup',endGesture,true);
-    document.addEventListener('mouseup',endGesture,true);
-    document.addEventListener('pointercancel',endGesture,true);
+    document.addEventListener('pointerup',finish,true);
+    document.addEventListener('mouseup',finish,true);
+    document.addEventListener('pointercancel',finish,true);
+
+    document.addEventListener('keydown',event=>{
+      purgeLockedSelection();
+      if(!currentActiveLockedRow()) return;
+      const blockedKeys=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Delete','Backspace'];
+      if(blockedKeys.includes(event.key)){
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        event.stopPropagation();
+      }
+    },true);
   }
 
   function installObserver(){
@@ -339,8 +475,8 @@
       scheduled=true;
       requestAnimationFrame(()=>{
         scheduled=false;
+        installCoreSelectionGuards();
         decorateRows();
-        enforceLockedSelection();
       });
     });
     observer.observe(tracks,{
@@ -354,18 +490,16 @@
   function initialise(){
     addStyles();
     removeOldBulkControls();
+    installCoreSelectionGuards();
     decorateRows();
     blockLockedTimelineEvents();
-    installStageGuard();
+    installStageMovementGuard();
     installObserver();
-    setTimeout(decorateRows,100);
-    setTimeout(decorateRows,500);
-    console.info('Luke Animate layer locking v4 loaded: individual layer locks only.');
+    setTimeout(()=>{ installCoreSelectionGuards(); decorateRows(); },100);
+    setTimeout(()=>{ installCoreSelectionGuards(); decorateRows(); },500);
+    console.info('Luke Animate layer locking v5 loaded: locked layers are non-selectable and non-movable.');
   }
 
-  if(document.readyState==='loading'){
-    document.addEventListener('DOMContentLoaded',initialise,{once:true});
-  }else{
-    initialise();
-  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',initialise,{once:true});
+  else initialise();
 })();
