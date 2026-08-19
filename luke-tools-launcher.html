@@ -82,7 +82,7 @@
     <a class="back-button" href="https://lukeo25.github.io/ImageSizeCalculator/">← Luke's Tools</a>
     <span class="bar-title">LUKE ANIMATE</span>
   </header>
-  <iframe id="luke-animate-frame" src="index.html" title="Luke Animate"></iframe>
+  <iframe id="luke-animate-frame" src="index.html?v=184" title="Luke Animate"></iframe>
 
 <script>
 (function(){
@@ -93,10 +93,10 @@
   frame.addEventListener('load', ()=>{
     try{
       const doc = frame.contentDocument;
-      if(!doc || doc.getElementById('luke-animate-layer-lock-loader')) return;
+      if(!doc || doc.getElementById('luke-animate-layer-lock-loader-v3-launcher')) return;
       const script = doc.createElement('script');
-      script.id = 'luke-animate-layer-lock-loader';
-      script.src = 'layer-lock.js?v=1';
+      script.id = 'luke-animate-layer-lock-loader-v3-launcher';
+      script.src = 'layer-lock.js?v=3.0.1';
       script.async = false;
       doc.body.appendChild(script);
     }catch(error){
