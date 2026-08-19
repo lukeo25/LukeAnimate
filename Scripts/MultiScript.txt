@@ -88,7 +88,7 @@
     '    <label><input id="la-multi-name" type="checkbox" checked> Name each Clip from its filename</label>',
     '    <label><input id="la-multi-clear" type="checkbox" checked> Clear existing frame contents in the destination range</label>',
     '    <label><input id="la-multi-extend" type="checkbox" checked> Extend the timeline when required</label>',
-    '    <label><input id="la-multi-fit" type="checkbox"> Fit each image to the full stage in X and Y</label>',
+    '    <label><input id="la-multi-fit" type="checkbox"> Fit oversized images inside the stage</label>',
     '  </div>',
     '  <div class="la-multi-actions">',
     '    <button id="la-multi-import" class="la-multi-primary" type="button">Build Animation Sequence</button>',
@@ -96,7 +96,7 @@
     '  </div>',
     '  <div class="la-multi-progress" id="la-multi-progress" aria-hidden="true"><span></span></div>',
     '  <pre class="la-multi-log" id="la-multi-log" aria-live="polite">Ready.</pre>',
-    '  <p class="la-multi-hint">Files are sorted naturally by filename. Each image is centred on the stage and placed on one consecutive frame of a single LukeAnimate drawing layer. Fit to stage scales X and Y independently to match the stage exactly.</p>',
+    '  <p class="la-multi-hint">Files are sorted naturally by filename. Each image is centred on the stage and placed on one consecutive frame of a single LukeAnimate drawing layer.</p>',
     '</div>'
   ].join("\n");
 
@@ -135,6 +135,7 @@
   });
 
   destinationSelect.addEventListener("change", updateDestinationFields);
+
   closeButton.addEventListener("click", closePanel);
 
   clearLogButton.addEventListener("click", function () {
@@ -327,9 +328,10 @@
     if (!fitInput.checked) {
       return { width: naturalWidth, height: naturalHeight };
     }
+    var scale = Math.min(1, Number(API.width || 1) / naturalWidth, Number(API.height || 1) / naturalHeight);
     return {
-      width: Math.max(1, Number(API.width) || 1),
-      height: Math.max(1, Number(API.height) || 1)
+      width: Math.max(1, naturalWidth * scale),
+      height: Math.max(1, naturalHeight * scale)
     };
   }
 
@@ -443,7 +445,7 @@
       });
 
       if (!firstObject) firstObject = object;
-      log("Frame " + frameNumber + ": " + loaded.file.name + (wrapInput.checked ? "  [Clip]" : "  [Image]") + (fitInput.checked ? "  [Fit X+Y]" : ""));
+      log("Frame " + frameNumber + ": " + loaded.file.name + (wrapInput.checked ? "  [Clip]" : "  [Image]"));
       setProgress(index + 1, loadedImages.length);
     }
 
