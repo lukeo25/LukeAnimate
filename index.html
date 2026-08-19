@@ -11,7 +11,7 @@
 </style>
 </head>
 <body>
-<iframe id="luke-animate-editor" src="editor.html?v=185.2" title="Luke Animate"></iframe>
+<iframe id="luke-animate-editor" src="editor.html?v=185.3" title="Luke Animate"></iframe>
 <script>
 (function(){
   'use strict';
@@ -28,14 +28,14 @@
     doc.body.appendChild(script);
   }
 
-  function installFitStageXY(doc){
+  function installFitStage(doc){
     if(!doc)return;
     const win=doc.defaultView;
     const button=doc.getElementById('btn-media-fit-stage');
-    if(!win||!button||button.dataset.fitStageXY==='1')return;
+    if(!win||!button||button.dataset.fitStageContain==='1')return;
 
-    button.dataset.fitStageXY='1';
-    button.title='Fit selected media to the full stage in X and Y';
+    button.dataset.fitStageContain='1';
+    button.title='Scale selected media proportionally so the whole item fits inside the stage';
 
     button.addEventListener('click',(event)=>{
       event.preventDefault();
@@ -51,12 +51,20 @@
       if(selected.length!==1)return;
 
       const obj=selected[0];
+      const stageWidth=Math.max(1,Number(API.width)||1);
+      const stageHeight=Math.max(1,Number(API.height)||1);
+      const sourceWidth=Math.max(1,Number(obj.naturalWidth||obj.width)||1);
+      const sourceHeight=Math.max(1,Number(obj.naturalHeight||obj.height)||1);
+      const fitScale=Math.min(stageWidth/sourceWidth,stageHeight/sourceHeight);
+      const fittedWidth=sourceWidth*fitScale;
+      const fittedHeight=sourceHeight*fitScale;
+
       if(typeof API.pushUndo==='function')API.pushUndo();
 
-      obj.x=0;
-      obj.y=0;
-      obj.width=Math.max(1,Number(API.width)||1);
-      obj.height=Math.max(1,Number(API.height)||1);
+      obj.x=(stageWidth-fittedWidth)/2;
+      obj.y=(stageHeight-fittedHeight)/2;
+      obj.width=fittedWidth;
+      obj.height=fittedHeight;
       obj.tx=0;
       obj.ty=0;
       obj.tscale=1;
@@ -72,7 +80,7 @@
     try{
       const doc=frame.contentDocument;
       installLayerLock(doc);
-      installFitStageXY(doc);
+      installFitStage(doc);
     }catch(error){
       console.error('Luke Animate page extensions could not be loaded:',error);
     }
