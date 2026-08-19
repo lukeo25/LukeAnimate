@@ -11,7 +11,7 @@
 </style>
 </head>
 <body>
-<iframe id="luke-animate-editor" src="editor.html?v=185.4" title="Luke Animate"></iframe>
+<iframe id="luke-animate-editor" src="editor.html?v=185.5" title="Luke Animate"></iframe>
 <script>
 (function(){
   'use strict';
@@ -28,6 +28,39 @@
     doc.body.appendChild(script);
   }
 
+  function selectedMedia(win){
+    const API=win&&win.LukeAnimate;
+    if(!API||typeof API.getSelectedDrawObjects!=='function')return null;
+    const selected=(API.getSelectedDrawObjects()||[]).filter(obj=>
+      obj&&(obj.type==='image'||obj.type==='video')
+    );
+    return selected.length===1?selected[0]:null;
+  }
+
+  function fitMediaExactlyToStage(win,obj,pushUndo){
+    const API=win&&win.LukeAnimate;
+    if(!API||!obj)return false;
+
+    const stageWidth=Math.max(1,Number(API.width)||1);
+    const stageHeight=Math.max(1,Number(API.height)||1);
+
+    if(pushUndo&&typeof API.pushUndo==='function')API.pushUndo();
+
+    obj.x=0;
+    obj.y=0;
+    obj.width=stageWidth;
+    obj.height=stageHeight;
+    obj.tx=0;
+    obj.ty=0;
+    obj.tscale=1;
+    obj.tscaleX=1;
+    obj.tscaleY=1;
+    obj.trotation=0;
+
+    if(typeof API.refreshUI==='function')API.refreshUI();
+    return true;
+  }
+
   function installFitStageExact(doc){
     if(!doc)return;
     const win=doc.defaultView;
@@ -35,40 +68,43 @@
     if(!win||!button||button.dataset.fitStageExact==='1')return;
 
     button.dataset.fitStageExact='1';
-    button.title='Scale selected media to exactly match the stage width and height';
+    button.title='Fit selected media exactly to the stage in X and Y';
 
     button.addEventListener('click',(event)=>{
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
-
-      const API=win.LukeAnimate;
-      if(!API||typeof API.getSelectedDrawObjects!=='function')return;
-
-      const selected=(API.getSelectedDrawObjects()||[]).filter(obj=>
-        obj&&(obj.type==='image'||obj.type==='video')
-      );
-      if(selected.length!==1)return;
-
-      const obj=selected[0];
-      const stageWidth=Math.max(1,Number(API.width)||1);
-      const stageHeight=Math.max(1,Number(API.height)||1);
-
-      if(typeof API.pushUndo==='function')API.pushUndo();
-
-      obj.x=0;
-      obj.y=0;
-      obj.width=stageWidth;
-      obj.height=stageHeight;
-      obj.tx=0;
-      obj.ty=0;
-      obj.tscale=1;
-      obj.tscaleX=1;
-      obj.tscaleY=1;
-      obj.trotation=0;
-
-      if(typeof API.refreshUI==='function')API.refreshUI();
+      const obj=selectedMedia(win);
+      if(!obj)return;
+      fitMediaExactlyToStage(win,obj,true);
     },true);
+  }
+
+  function installReferenceMediaFillStageExact(doc){
+    if(!doc)return;
+    const win=doc.defaultView;
+    const fitSelect=doc.getElementById('sel-media-fit');
+    const status=doc.getElementById('media-import-status');
+    if(!win||!fitSelect||!status||status.dataset.exactFillStageObserver==='1')return;
+
+    status.dataset.exactFillStageObserver='1';
+
+    const coverOption=fitSelect.querySelector('option[value="cover"]');
+    if(coverOption)coverOption.textContent='Fit to stage';
+
+    const applyImportedExactFit=()=>{
+      if(fitSelect.value!=='cover')return;
+      const text=String(status.textContent||'');
+      if(!text.includes(' added as '))return;
+      const obj=selectedMedia(win);
+      if(!obj)return;
+      fitMediaExactlyToStage(win,obj,false);
+    };
+
+    const observer=new MutationObserver(()=>{
+      requestAnimationFrame(applyImportedExactFit);
+    });
+    observer.observe(status,{childList:true,characterData:true,subtree:true});
   }
 
   frame.addEventListener('load',()=>{
@@ -76,6 +112,7 @@
       const doc=frame.contentDocument;
       installLayerLock(doc);
       installFitStageExact(doc);
+      installReferenceMediaFillStageExact(doc);
     }catch(error){
       console.error('Luke Animate page extensions could not be loaded:',error);
     }
