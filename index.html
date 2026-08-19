@@ -11,7 +11,7 @@
 </style>
 </head>
 <body>
-<iframe id="luke-animate-editor" src="editor.html?v=185.5" title="Luke Animate"></iframe>
+<iframe id="luke-animate-editor" src="editor.html?v=185.6" title="Luke Animate"></iframe>
 <script>
 (function(){
   'use strict';
@@ -19,13 +19,21 @@
   const frame=document.getElementById('luke-animate-editor');
   if(!frame)return;
 
-  function installLayerLock(doc){
-    if(!doc||doc.getElementById('luke-animate-layer-lock-loader-v51'))return;
+  function loadScript(doc,id,src){
+    if(!doc||doc.getElementById(id))return;
     const script=doc.createElement('script');
-    script.id='luke-animate-layer-lock-loader-v51';
-    script.src='layer-lock.js?v=5.1.0';
+    script.id=id;
+    script.src=src;
     script.async=false;
     doc.body.appendChild(script);
+  }
+
+  function installLayerLock(doc){
+    loadScript(doc,'luke-animate-layer-lock-loader-v51','layer-lock.js?v=5.1.0');
+  }
+
+  function installSelectionBehavior(doc){
+    loadScript(doc,'luke-animate-selection-behavior-loader-v1','selection-behavior.js?v=1.0.0');
   }
 
   function selectedMedia(win){
@@ -107,12 +115,40 @@
     observer.observe(status,{childList:true,characterData:true,subtree:true});
   }
 
+  function installLockDeselectionBridge(doc){
+    if(!doc||doc.documentElement.dataset.lockDeselectionBridge==='1')return;
+    doc.documentElement.dataset.lockDeselectionBridge='1';
+
+    doc.addEventListener('pointerdown',event=>{
+      const button=event.target&&event.target.closest
+        ?event.target.closest('.timeline-layer-lock-button')
+        :null;
+      if(!button)return;
+
+      requestAnimationFrame(()=>{
+        try{
+          if(button.classList.contains('locked')){
+            const win=doc.defaultView;
+            const behavior=win&&win.LukeAnimateSelectionBehavior;
+            if(behavior&&typeof behavior.clearSelection==='function'){
+              behavior.clearSelection();
+            }
+          }
+        }catch(error){
+          console.error('Luke Animate lock deselection failed:',error);
+        }
+      });
+    },false);
+  }
+
   frame.addEventListener('load',()=>{
     try{
       const doc=frame.contentDocument;
+      installSelectionBehavior(doc);
       installLayerLock(doc);
       installFitStageExact(doc);
       installReferenceMediaFillStageExact(doc);
+      installLockDeselectionBridge(doc);
     }catch(error){
       console.error('Luke Animate page extensions could not be loaded:',error);
     }
