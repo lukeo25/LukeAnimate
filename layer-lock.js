@@ -1,22 +1,23 @@
 /*
-  Luke Animate Layer Locking v5.0
+  Luke Animate Layer Locking v5.1
   Individual per-layer locking only.
-  Locked layers remain visible and render normally, but are removed from the
-  editable selection, rejected by stage selection, and blocked from dragging.
+  Locking now engages immediately on pointer-down, cancels the current edit
+  gesture, clears the locked selection and blocks movement without a delay.
 */
 (function(){
   'use strict';
 
-  if(window.__lukeAnimateLayerLockV5) return;
-  window.__lukeAnimateLayerLockV5 = true;
+  if(window.__lukeAnimateLayerLockV51) return;
+  window.__lukeAnimateLayerLockV51 = true;
 
   const STORAGE_PREFIX = 'LukeAnimate.LayerLock.v5.';
   const OLD_STORAGE_PREFIX = 'LukeAnimate.LayerLock.v4.';
-  const STYLE_ID = 'luke-animate-layer-lock-v5-style';
+  const STYLE_ID = 'luke-animate-layer-lock-v51-style';
   const LOCK_SELECTOR = '.timeline-layer-lock-button';
   let decorating = false;
   let cancellingGesture = false;
   let wrappersInstalled = false;
+  let immediateBlockedLayerKey = null;
 
   function safeDrawObjects(){
     try{ return Array.isArray(drawObjects) ? drawObjects : []; }
@@ -39,10 +40,10 @@
 
   function readStoredLocked(key){
     try{
-      const current = localStorage.getItem(storageKey(STORAGE_PREFIX,key));
-      if(current === '1') return true;
-      const old = localStorage.getItem(storageKey(OLD_STORAGE_PREFIX,key));
-      if(old === '1'){
+      const current=localStorage.getItem(storageKey(STORAGE_PREFIX,key));
+      if(current==='1') return true;
+      const old=localStorage.getItem(storageKey(OLD_STORAGE_PREFIX,key));
+      if(old==='1'){
         localStorage.setItem(storageKey(STORAGE_PREFIX,key),'1');
         return true;
       }
@@ -59,8 +60,8 @@
 
   function removeOldBulkControls(){
     document.querySelectorAll('.timeline-lock-bulk-controls,#btn-lock-others,#btn-unlock-all').forEach(el=>{
-      const row = el.closest && el.closest('.btn-row');
-      if(row && row.children.length <= 2) row.remove();
+      const row=el.closest && el.closest('.btn-row');
+      if(row && row.children.length<=2) row.remove();
       else el.remove();
     });
   }
@@ -87,6 +88,7 @@
         align-items:center !important;
         justify-content:center !important;
         vertical-align:middle !important;
+        touch-action:none !important;
       }
       .timeline-layer-lock-button:hover,
       .timeline-layer-lock-button:focus-visible{
@@ -124,7 +126,7 @@
   function rowKind(row){
     if(row.classList.contains('wick-drawing-layer')) return 'wick';
     if(row.classList.contains('fx-timeline-layer')) return 'fx';
-    if(row.dataset.timelineKind === 'legacy-object-row') return 'object';
+    if(row.dataset.timelineKind==='legacy-object-row') return 'object';
     return 'row';
   }
 
@@ -150,7 +152,7 @@
       if(row.classList.contains('native-clip-part-row')) return false;
       return row.classList.contains('wick-drawing-layer') ||
         row.classList.contains('fx-timeline-layer') ||
-        row.dataset.timelineKind === 'legacy-object-row';
+        row.dataset.timelineKind==='legacy-object-row';
     });
   }
 
@@ -262,19 +264,74 @@
     return changed;
   }
 
+  function cancelCurrentEditImmediately(){
+    cancellingGesture=true;
+    purgeLockedSelection();
+
+    const overlay=document.getElementById('edit-overlay');
+    if(overlay){
+      try{
+        overlay.dispatchEvent(new PointerEvent('pointercancel',{
+          bubbles:true,
+          cancelable:false,
+          pointerId:1,
+          pointerType:'mouse'
+        }));
+      }catch(_e){}
+    }
+
+    try{
+      document.dispatchEvent(new KeyboardEvent('keydown',{
+        key:'Escape',code:'Escape',bubbles:true,cancelable:true
+      }));
+      document.dispatchEvent(new KeyboardEvent('keyup',{
+        key:'Escape',code:'Escape',bubbles:true,cancelable:true
+      }));
+    }catch(_e){}
+
+    document.querySelectorAll(
+      '.xform-handle,.xform-axis-handle,.xform-rotate-handle,.clip-pivot-cross,.shape-point-handle,.bezier-anchor-handle,.bezier-control-handle,.pen-edit-anchor,.pen-edit-control,.pen-edit-bend,.pen-edit-width'
+    ).forEach(el=>{
+      try{ el.style.pointerEvents='none'; }catch(_e){}
+    });
+
+    refreshSelectionUI();
+    requestAnimationFrame(()=>{
+      purgeLockedSelection();
+      refreshSelectionUI();
+    });
+  }
+
   function setRowLocked(row,locked){
     const key=row.dataset.layerLockKey;
     if(!key) return;
+
+    if(locked){
+      immediateBlockedLayerKey=key;
+      cancellingGesture=true;
+    }else if(immediateBlockedLayerKey===key){
+      immediateBlockedLayerKey=null;
+    }
+
     writeStoredLocked(key,locked);
     setCanonicalLock(row,locked);
     row.classList.toggle('layer-locked',locked);
     const button=row.querySelector(LOCK_SELECTOR);
     if(button) setButtonState(button,locked);
-    if(locked){
-      purgeLockedSelection();
-      cancellingGesture=true;
-      setTimeout(()=>{cancellingGesture=false;},0);
+
+    if(locked) cancelCurrentEditImmediately();
+    else{
+      cancellingGesture=false;
+      refreshSelectionUI();
     }
+  }
+
+  function toggleRowFromPointerDown(event,row){
+    if(event.button!==undefined && event.button!==0) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    event.stopPropagation();
+    setRowLocked(row,!row.classList.contains('layer-locked'));
   }
 
   function insertLockButton(row,index){
@@ -296,11 +353,16 @@
     }
 
     setButtonState(button,locked);
+    button.onpointerdown=event=>toggleRowFromPointerDown(event,row);
+    button.onmousedown=event=>{
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+    };
     button.onclick=event=>{
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
-      setRowLocked(row,!row.classList.contains('layer-locked'));
     };
   }
 
@@ -321,7 +383,7 @@
     wrappersInstalled=true;
 
     try{
-      if(typeof selectDrawObject==='function' && !selectDrawObject.__layerLockV5Wrapped){
+      if(typeof selectDrawObject==='function' && !selectDrawObject.__layerLockV51Wrapped){
         const original=selectDrawObject;
         const wrapped=function(index){
           const obj=safeDrawObjects()[index];
@@ -331,31 +393,31 @@
           }
           return original.apply(this,arguments);
         };
-        wrapped.__layerLockV5Wrapped=true;
+        wrapped.__layerLockV51Wrapped=true;
         selectDrawObject=wrapped;
       }
     }catch(_e){}
 
     try{
-      if(typeof selectEffectLayer==='function' && !selectEffectLayer.__layerLockV5Wrapped){
+      if(typeof selectEffectLayer==='function' && !selectEffectLayer.__layerLockV51Wrapped){
         const original=selectEffectLayer;
         const wrapped=function(index){
           const layer=safeEffectLayers()[index];
           if(layer && layer.layerLocked===true) return false;
           return original.apply(this,arguments);
         };
-        wrapped.__layerLockV5Wrapped=true;
+        wrapped.__layerLockV51Wrapped=true;
         selectEffectLayer=wrapped;
       }
     }catch(_e){}
 
     try{
-      if(typeof LukeAnimate!=='undefined' && LukeAnimate && typeof LukeAnimate.getSelectedDrawObjects==='function' && !LukeAnimate.getSelectedDrawObjects.__layerLockV5Wrapped){
+      if(typeof LukeAnimate!=='undefined' && LukeAnimate && typeof LukeAnimate.getSelectedDrawObjects==='function' && !LukeAnimate.getSelectedDrawObjects.__layerLockV51Wrapped){
         const original=LukeAnimate.getSelectedDrawObjects.bind(LukeAnimate);
         const wrapped=function(){
           return (original()||[]).filter(obj=>obj && !objectLocked(obj));
         };
-        wrapped.__layerLockV5Wrapped=true;
+        wrapped.__layerLockV51Wrapped=true;
         LukeAnimate.getSelectedDrawObjects=wrapped;
       }
     }catch(_e){}
@@ -374,6 +436,16 @@
         event.stopPropagation();
       },true);
     });
+
+    document.addEventListener('pointerdown',event=>{
+      const target=event.target;
+      if(!target || !target.closest || target.closest(LOCK_SELECTOR)) return;
+      const row=target.closest('#timeline-tracks .timeline-track-row');
+      if(row && !row.classList.contains('layer-locked')){
+        immediateBlockedLayerKey=null;
+        cancellingGesture=false;
+      }
+    },true);
   }
 
   function currentActiveLockedRow(){
@@ -384,6 +456,12 @@
     }) || null;
   }
 
+  function immediateBlockActive(){
+    if(!immediateBlockedLayerKey) return false;
+    const row=eligibleRows().find(item=>item.dataset.layerLockKey===immediateBlockedLayerKey);
+    return !!(row && row.classList.contains('layer-locked'));
+  }
+
   function editSurfaceTarget(target){
     if(!target || !target.closest) return false;
     return !!target.closest(
@@ -391,28 +469,23 @@
     );
   }
 
-  function installStageMovementGuard(){
-    document.addEventListener('pointerdown',event=>{
-      if(!editSurfaceTarget(event.target)) return;
-      purgeLockedSelection();
-      if(currentActiveLockedRow()){
-        cancellingGesture=true;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        event.stopPropagation();
-      }
-    },true);
+  function shouldBlockStageEdit(){
+    purgeLockedSelection();
+    return immediateBlockActive() || !!currentActiveLockedRow();
+  }
 
-    document.addEventListener('mousedown',event=>{
+  function installStageMovementGuard(){
+    const blockStart=event=>{
       if(!editSurfaceTarget(event.target)) return;
-      purgeLockedSelection();
-      if(currentActiveLockedRow()){
-        cancellingGesture=true;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        event.stopPropagation();
-      }
-    },true);
+      if(!shouldBlockStageEdit()) return;
+      cancellingGesture=true;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+    };
+
+    document.addEventListener('pointerdown',blockStart,true);
+    document.addEventListener('mousedown',blockStart,true);
 
     const afterStart=()=>{
       queueMicrotask(()=>{
@@ -448,7 +521,7 @@
 
     const finish=()=>{
       purgeLockedSelection();
-      cancellingGesture=false;
+      if(!immediateBlockActive() && !currentActiveLockedRow()) cancellingGesture=false;
     };
     document.addEventListener('pointerup',finish,true);
     document.addEventListener('mouseup',finish,true);
@@ -456,7 +529,7 @@
 
     document.addEventListener('keydown',event=>{
       purgeLockedSelection();
-      if(!currentActiveLockedRow()) return;
+      if(!shouldBlockStageEdit()) return;
       const blockedKeys=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Delete','Backspace'];
       if(blockedKeys.includes(event.key)){
         event.preventDefault();
@@ -497,7 +570,7 @@
     installObserver();
     setTimeout(()=>{ installCoreSelectionGuards(); decorateRows(); },100);
     setTimeout(()=>{ installCoreSelectionGuards(); decorateRows(); },500);
-    console.info('Luke Animate layer locking v5 loaded: locked layers are non-selectable and non-movable.');
+    console.info('Luke Animate layer locking v5.1 loaded: lock is immediate on pointer-down.');
   }
 
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',initialise,{once:true});
