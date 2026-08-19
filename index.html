@@ -11,7 +11,7 @@
 </style>
 </head>
 <body>
-<iframe id="luke-animate-editor" src="editor.html?v=184" title="Luke Animate"></iframe>
+<iframe id="luke-animate-editor" src="editor.html?v=185" title="Luke Animate"></iframe>
 <script>
 (function(){
   'use strict';
@@ -20,10 +20,10 @@
   frame.addEventListener('load',()=>{
     try{
       const doc=frame.contentDocument;
-      if(!doc||doc.getElementById('luke-animate-layer-lock-loader-v4'))return;
+      if(!doc||doc.getElementById('luke-animate-layer-lock-loader-v5'))return;
       const script=doc.createElement('script');
-      script.id='luke-animate-layer-lock-loader-v4';
-      script.src='layer-lock.js?v=4.0.0';
+      script.id='luke-animate-layer-lock-loader-v5';
+      script.src='layer-lock.js?v=5.0.0';
       script.async=false;
       doc.body.appendChild(script);
     }catch(error){
