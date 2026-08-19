@@ -1,9 +1,9 @@
-/* Luke Animate selection behaviour v1.0 */
+/* Luke Animate selection behaviour v1.1 */
 (function(){
   'use strict';
 
-  if(window.__lukeAnimateSelectionBehaviorV1) return;
-  window.__lukeAnimateSelectionBehaviorV1 = true;
+  if(window.__lukeAnimateSelectionBehaviorV11) return;
+  window.__lukeAnimateSelectionBehaviorV11 = true;
 
   const API = window.LukeAnimate;
   const overlay = document.getElementById('edit-overlay');
@@ -42,7 +42,10 @@
 
   function forceClearSelection(){
     if(forcingClear) return false;
-    if(!currentSelection().length) return true;
+    if(!currentSelection().length){
+      refresh();
+      return true;
+    }
 
     forcingClear = true;
     const objects = allDrawObjects();
@@ -101,6 +104,28 @@
   };
 
   /*
+    A lock button currently toggles on pointer-down. Watch that gesture in the
+    capture phase, then clear selection after the lock handler has changed the
+    row to its locked state. Unlocking does not alter selection.
+  */
+  document.addEventListener('pointerdown',event=>{
+    if(forcingClear) return;
+    const target=event.target;
+    if(!target || !target.closest) return;
+    const button=target.closest('.timeline-layer-lock-button');
+    if(!button) return;
+
+    const wasLocked=button.classList.contains('locked');
+    if(wasLocked) return;
+
+    setTimeout(()=>{
+      if(button.classList.contains('locked')){
+        forceClearSelection();
+      }
+    },0);
+  },true);
+
+  /*
     The editor creates .stage-selection-marquee synchronously only when the
     mousedown landed on empty stage space. Record that fact after Luke Animate's
     own mousedown handler has run. A plain empty click then forces deselection;
@@ -135,5 +160,5 @@
     },false);
   }
 
-  console.info('Luke Animate selection behaviour v1 loaded.');
+  console.info('Luke Animate selection behaviour v1.1 loaded: locking deselects immediately.');
 })();
