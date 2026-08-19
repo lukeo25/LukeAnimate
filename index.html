@@ -20,10 +20,10 @@
   frame.addEventListener('load',()=>{
     try{
       const doc=frame.contentDocument;
-      if(!doc||doc.getElementById('luke-animate-layer-lock-loader-v3'))return;
+      if(!doc||doc.getElementById('luke-animate-layer-lock-loader-v4'))return;
       const script=doc.createElement('script');
-      script.id='luke-animate-layer-lock-loader-v3';
-      script.src='layer-lock.js?v=3.0.1';
+      script.id='luke-animate-layer-lock-loader-v4';
+      script.src='layer-lock.js?v=4.0.0';
       script.async=false;
       doc.body.appendChild(script);
     }catch(error){
