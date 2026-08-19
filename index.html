@@ -11,23 +11,70 @@
 </style>
 </head>
 <body>
-<iframe id="luke-animate-editor" src="editor.html?v=185.1" title="Luke Animate"></iframe>
+<iframe id="luke-animate-editor" src="editor.html?v=185.2" title="Luke Animate"></iframe>
 <script>
 (function(){
   'use strict';
+
   const frame=document.getElementById('luke-animate-editor');
   if(!frame)return;
+
+  function installLayerLock(doc){
+    if(!doc||doc.getElementById('luke-animate-layer-lock-loader-v51'))return;
+    const script=doc.createElement('script');
+    script.id='luke-animate-layer-lock-loader-v51';
+    script.src='layer-lock.js?v=5.1.0';
+    script.async=false;
+    doc.body.appendChild(script);
+  }
+
+  function installFitStageXY(doc){
+    if(!doc)return;
+    const win=doc.defaultView;
+    const button=doc.getElementById('btn-media-fit-stage');
+    if(!win||!button||button.dataset.fitStageXY==='1')return;
+
+    button.dataset.fitStageXY='1';
+    button.title='Fit selected media to the full stage in X and Y';
+
+    button.addEventListener('click',(event)=>{
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+
+      const API=win.LukeAnimate;
+      if(!API||typeof API.getSelectedDrawObjects!=='function')return;
+
+      const selected=(API.getSelectedDrawObjects()||[]).filter(obj=>
+        obj&&(obj.type==='image'||obj.type==='video')
+      );
+      if(selected.length!==1)return;
+
+      const obj=selected[0];
+      if(typeof API.pushUndo==='function')API.pushUndo();
+
+      obj.x=0;
+      obj.y=0;
+      obj.width=Math.max(1,Number(API.width)||1);
+      obj.height=Math.max(1,Number(API.height)||1);
+      obj.tx=0;
+      obj.ty=0;
+      obj.tscale=1;
+      obj.tscaleX=1;
+      obj.tscaleY=1;
+      obj.trotation=0;
+
+      if(typeof API.refreshUI==='function')API.refreshUI();
+    },true);
+  }
+
   frame.addEventListener('load',()=>{
     try{
       const doc=frame.contentDocument;
-      if(!doc||doc.getElementById('luke-animate-layer-lock-loader-v51'))return;
-      const script=doc.createElement('script');
-      script.id='luke-animate-layer-lock-loader-v51';
-      script.src='layer-lock.js?v=5.1.0';
-      script.async=false;
-      doc.body.appendChild(script);
+      installLayerLock(doc);
+      installFitStageXY(doc);
     }catch(error){
-      console.error('Luke Animate layer locking could not be loaded:',error);
+      console.error('Luke Animate page extensions could not be loaded:',error);
     }
   });
 })();
