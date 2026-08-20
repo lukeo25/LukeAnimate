@@ -1,0 +1,43 @@
+name: Add Change Image to Animate sidebar
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - tools/add_change_image_sidebar.py
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Add Change Image control
+        run: python tools/add_change_image_sidebar.py
+      - name: Validate
+        run: |
+          git diff --check
+          python - <<'PY'
+          from pathlib import Path
+          text=Path('index.html').read_text(encoding='utf-8')
+          required=['btn-media-change-image','Change Image…','animate sidebar image replacement v188']
+          missing=[x for x in required if x not in text]
+          if missing:
+            raise SystemExit('Missing sidebar change-image markers: '+', '.join(missing))
+          print('Change Image sidebar patch verified.')
+          PY
+      - name: Commit editor change
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "No index.html changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Add Change Image to Animate sidebar"
+          git push
