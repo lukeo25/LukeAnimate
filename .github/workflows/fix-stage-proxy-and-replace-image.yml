@@ -1,0 +1,50 @@
+name: Fix stage proxy and add image replacement
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - tools/fix_stage_proxy_and_replace_image.py
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply targeted stage patch
+        run: python tools/fix_stage_proxy_and_replace_image.py
+      - name: Validate patched editor
+        run: |
+          git diff --check
+          python - <<'PY'
+          from pathlib import Path
+          text=Path('index.html').read_text(encoding='utf-8')
+          required=[
+            'stage image replacement v187',
+            'stageWrap.clientWidth',
+            'stageWrap.clientHeight',
+            'Replace Image…',
+            'function replaceStageImageSource',
+            "overlay.addEventListener('contextmenu'"
+          ]
+          missing=[item for item in required if item not in text]
+          if missing:
+            raise SystemExit('Missing stage patch markers: '+', '.join(missing))
+          print('Stage proxy/image replacement source validation passed.')
+          PY
+      - name: Commit patched editor
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "No index.html changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Keep stage controls clear of scrollbars and add image replacement"
+          git push
