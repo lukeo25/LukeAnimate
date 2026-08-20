@@ -1,0 +1,50 @@
+name: Apply native layer locking
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - tools/apply_native_layer_lock_patch.py
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply native layer lock patch
+        run: python tools/apply_native_layer_lock_patch.py
+      - name: Validate patched editor
+        run: |
+          git diff --check
+          python - <<'PY'
+          from pathlib import Path
+          text=Path('index.html').read_text(encoding='utf-8')
+          required=[
+            'native per-layer locking v186',
+            'nativeObjectLayerLocked',
+            'nativeToggleObjectLayerLock',
+            'nativeToggleEffectLayerLock',
+            'nativeDecorateTimelineLocks',
+            'nativeDecorateLayerListLocks'
+          ]
+          missing=[item for item in required if item not in text]
+          if missing:
+            raise SystemExit('Missing native lock markers: '+', '.join(missing))
+          print('Native layer lock patch markers verified.')
+          PY
+      - name: Commit patched editor
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "No index.html changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Add native per-layer locking safely"
+          git push
