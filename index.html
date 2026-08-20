@@ -2223,6 +2223,7 @@
       <button class="btn small" id="btn-project-save-top" style="flex:0 0 auto;" title="Save the complete editable LukeAnimate project (Ctrl+S)">💾 Save Project</button>
       <button class="btn small" id="btn-project-load-top" style="flex:0 0 auto;" title="Load a saved LukeAnimate project">📂 Load Project</button>
       <button class="btn small primary" id="btn-export-webm-top" style="flex:0 0 auto;" title="Export the current animation as a WebM file">Export WebM</button>
+      <button class="btn small primary" id="btn-export-gif-top" style="flex:0 0 auto;" title="Export the current animation as an animated GIF">Export GIF</button>
       <button class="btn small" id="btn-undo" style="flex:0 0 auto;" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
       <button class="btn small" id="btn-redo" style="flex:0 0 auto;" disabled title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
     </div>
@@ -2889,6 +2890,7 @@
     </div>
     <div class="btn-row" style="margin-top:4px;">
       <button class="btn primary" id="btn-record">Export WebM</button>
+      <button class="btn primary" id="btn-export-gif">Export GIF</button>
       <button class="btn danger" id="btn-stop" disabled>Stop</button>
     </div>
     <a id="download-link" download="luke-animate.webm">Download will appear here</a>
@@ -17623,6 +17625,8 @@ ctx.fill();</textarea>
   let chunks = [];
   const btnRecord = document.getElementById('btn-record');
   const btnExportWebMTop = document.getElementById('btn-export-webm-top');
+  const btnExportGIF = document.getElementById('btn-export-gif');
+  const btnExportGIFTop = document.getElementById('btn-export-gif-top');
   const btnStop = document.getElementById('btn-stop');
   const recIndicator = document.getElementById('rec-indicator');
   const recTime = document.getElementById('rec-time');
@@ -17647,6 +17651,159 @@ ctx.fill();</textarea>
     btnExportWebMTop.addEventListener('click', ()=>{
       if(btnRecord && !btnRecord.disabled) btnRecord.click();
     });
+  }
+
+  let gifExportActive = false;
+  let gifEncoderModulePromise = null;
+
+  function loadGifEncoderModule(){
+    if(!gifEncoderModulePromise){
+      gifEncoderModulePromise = import('https://unpkg.com/gifenc@1.0.3?module');
+    }
+    return gifEncoderModulePromise;
+  }
+
+  function waitAnimationFrames(count=2){
+    return new Promise(resolve=>{
+      const step=()=>{
+        count-=1;
+        if(count<=0) resolve();
+        else requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  async function exportAnimatedGIF(){
+    if(gifExportActive) return;
+    if(mediaRecorder && mediaRecorder.state === 'recording'){
+      alert('Stop the WebM export before exporting a GIF.');
+      return;
+    }
+
+    const fps = Math.max(1, getTimelineFPS());
+    const duration = Math.max(0.001, timelineDuration);
+    const totalFrames = Math.max(1, Math.round(duration * fps));
+    const frameDelay = Math.max(10, Math.round(1000 / fps));
+    const restorePlaying = playing;
+    const restoreTime = t;
+    const restoreExportState = {
+      active: exportPlayback.active,
+      fps: exportPlayback.fps,
+      duration: exportPlayback.duration,
+      totalFrames: exportPlayback.totalFrames,
+      currentFrameIndex: exportPlayback.currentFrameIndex,
+      recorderStarted: exportPlayback.recorderStarted
+    };
+
+    gifExportActive = true;
+    if(btnExportGIF) btnExportGIF.disabled = true;
+    if(btnExportGIFTop) btnExportGIFTop.disabled = true;
+    if(btnRecord) btnRecord.disabled = true;
+    if(btnExportWebMTop) btnExportWebMTop.disabled = true;
+    if(btnStop) btnStop.disabled = true;
+    if(btnExportGIFTop) btnExportGIFTop.textContent = 'Loading GIF…';
+    if(btnExportGIF) btnExportGIF.textContent = 'Loading GIF…';
+
+    let cleanViewStarted = false;
+
+    try{
+      const { GIFEncoder, quantize, applyPalette } = await loadGifEncoderModule();
+      const gif = GIFEncoder();
+      const frameCanvas = document.createElement('canvas');
+      frameCanvas.width = W;
+      frameCanvas.height = H;
+      const frameContext = frameCanvas.getContext('2d', {alpha:true, willReadFrequently:true});
+
+      beginCleanWebMExportView();
+      cleanViewStarted = true;
+      exportPlayback.active = true;
+      exportPlayback.fps = fps;
+      exportPlayback.duration = duration;
+      exportPlayback.totalFrames = totalFrames;
+      exportPlayback.recorderStarted = false;
+      playing = false;
+      layers.forEach(layer => layer.state = {});
+
+      for(let frameIndex=0; frameIndex<totalFrames; frameIndex+=1){
+        exportPlayback.currentFrameIndex = frameIndex;
+        t = frameIndex / fps;
+        syncActiveSceneFrameForTime(t, true);
+
+        // The normal Luke Animate render loop uses exportPlayback.currentFrameIndex.
+        // Wait for it to paint this exact frame before reading the stage canvas.
+        await waitAnimationFrames(2);
+
+        frameContext.clearRect(0,0,W,H);
+        frameContext.drawImage(canvas,0,0,W,H);
+        const image = frameContext.getImageData(0,0,W,H);
+        const palette = quantize(image.data, 256, {
+          format:'rgba4444',
+          oneBitAlpha:true
+        });
+        const indexed = applyPalette(image.data, palette, 'rgba4444');
+        let transparentIndex = -1;
+        for(let i=0;i<palette.length;i+=1){
+          if(palette[i].length>3 && palette[i][3]===0){
+            transparentIndex=i;
+            break;
+          }
+        }
+        gif.writeFrame(indexed,W,H,{
+          palette,
+          delay:frameDelay,
+          repeat:0,
+          transparent:transparentIndex>=0,
+          transparentIndex:transparentIndex>=0?transparentIndex:0
+        });
+
+        const label = `Export GIF ${frameIndex+1}/${totalFrames}`;
+        if(btnExportGIFTop) btnExportGIFTop.textContent = label;
+        if(btnExportGIF) btnExportGIF.textContent = label;
+        if(recTime) recTime.textContent = `${frameIndex+1} / ${totalFrames}`;
+
+        // Give the UI a chance to repaint during long GIF exports.
+        if(frameIndex % 2 === 1) await new Promise(resolve=>setTimeout(resolve,0));
+      }
+
+      gif.finish();
+      const blob = new Blob([gif.bytes()], {type:'image/gif'});
+      const url = URL.createObjectURL(blob);
+      downloadLink.href = url;
+      downloadLink.download = 'luke-animate.gif';
+      downloadLink.textContent = `Download luke-animate.gif (${(blob.size/1024/1024).toFixed(2)} MB)`;
+      downloadLink.classList.add('show');
+      try{ downloadLink.click(); }catch(error){}
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }catch(error){
+      console.error('Luke Animate GIF export failed:',error);
+      alert('GIF export failed: ' + (error && error.message ? error.message : error));
+    }finally{
+      exportPlayback.active = restoreExportState.active;
+      exportPlayback.fps = restoreExportState.fps;
+      exportPlayback.duration = restoreExportState.duration;
+      exportPlayback.totalFrames = restoreExportState.totalFrames;
+      exportPlayback.currentFrameIndex = restoreExportState.currentFrameIndex;
+      exportPlayback.recorderStarted = restoreExportState.recorderStarted;
+      playing = restorePlaying;
+      t = restoreTime;
+      syncActiveSceneFrameForTime(t, true);
+      if(cleanViewStarted) restoreCleanWebMExportView();
+      gifExportActive = false;
+      if(btnExportGIF){ btnExportGIF.disabled = false; btnExportGIF.textContent = 'Export GIF'; }
+      if(btnExportGIFTop){ btnExportGIFTop.disabled = false; btnExportGIFTop.textContent = 'Export GIF'; }
+      if(btnRecord) btnRecord.disabled = false;
+      if(btnExportWebMTop){ btnExportWebMTop.disabled = false; btnExportWebMTop.textContent = 'Export WebM'; }
+      if(btnStop) btnStop.disabled = true;
+      if(recTime) recTime.textContent = '';
+    }
+  }
+
+  if(btnExportGIFTop){
+    btnExportGIFTop.addEventListener('click', exportAnimatedGIF);
+  }
+  if(btnExportGIF){
+    btnExportGIF.addEventListener('click', exportAnimatedGIF);
   }
 
   btnRecord.addEventListener('click', ()=>{
