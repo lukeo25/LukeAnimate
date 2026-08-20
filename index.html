@@ -2222,8 +2222,6 @@
       <label class="toolbar-check" title="Snap moved and newly drawn objects to visible ruler guides"><input type="checkbox" id="chk-snap-guides" checked>Snap to Guides</label>
       <button class="btn small" id="btn-project-save-top" style="flex:0 0 auto;" title="Save the complete editable LukeAnimate project (Ctrl+S)">💾 Save Project</button>
       <button class="btn small" id="btn-project-load-top" style="flex:0 0 auto;" title="Load a saved LukeAnimate project">📂 Load Project</button>
-      <button class="btn small primary" id="btn-export-webm-top" style="flex:0 0 auto;" title="Export the current animation as a WebM file">Export WebM</button>
-      <button class="btn small primary" id="btn-export-gif-top" style="flex:0 0 auto;" title="Export the current animation as an animated GIF">Export GIF</button>
       <button class="btn small" id="btn-undo" style="flex:0 0 auto;" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
       <button class="btn small" id="btn-redo" style="flex:0 0 auto;" disabled title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
     </div>
@@ -2882,7 +2880,7 @@
     <div class="hint">Affects the whole composited canvas (all layers together), not just one layer.</div>
   </div>
 
-  <div class="group">
+  <div class="group" id="legacy-export-controls" style="display:none;">
     <h2>Export</h2>
     <div class="row">
       <label>Duration (s)</label>
@@ -2895,9 +2893,6 @@
     </div>
     <a id="download-link" download="luke-animate.webm">Download will appear here</a>
     <div id="status">Format: <b id="status-format">—</b></div>
-    <div class="hint">
-      Set the duration here (it stays in sync with the Timeline below — changing either one updates both). Stage size, frame rate and background are controlled from the floating <b>Stage Settings</b> panel. Export is always WebM. Transparent export requires a browser that records canvas alpha in WebM.
-    </div>
   </div>
 </div><!-- /sidebar-main-content -->
 
@@ -3037,8 +3032,35 @@
   </div>
 
   <div class="devpanel" id="devpanel-import" style="display:none;">
-    <div class="hint" style="padding:12px 14px 0;">Export your Behaviours to share or back up, or bring some in three ways below.</div>
-    <div style="padding:10px 14px;">
+    <div style="padding:12px 14px 0;">
+      <div class="group" id="unified-export-group" style="padding:0 0 14px;margin:0 0 12px;border-bottom:1px solid var(--line);">
+        <h2 style="margin-top:0;">Export Animation</h2>
+        <div class="row">
+          <label>Format</label>
+          <select id="sel-unified-export-format" style="flex:1;">
+            <option value="webm" selected>WebM</option>
+            <option value="gif">GIF</option>
+            <option value="webp">Animated WebP</option>
+            <option value="apng">APNG</option>
+            <option value="avif">Animated AVIF</option>
+            <option value="mpg">MPG / MPEG</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>Duration (s)</label>
+          <input type="number" id="inp-unified-export-duration" value="6" min="1" max="120" step="1" style="flex:1;">
+        </div>
+        <label class="toggle-line" id="unified-export-transparency-row"><input type="checkbox" id="chk-unified-export-transparent" checked> Transparent background</label>
+        <div class="hint" id="unified-export-format-note" style="padding:6px 0 8px;">WebM can preserve transparency when VP9 alpha recording is supported by the browser.</div>
+        <div class="btn-row">
+          <button class="btn primary" id="btn-unified-export" style="flex:1;">Export</button>
+          <button class="btn danger" id="btn-unified-export-stop" disabled>Stop</button>
+        </div>
+        <div id="unified-export-progress" class="audio-filename" style="margin-top:8px;">Ready.</div>
+      </div>
+      <div class="hint" style="padding:0 0 8px;">Export your Behaviours to share or back up, or bring some in three ways below.</div>
+    </div>
+    <div style="padding:0 14px 10px;">
       <div class="row"><label>From file</label>
         <label class="btn small" for="inp-import-file" style="flex:1;cursor:pointer;">Choose .json…</label>
         <input type="file" id="inp-import-file" accept="application/json,.lukeanimate,.lukeanimate.json" style="display:none;">
@@ -17632,6 +17654,132 @@ ctx.fill();</textarea>
   const recTime = document.getElementById('rec-time');
   const downloadLink = document.getElementById('download-link');
   const statusFormat = document.getElementById('status-format');
+  const unifiedExportFormat = document.getElementById('sel-unified-export-format');
+  const unifiedExportDuration = document.getElementById('inp-unified-export-duration');
+  const unifiedExportTransparent = document.getElementById('chk-unified-export-transparent');
+  const unifiedExportTransparencyRow = document.getElementById('unified-export-transparency-row');
+  const unifiedExportFormatNote = document.getElementById('unified-export-format-note');
+  const unifiedExportButton = document.getElementById('btn-unified-export');
+  const unifiedExportStop = document.getElementById('btn-unified-export-stop');
+  const unifiedExportProgress = document.getElementById('unified-export-progress');
+  let unifiedFFmpeg = null;
+  let unifiedFFmpegLoading = null;
+
+  function unifiedFormatSupportsTransparency(format){
+    return ['webm','gif','webp','apng','avif'].includes(format);
+  }
+
+  function syncUnifiedExportUI(){
+    if(!unifiedExportFormat) return;
+    const format = unifiedExportFormat.value;
+    const alpha = unifiedFormatSupportsTransparency(format);
+    if(unifiedExportTransparencyRow) unifiedExportTransparencyRow.style.opacity = alpha ? '1' : '.45';
+    if(unifiedExportTransparent) unifiedExportTransparent.disabled = !alpha;
+    if(!alpha && unifiedExportTransparent) unifiedExportTransparent.checked = false;
+    const notes = {
+      webm:'WebM uses Luke Animate’s existing deterministic recorder. Transparency depends on browser VP9 alpha support.',
+      gif:'GIF supports 1-bit transparency. Soft alpha edges are reduced to transparent/opaque pixels.',
+      webp:'Animated WebP supports full alpha transparency.',
+      apng:'APNG supports full alpha transparency.',
+      avif:'Animated AVIF supports alpha, but requires an AV1-capable browser encoder build.',
+      mpg:'MPG / MPEG does not support transparency; the stage background is flattened.'
+    };
+    if(unifiedExportFormatNote) unifiedExportFormatNote.textContent = notes[format] || '';
+  }
+
+  async function loadUnifiedFFmpeg(){
+    if(unifiedFFmpeg) return unifiedFFmpeg;
+    if(unifiedFFmpegLoading) return unifiedFFmpegLoading;
+    unifiedFFmpegLoading = (async()=>{
+      if(!window.FFmpeg){
+        await new Promise((resolve,reject)=>{
+          const script=document.createElement('script');
+          script.src='https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';
+          script.onload=resolve; script.onerror=()=>reject(new Error('Could not load FFmpeg encoder.'));
+          document.head.appendChild(script);
+        });
+      }
+      const ff=FFmpeg.createFFmpeg({
+        log:false,
+        mainName:'main',
+        corePath:'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js'
+      });
+      await ff.load();
+      unifiedFFmpeg=ff;
+      return ff;
+    })();
+    try{return await unifiedFFmpegLoading;}finally{unifiedFFmpegLoading=null;}
+  }
+
+  function canvasPNGBlob(sourceCanvas, transparent){
+    return new Promise((resolve,reject)=>{
+      const c=document.createElement('canvas'); c.width=W; c.height=H;
+      const cx=c.getContext('2d',{alpha:true});
+      if(!transparent){ cx.fillStyle=stageColor||'#ffffff'; cx.fillRect(0,0,W,H); }
+      cx.drawImage(sourceCanvas,0,0,W,H);
+      c.toBlob(blob=>blob?resolve(blob):reject(new Error('Could not create export frame.')),'image/png');
+    });
+  }
+
+  async function exportFrameSequenceWithFFmpeg(format, transparent){
+    const fps=Math.max(1,getTimelineFPS());
+    const duration=Math.max(.001,timelineDuration);
+    const totalFrames=Math.max(1,Math.round(duration*fps));
+    const restorePlaying=playing, restoreTime=t;
+    const restoreExportState={active:exportPlayback.active,fps:exportPlayback.fps,duration:exportPlayback.duration,totalFrames:exportPlayback.totalFrames,currentFrameIndex:exportPlayback.currentFrameIndex,recorderStarted:exportPlayback.recorderStarted};
+    let clean=false;
+    const ff=await loadUnifiedFFmpeg();
+    const frameNames=[];
+    try{
+      beginCleanWebMExportView(); clean=true; exportPlayback.active=true; exportPlayback.fps=fps; exportPlayback.duration=duration; exportPlayback.totalFrames=totalFrames; exportPlayback.recorderStarted=false; playing=false; layers.forEach(layer=>layer.state={});
+      for(let i=0;i<totalFrames;i+=1){
+        exportPlayback.currentFrameIndex=i; t=i/fps; syncActiveSceneFrameForTime(t,true); await waitAnimationFrames(2);
+        const blob=await canvasPNGBlob(canvas,transparent);
+        const name=`frame${String(i).padStart(6,'0')}.png`; frameNames.push(name); ff.FS('writeFile',name,new Uint8Array(await blob.arrayBuffer()));
+        if(unifiedExportProgress) unifiedExportProgress.textContent=`Preparing frame ${i+1} of ${totalFrames}…`;
+        if(i%2===1) await new Promise(r=>setTimeout(r,0));
+      }
+      let out='luke-animate.'+format;
+      let args=['-framerate',String(fps),'-i','frame%06d.png'];
+      if(format==='webp') args.push('-loop','0','-c:v','libwebp','-lossless','0','-q:v','80','-pix_fmt',transparent?'yuva420p':'yuv420p',out);
+      else if(format==='apng') args.push('-plays','0','-f','apng',out);
+      else if(format==='mpg') args.push('-c:v','mpeg2video','-q:v','3','-pix_fmt','yuv420p',out);
+      else if(format==='avif') args.push('-c:v','libaom-av1','-crf','28','-b:v','0',out);
+      else throw new Error('Unsupported export format: '+format);
+      if(unifiedExportProgress) unifiedExportProgress.textContent='Encoding '+format.toUpperCase()+'…';
+      await ff.run(...args);
+      const data=ff.FS('readFile',out);
+      const mime={webp:'image/webp',apng:'image/apng',avif:'image/avif',mpg:'video/mpeg'}[format]||'application/octet-stream';
+      const blob=new Blob([data.buffer],{type:mime}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=out; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000);
+      try{ff.FS('unlink',out);}catch(e){}
+      if(unifiedExportProgress) unifiedExportProgress.textContent='Export complete.';
+    }finally{
+      frameNames.forEach(name=>{try{ff.FS('unlink',name);}catch(e){}});
+      exportPlayback.active=restoreExportState.active; exportPlayback.fps=restoreExportState.fps; exportPlayback.duration=restoreExportState.duration; exportPlayback.totalFrames=restoreExportState.totalFrames; exportPlayback.currentFrameIndex=restoreExportState.currentFrameIndex; exportPlayback.recorderStarted=restoreExportState.recorderStarted; playing=restorePlaying; t=restoreTime; syncActiveSceneFrameForTime(t,true); if(clean) restoreCleanWebMExportView();
+    }
+  }
+
+  async function runUnifiedExport(){
+    if(!unifiedExportFormat || !unifiedExportButton) return;
+    const format=unifiedExportFormat.value;
+    const transparent=!!(unifiedExportTransparent && unifiedExportTransparent.checked && unifiedFormatSupportsTransparency(format));
+    if(unifiedExportDuration && document.getElementById('inp-duration')){ document.getElementById('inp-duration').value=unifiedExportDuration.value; document.getElementById('inp-duration').dispatchEvent(new Event('change',{bubbles:true})); }
+    unifiedExportButton.disabled=true; if(unifiedExportStop) unifiedExportStop.disabled=false; if(unifiedExportProgress) unifiedExportProgress.textContent='Starting export…';
+    try{
+      if(format==='webm'){ if(btnRecord && !btnRecord.disabled) btnRecord.click(); if(unifiedExportProgress) unifiedExportProgress.textContent='WebM export started…'; return; }
+      if(format==='gif'){ await exportAnimatedGIF(); if(unifiedExportProgress) unifiedExportProgress.textContent='GIF export complete.'; return; }
+      await exportFrameSequenceWithFFmpeg(format,transparent);
+    }catch(error){
+      console.error('Unified export failed:',error);
+      if(unifiedExportProgress) unifiedExportProgress.textContent='Export failed: '+(error&&error.message?error.message:error);
+      alert('Export failed: '+(error&&error.message?error.message:error));
+    }finally{ unifiedExportButton.disabled=false; if(unifiedExportStop) unifiedExportStop.disabled=true; }
+  }
+
+  if(unifiedExportFormat){ unifiedExportFormat.addEventListener('change',syncUnifiedExportUI); syncUnifiedExportUI(); }
+  if(unifiedExportDuration){ unifiedExportDuration.value=String(Math.max(1,Math.round(timelineDuration||6))); }
+  if(unifiedExportButton) unifiedExportButton.addEventListener('click',runUnifiedExport);
+  if(unifiedExportStop) unifiedExportStop.addEventListener('click',()=>{ if(btnStop && !btnStop.disabled) btnStop.click(); try{if(unifiedFFmpeg) unifiedFFmpeg.exit();}catch(e){} unifiedFFmpeg=null; if(unifiedExportProgress) unifiedExportProgress.textContent='Export stopped.'; });
 
   function pickMimeType(){
     const candidates = [
