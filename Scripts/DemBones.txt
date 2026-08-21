@@ -1,4 +1,8 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.32
+/* Luke Animate Dem Bones + MyCharacter GPT v16.33
+   v16.33 adds Stretchy Bones. They use the existing smooth longitudinal skin
+   deformation, but expose length as a distinct animated property: dragging a
+   Stretchy Bone tail in Animate changes both its direction and keyed length.
+   Normal, Lip and Frame bones retain their previous drag and scale behaviour.
    v16.32 fixes blank/corrupted WebM export frames caused by two background
    loops (the closed-panel runtime sync RAF and the 160ms UI interval) that
    mutate live object.points/bezierHandles on their own clock purely for
@@ -96,7 +100,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.32";
+  var TOOL_VERSION = "16.33";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -135,6 +139,7 @@
     selectedCurveId:"",
     selectedPointIndex:0,
     curvePointAddMode:false,
+    addBoneType:"bone",
     addPreview:null,
     drag:null,
     removeOriginals:true,
@@ -1455,10 +1460,12 @@
     if(Math.hypot(tail.x-head.x,tail.y-head.y)<4){notify("Drag a longer bone.",true);return;}
     API.pushUndo();
     var connected=autoConnectNewBone(head,tail);
+    type=type||"bone";
+    var typeName=type==="stretchy"?"Stretchy Bone":(type==="bone"?"Bone":type);
     var bone={
       id:uid("bone"),
-      name:(type||"Bone")+" "+(rig.bones.length+1),
-      type:type||"bone",
+      name:typeName+" "+(rig.bones.length+1),
+      type:type,
       parentId:connected.parentId||"",
       restHead:{x:round3(connected.head.x),y:round3(connected.head.y)},
       restTail:{x:round3(connected.tail.x),y:round3(connected.tail.y)},
@@ -2745,6 +2752,10 @@
 
   function isDummyBone(bone){
     return String(bone&&bone.type||'').toLowerCase()==='dummy';
+  }
+
+  function isStretchyBone(bone){
+    return String(bone&&bone.type||'').toLowerCase()==='stretchy';
   }
 
   function dummyBoxGeometry(head,tail,rotateOffset){
@@ -5988,7 +5999,22 @@
       key.scale=round3(Math.max(.01,n(startPose.scale,1)*(newLength/Math.max(.001,n(startTransform.length,1)))));if(bone.parentId){key.dx=0;key.dy=0;}return;
     }
     if(isDummy&&(drag.handle==='dummy-move'||drag.handle==='head'||drag.handle==='line')&&!bone.parentId){key.dx=round3(n(startPose.dx,0)+(pointer.x-drag.startPointer.x));key.dy=round3(n(startPose.dy,0)+(pointer.y-drag.startPointer.y));return;}
-    if(drag.handle==='tail'||bone.parentId||drag.handle==='line'){var desired2=Math.atan2(pointer.y-startTransform.head.y,pointer.x-startTransform.head.x),delta2=(desired2-startTransform.angle)*180/Math.PI;while(delta2>180)delta2-=360;while(delta2<-180)delta2+=360;key.rotation=round3(n(startPose.rotation,0)+delta2);if(bone.parentId){key.dx=0;key.dy=0;}}else{key.dx=round3(n(startPose.dx,0)+(pointer.x-drag.startPointer.x));key.dy=round3(n(startPose.dy,0)+(pointer.y-drag.startPointer.y));}
+    if(drag.handle==='tail'||bone.parentId||drag.handle==='line'){
+      var desired2=Math.atan2(pointer.y-startTransform.head.y,pointer.x-startTransform.head.x),delta2=(desired2-startTransform.angle)*180/Math.PI;
+      while(delta2>180)delta2-=360;
+      while(delta2<-180)delta2+=360;
+      key.rotation=round3(n(startPose.rotation,0)+delta2);
+      /* Only the new Stretchy Bone gives its tail handle length semantics.
+         Other bone types deliberately keep their established rotate-only drag. */
+      if(isStretchyBone(bone)&&drag.handle==='tail'){
+        var stretchedLength=Math.max(.01,Math.hypot(pointer.x-startTransform.head.x,pointer.y-startTransform.head.y));
+        key.scale=round3(Math.max(.01,n(startPose.scale,1)*(stretchedLength/Math.max(.001,n(startTransform.length,1)))));
+      }
+      if(bone.parentId){key.dx=0;key.dy=0;}
+    }else{
+      key.dx=round3(n(startPose.dx,0)+(pointer.x-drag.startPointer.x));
+      key.dy=round3(n(startPose.dy,0)+(pointer.y-drag.startPointer.y));
+    }
   }
 
   function onPointerDown(event){
@@ -6418,13 +6444,12 @@
     if(!state.drag){if(state.open&&state.tab==="character")setTimeout(function(){syncCharacterSelectionFromStage();syncAllUnpinnedCharacterTransforms();renderBody();},0);return;}
     if(state.drag.pointerId!==undefined&&event.pointerId!==state.drag.pointerId)return;
     event.preventDefault();event.stopImmediatePropagation();var finished=state.drag;
-    if(finished.kind==="add"&&state.addPreview){var type=state.panel&&state.panel.querySelector("[data-db-bone-type]")?state.panel.querySelector("[data-db-bone-type]").value:"bone";addBone(state.addPreview.head,state.addPreview.tail,type);}
+    if(finished.kind==="add"&&state.addPreview)addBone(state.addPreview.head,state.addPreview.tail,state.addBoneType||"bone");
     else if(finished.kind==="character-add"&&state.addPreview){
       var characterAddPart=finished.part||partById(state.addPreview.characterPartId);
       if(characterAddPart&&characterAddPart.rig){
         state.activeRig=characterAddPart.rig;focusCharacterPartCard(characterAddPart);syncCharacterPartRigRefs(characterAddPart);syncRigRefs(state.activeRig);
-        var characterAddType=state.panel&&state.panel.querySelector("[data-db-bone-type]")?state.panel.querySelector("[data-db-bone-type]").value:"bone";
-        addBone(state.addPreview.head,state.addPreview.tail,characterAddType);
+        addBone(state.addPreview.head,state.addPreview.tail,state.addBoneType||"bone");
         syncCharacterPartRigRefs(characterAddPart);
       }
     }
@@ -6560,14 +6585,17 @@
       ctx.restore();drawDummyBoxPixels(ctx,h,t,selected,bone.name||'Dummy');return;
     }
 
+    var stretchy=isStretchyBone(bone);
     ctx.lineWidth=selected?5:3;
-    ctx.strokeStyle=selected?"#0e9c86":"#626a74";
-    ctx.fillStyle=selected?"#0e9c86":"#ffffff";
+    ctx.strokeStyle=selected?"#0e9c86":(stretchy?"#8b5fc7":"#626a74");
+    ctx.fillStyle=selected?"#0e9c86":(stretchy?"#efe7fb":"#ffffff");
+    if(stretchy)ctx.setLineDash([8,4]);
 
     ctx.beginPath();
     ctx.moveTo(h.x,h.y);
     ctx.lineTo(t.x,t.y);
     ctx.stroke();
+    ctx.setLineDash([]);
 
     ctx.beginPath();
     ctx.arc(h.x,h.y,selected?7:5,0,Math.PI*2);
@@ -6873,7 +6901,7 @@
     var rig=state.activeRig;
     var hasBones=!!(rig&&rig.bones&&rig.bones.length);
     return '<div class="db-page active">'+
-      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone">Bone</option><option value="lip">Lip_Bone</option><option value="frame">Frame_Bone</option></select></div><div class="db-grid2"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn'+(state.mode==='dummy-adjust'?' active':'')+'" data-db-add-dummy>Add Dummy</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div></div>'+
+      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone"'+(state.addBoneType==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(state.addBoneType==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="lip"'+(state.addBoneType==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(state.addBoneType==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-grid2"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn'+(state.mode==='dummy-adjust'?' active':'')+'" data-db-add-dummy>Add Dummy</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div><p class="db-help" style="margin-top:7px">Stretchy Bones are shown with a purple dashed line. In Animate, drag their tail to change direction and length smoothly.</p></div>'+
       envelopeDisplayHtml()+
       '<div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div>'+
       (hasBones?'<div class="db-section"><h3>Project Files</h3><button class="db-btn" style="width:100%" data-db-save-part>Save Part</button></div>':'')+
@@ -6888,7 +6916,7 @@
       ((rig&&rig.bones&&rig.bones.length)?'<div class="db-row"><label>Editing</label><select data-db-edit-bone-select>'+boneOptions+'</select></div>':'')+
       (b?
         '<div class="db-row"><label>Name</label><input value="'+esc(b.name)+'" data-db-edit-bone-name></div>'+
-        '<div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option><option value="dummy"'+(b.type==='dummy'?' selected':'')+'>Dummy</option></select></div>'+
+        '<div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(b.type==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option><option value="dummy"'+(b.type==='dummy'?' selected':'')+'>Dummy</option></select></div>'+
         '<div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div>'+
         (String(b.type||'').toLowerCase()==='dummy'?'':'<div class="db-row"><label>Strength</label><input type="number" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength-num></div>')+
         '<div class="db-help">'+(String(b.type||'').toLowerCase()==='dummy'?'Drag inside the box to move. Drag a corner to scale. Drag the round handle above the box to rotate.':'Drag the bone, its end points, or envelope handles directly on the stage.')+'</div>'+
@@ -6897,14 +6925,14 @@
       '</div>'+envelopeDisplayHtml()+'</div>';
   }
 
-  function animatePage(){var b=selectedBone(),p=b?interpolatePose(b,currentTime()):{dx:0,dy:0,rotation:0,scale:1,easing:'linear'};return '<div class="db-page active"><div class="db-section"><h3>Animate Selected Bone</h3>'+(b?'<p class="db-help">'+esc(b.name)+' · Frame '+currentFrame()+'</p><div class="db-row three"><label>Move X</label><input type="range" min="-1000" max="1000" value="'+round3(p.dx)+'" data-db-pose-dx><input type="number" value="'+round3(p.dx)+'" data-db-pose-dx-num></div><div class="db-row three"><label>Move Y</label><input type="range" min="-1000" max="1000" value="'+round3(p.dy)+'" data-db-pose-dy><input type="number" value="'+round3(p.dy)+'" data-db-pose-dy-num></div><div class="db-row three"><label>Rotation</label><input type="range" min="-360" max="360" value="'+round3(p.rotation)+'" data-db-pose-rotation><input type="number" value="'+round3(p.rotation)+'" data-db-pose-rotation-num></div><div class="db-row three"><label>Scale</label><input type="range" min="0.05" max="5" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale><input type="number" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale-num></div><div class="db-row"><label>Easing</label><select data-db-pose-easing><option value="linear"'+(p.easing==='linear'?' selected':'')+'>Linear</option><option value="ease-in"'+(p.easing==='ease-in'?' selected':'')+'>Ease In</option><option value="ease-out"'+(p.easing==='ease-out'?' selected':'')+'>Ease Out</option><option value="ease-in-out"'+(p.easing==='ease-in-out'?' selected':'')+'>Ease In/Out</option><option value="hold"'+(p.easing==='hold'?' selected':'')+'>Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-bone-key>Set Key</button><button class="db-btn danger" data-db-delete-bone-key>Delete Key</button></div>':'<div class="db-empty">Select a bone first.</div>')+'</div></div>';}
+  function animatePage(){var b=selectedBone(),p=b?interpolatePose(b,currentTime()):{dx:0,dy:0,rotation:0,scale:1,easing:'linear'};var stretchy=b&&isStretchyBone(b);return '<div class="db-page active"><div class="db-section"><h3>Animate Selected Bone</h3>'+(b?'<p class="db-help">'+esc(b.name)+' · Frame '+currentFrame()+(stretchy?' · Drag the tail to stretch':'')+'</p><div class="db-row three"><label>Move X</label><input type="range" min="-1000" max="1000" value="'+round3(p.dx)+'" data-db-pose-dx><input type="number" value="'+round3(p.dx)+'" data-db-pose-dx-num></div><div class="db-row three"><label>Move Y</label><input type="range" min="-1000" max="1000" value="'+round3(p.dy)+'" data-db-pose-dy><input type="number" value="'+round3(p.dy)+'" data-db-pose-dy-num></div><div class="db-row three"><label>Rotation</label><input type="range" min="-360" max="360" value="'+round3(p.rotation)+'" data-db-pose-rotation><input type="number" value="'+round3(p.rotation)+'" data-db-pose-rotation-num></div><div class="db-row three"><label>'+(stretchy?'Length':'Scale')+'</label><input type="range" min="0.05" max="5" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale><input type="number" step="0.01" value="'+round3(p.scale)+'" data-db-pose-scale-num></div><div class="db-row"><label>Easing</label><select data-db-pose-easing><option value="linear"'+(p.easing==='linear'?' selected':'')+'>Linear</option><option value="ease-in"'+(p.easing==='ease-in'?' selected':'')+'>Ease In</option><option value="ease-out"'+(p.easing==='ease-out'?' selected':'')+'>Ease Out</option><option value="ease-in-out"'+(p.easing==='ease-in-out'?' selected':'')+'>Ease In/Out</option><option value="hold"'+(p.easing==='hold'?' selected':'')+'>Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-bone-key>Set Key</button><button class="db-btn danger" data-db-delete-bone-key>Delete Key</button></div>':'<div class="db-empty">Select a bone first.</div>')+'</div></div>';}
 
   function curvesPage(){var rig=state.activeRig,objs=rig?rigObjects(rig).filter(function(x){return x&&x.type!=="image";}):[],o=findObjectById(state.selectedCurveId)||objs[0];if(o&&!state.selectedCurveId)state.selectedCurveId=o.id;var options=objs.map(function(x,i){return'<option value="'+esc(x.id)+'"'+(o&&o.id===x.id?' selected':'')+'>'+esc(x.name||('Curve '+(i+1)))+'</option>';}).join('');var points=o&&o.points||[];var rows=points.map(function(p,i){return'<div class="db-point-row'+(i===state.selectedPointIndex?' active':'')+'" data-db-point-index="'+i+'"><span>'+i+'</span><input type="number" step="0.1" value="'+round3(p.x)+'" data-db-point-x="'+i+'"><input type="number" step="0.1" value="'+round3(p.y)+'" data-db-point-y="'+i+'"></div>';}).join('');var bone=selectedBone();return '<div class="db-page active"><div class="db-section"><h3>Curves</h3>'+(o?'<div class="db-row"><label>Curve</label><select data-db-curve-select>'+options+'</select></div><div class="db-row"><label>Points</label><span>'+points.length+'</span></div><div class="db-grid3"><button class="db-btn'+(state.curvePointAddMode?' primary':'')+'" data-db-add-curve-point>'+(state.curvePointAddMode?'Click Curve…':'Add Point')+'</button><button class="db-btn" data-db-subdivide-curve>Subdivide All</button><button class="db-btn danger" data-db-delete-source-point>Delete Point</button></div><button class="db-btn" style="width:100%;margin-top:7px" data-db-center-on-bone>Center On '+(bone?esc(bone.name||'Bone'):'Rig')+'</button><div class="db-point-list" style="margin-top:7px">'+rows+'</div><div class="db-row" style="margin-top:8px"><label>Easing</label><select data-db-point-easing><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="ease-in-out">Ease In/Out</option><option value="hold">Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-point-key>Set Curve Key</button><button class="db-btn danger" data-db-delete-point-key>Delete Curve Key</button></div>':'<div class="db-empty">No editable curves in this part.</div>')+'</div></div>';}
 
   function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div></div>';}
-  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> choose Add Dummy to create a box control, then position it immediately by dragging inside, scaling from a corner or rotating from the round handle. Add Dummy turns Add Bone OFF. A bone can only be drawn after you deliberately click Add Bone. The first Dummy is the Part controller: dragging it transforms the complete part. Ordinary bones always deform the bound curves; Edit Bone changes the skeleton and the artwork follows immediately, while Animate adds keyed poses on top.</p><p class="db-help"><b>MyCharacter:</b> double-click the Character on stage to open all parts and all bones for editing. Every Character also has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
+  function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> choose Add Dummy to create a box control, then position it immediately by dragging inside, scaling from a corner or rotating from the round handle. Add Dummy turns Add Bone OFF. A bone can only be drawn after you deliberately click Add Bone. The first Dummy is the Part controller: dragging it transforms the complete part. Ordinary bones always deform the bound curves; Edit Bone changes the skeleton and the artwork follows immediately, while Animate adds keyed poses on top.</p><p class="db-help"><b>Stretchy Bones:</b> choose Stretchy Bone before adding, or change a selected bone type in Edit Bone. Their purple dashed line distinguishes them from normal bones. Drag the tail in Animate to key a new length; weighted artwork stretches smoothly along the bone.</p><p class="db-help"><b>MyCharacter:</b> double-click the Character on stage to open all parts and all bones for editing. Every Character also has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
 
   function renderBody(){if(!state.panel)return;var body=state.panel.querySelector('[data-db-body]');if(!body)return;var html=state.tab==='character'?characterPage():state.tab==='source'?sourcePage():state.tab==='bones'?bonesPage():state.tab==='editbone'?editBonePage():state.tab==='animate'?animatePage():state.tab==='curves'?curvesPage():state.tab==='expression'?expressionPage():helpPage();body.innerHTML=html;bindBodyEvents();state.panel.querySelectorAll('[data-db-tab]').forEach(function(btn){btn.classList.toggle('active',btn.getAttribute('data-db-tab')===state.tab);});var steps=state.panel.querySelector('[data-db-steps]');if(steps)steps.innerHTML=workflowStepsHtml();var f=state.panel.querySelector('[data-db-frame]');if(f)f.textContent=currentFrame();setStatus(state.status,state.statusType);}
   var boneCursorCache={};
@@ -6941,6 +6969,7 @@
     p.querySelectorAll('[data-db-use-selection]').forEach(function(b){b.onclick=useStageSelection;});p.querySelectorAll('[data-db-load-png]').forEach(function(b){b.onclick=function(){state.fileInputs.png.click();};});p.querySelectorAll('[data-db-step-jump]').forEach(function(step){step.onclick=function(){state.tab=step.getAttribute('data-db-step-jump')||'source';state.mode='select';renderAll();};});p.querySelectorAll('[data-db-load-svg]').forEach(function(b){b.onclick=function(){state.fileInputs.svg.click();};});
     var svgQuality=p.querySelector('[data-db-svg-quality]');if(svgQuality)svgQuality.onchange=function(){state.svgQuality=svgQualityProfile(svgQuality.value).key;};
     var rem=p.querySelector('[data-db-remove-originals]');if(rem)rem.onchange=function(){state.removeOriginals=!!rem.checked;};
+    var addBoneType=p.querySelector('[data-db-bone-type]');if(addBoneType)addBoneType.onchange=function(){state.addBoneType=addBoneType.value||'bone';};
     p.querySelectorAll('[data-db-character-add-picker]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}state.character.addPickerOpen=!state.character.addPickerOpen;if(state.character.addPickerOpen)selectedAvailableBuildPartCandidate();renderAll();};});
     p.querySelectorAll('[data-db-character-part-choice]').forEach(function(select){select.onchange=function(){state.character.addCandidateRigId=String(select.value||"");};});
     p.querySelectorAll('[data-db-character-add-selected]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var choice=p.querySelector('[data-db-character-part-choice]');var rigId=choice?String(choice.value||""):String(state.character.addCandidateRigId||"");addAvailableCandidateToCharacter(rigId);};});
@@ -7088,7 +7117,7 @@
     API.setSelectionInspectorSuppressed(TOOL_ID,true);
     API.setConfiguredToolActive(GROUP_ID,ITEM_ID,true);
     API.bringFloatingPanelToFront(state.panel);API.clampFloatingPanelToViewport(state.panel);
-    renderAll();notify('Dem Bones v16.32 ready · '+projectFps(API)+' fps.',false);
+    renderAll();notify('Dem Bones v16.33 ready · '+projectFps(API)+' fps.',false);
   }
   function close(){
     if(state.characterDummyActive)finishCharacterDummyControl();
@@ -7155,3 +7184,4 @@
   bindGlobal();
   open();
 })();
+
