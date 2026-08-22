@@ -1,10 +1,13 @@
-/* Luke Animate Lattice Warp v1.3
+/* Luke Animate Lattice Warp v1.4
    Draw a closed point cage, link a native layer/object, and smoothly deform
    vector points or raster images as the linked artwork moves through it.
    Cage objects and links are stored directly in the Luke Animate project.
    v1.2 matches the DemBones panel style and adds Add Point, Increase Mesh,
    Smooth Points, plus Rectangle, Limb and Bone point distributions.
-   v1.3 uses the full DemBones panel proportions and adds real header dragging. */
+   v1.3 uses the full DemBones panel proportions and adds real header dragging.
+   v1.4 makes dense cages deform raster artwork smoothly. Warp influence is
+   local rather than diluted across every cage point, and Increase Mesh also
+   raises the saved internal raster tessellation used to draw linked images. */
 (function(){
   "use strict";
   var API=LukeAnimate;
@@ -19,7 +22,7 @@
   if(!API||typeof API.addDrawObject!=="function"||typeof API.registerObjectRenderer!=="function") throw new Error("Lattice Warp requires a current Luke Animate build.");
 
   var old=window.__LukeAnimateLatticeWarp;
-  if(old&&old.version==="1.3"&&old.enable){old.enable();return;}
+  if(old&&old.version==="1.4"&&old.enable){old.enable();return;}
   if(old&&old.disable)old.disable();
   var staleStyle=document.getElementById(STYLE_ID);if(staleStyle)staleStyle.remove();
   var state={enabled:true,drawing:false,addingPoint:false,points:[],activeCageId:"",dragIndex:-1,pointerId:null,panel:null,imageCache:new Map()};
@@ -64,12 +67,19 @@
     var data=cageData(cage,time),rest=data.rest,target=data.target,b=data.box;
     var margin=Math.max(24,Math.max(b.x2-b.x1,b.y2-b.y1)*.2);
     if(p.x<b.x1-margin||p.x>b.x2+margin||p.y<b.y1-margin||p.y>b.y2+margin)return{x:p.x,y:p.y};
-    var sum=0,dx=0,dy=0;
+    var neighbours=[];
     for(var i=0;i<rest.length;i++){
       var rx=p.x-rest[i].x,ry=p.y-rest[i].y,d2=rx*rx+ry*ry;
-      var w=1/Math.pow(Math.max(16,d2),1.15);
-      sum+=w;dx+=(target[i].x-rest[i].x)*w;dy+=(target[i].y-rest[i].y)*w;
+      if(d2<.0001)return{x:p.x+(target[i].x-rest[i].x),y:p.y+(target[i].y-rest[i].y)};
+      neighbours.push({index:i,d2:d2});
     }
+    neighbours.sort(function(a,b){return a.d2-b.d2;});
+    neighbours=neighbours.slice(0,Math.min(8,neighbours.length));
+    var sum=0,dx=0,dy=0;
+    neighbours.forEach(function(entry){
+      var w=1/Math.pow(Math.max(4,entry.d2),1.35),index=entry.index;
+      sum+=w;dx+=(target[index].x-rest[index].x)*w;dy+=(target[index].y-rest[index].y)*w;
+    });
     if(!sum)return{x:p.x,y:p.y};
     var edgeX=Math.min((p.x-(b.x1-margin))/margin,(b.x2+margin-p.x)/margin,1);
     var edgeY=Math.min((p.y-(b.y1-margin))/margin,(b.y2+margin-p.y)/margin,1);
@@ -121,7 +131,7 @@
     var cage=activeCage();if(!cage||cage.points.length<3)return;
     var points=cage.points.slice(),rest=Array.isArray(cage.restPoints)&&cage.restPoints.length===points.length?cage.restPoints.slice():restBoundary(points),nextPoints=[],nextRest=[];
     API.pushUndo();for(var i=0;i<points.length;i++){var j=(i+1)%points.length;nextPoints.push(points[i],{x:(points[i].x+points[j].x)/2,y:(points[i].y+points[j].y)/2});nextRest.push(rest[i],{x:(rest[i].x+rest[j].x)/2,y:(rest[i].y+rest[j].y)/2});}
-    cage.points=nextPoints;cage.restPoints=nextRest;cage.editorBounds=bounds(nextPoints);refresh();
+    cage.points=nextPoints;cage.restPoints=nextRest;cage.meshDensity=clamp(Math.max(num(cage.meshDensity,12)+4,Math.ceil(nextPoints.length/2)),12,40);cage.editorBounds=bounds(nextPoints);refresh();
   }
   function smoothPoints(){
     var cage=activeCage();if(!cage||cage.points.length<3)return;var source=cage.points.slice();API.pushUndo();
@@ -185,7 +195,9 @@
     if(o.type===TYPE)return true;
     if(!o[LINK]||o.type!=="image")return false;
     var cage=cageById(o[LINK]),img=imageFor(String(e.src||o.src||""));if(!cage||!img||!img.complete||!img.naturalWidth)return false;
-    var x=num(o.x,0),y=num(o.y,0),w=Math.max(1,num(o.width,img.naturalWidth)),h=Math.max(1,num(o.height,img.naturalHeight)),cols=12,rows=12;
+    var x=num(o.x,0),y=num(o.y,0),w=Math.max(1,num(o.width,img.naturalWidth)),h=Math.max(1,num(o.height,img.naturalHeight));
+    var density=clamp(Math.max(num(cage.meshDensity,12),Math.ceil((cage.points||[]).length/2)),12,40),aspect=w/h,cols,rows;
+    if(aspect>=1){cols=density;rows=clamp(Math.round(density/aspect),8,density);}else{rows=density;cols=clamp(Math.round(density*aspect),8,density);}
     function vertex(ix,iy){var lp={x:x+w*ix/cols,y:y+h*iy/rows};return warpedLocal(o,e,cage,lp,API.time);}
     for(var iy=0;iy<rows;iy++)for(var ix=0;ix<cols;ix++){
       var u0=img.naturalWidth*ix/cols,u1=img.naturalWidth*(ix+1)/cols,v0=img.naturalHeight*iy/rows,v1=img.naturalHeight*(iy+1)/rows;
@@ -205,7 +217,7 @@
   function pointerMove(ev){if(state.dragIndex<0||state.pointerId!==ev.pointerId)return;var cage=cageById(state.activeCageId);if(!cage)return;var p=eventPoint(ev),effective=API.getEffectiveObject?API.getEffectiveObject(cage,API.time):cage;cage.points[state.dragIndex]=stageToLocal(cage,effective,p);cage.editorBounds=bounds(cage.points);refresh();}
   function pointerUp(ev){if(state.pointerId!==ev.pointerId)return;state.dragIndex=-1;state.pointerId=null;try{API.overlay.releasePointerCapture(ev.pointerId);}catch(e){}refresh();}
   function finishCage(){
-    if(state.points.length<3)return;var pts=state.points.slice();var cage=API.addDrawObject({type:TYPE,name:"Lattice Warp "+(cages().length+1),points:pts,restPoints:restBoundary(pts),editorBounds:bounds(pts),tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,opacity:1,noRender:true,panelId:"animate"},"animate");state.activeCageId=String(cage.id);state.points=[];state.drawing=false;API.selectDrawObject(cage);refresh();
+    if(state.points.length<3)return;var pts=state.points.slice();var cage=API.addDrawObject({type:TYPE,name:"Lattice Warp "+(cages().length+1),points:pts,restPoints:restBoundary(pts),meshDensity:12,editorBounds:bounds(pts),tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,opacity:1,noRender:true,panelId:"animate"},"animate");state.activeCageId=String(cage.id);state.points=[];state.drawing=false;API.selectDrawObject(cage);refresh();
   }
   function linkSelected(){var o=selected(),id=state.panel.querySelector("#lw-cage").value;if(!o||o.type===TYPE||!id)return;API.pushUndo();if((o.type==="line"||o.type==="rect"||o.type==="ellipse")&&typeof API.convertDrawObjectToEditablePath==="function")API.convertDrawObjectToEditablePath(o);o[LINK]=id;refresh();}
   function unlinkSelected(){var o=selected();if(!o||!o[LINK])return;API.pushUndo();delete o[LINK];refresh();}
@@ -227,6 +239,6 @@
   function disable(){state.enabled=false;state.drawing=false;state.addingPoint=false;state.points=[];if(state.panel){state.panel.classList.remove("open");state.panel.style.display="none";}setActive(false);refresh();}
   API.registerObjectPanelOwner(TYPE,"animate");API.registerObjectEvaluator(ID,evaluator);API.registerObjectRenderer(ID,renderer);API.registerStageOverlayRenderer(ID,overlay);
   API.overlay.addEventListener("pointerdown",pointerDown,true);API.overlay.addEventListener("pointermove",pointerMove,true);API.overlay.addEventListener("pointerup",pointerUp,true);API.overlay.addEventListener("pointercancel",pointerUp,true);
-  window.__LukeAnimateLatticeWarp={version:"1.3",enable:enable,disable:disable,state:state};enable();
+  window.__LukeAnimateLatticeWarp={version:"1.4",enable:enable,disable:disable,state:state};enable();
 })();
 
