@@ -15,7 +15,8 @@
   if(!API||typeof API.addDrawObject!=="function"||typeof API.registerObjectRenderer!=="function") throw new Error("Lattice Warp requires a current Luke Animate build.");
 
   var old=window.__LukeAnimateLatticeWarp;
-  if(old&&old.enable){old.enable();return;}
+  if(old&&old.version==="1.1"&&old.enable){old.enable();return;}
+  if(old&&old.disable)old.disable();
   var state={enabled:true,drawing:false,points:[],activeCageId:"",dragIndex:-1,pointerId:null,panel:null,imageCache:new Map()};
   function num(v,d){v=Number(v);return Number.isFinite(v)?v:d;}
   function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
@@ -164,6 +165,6 @@
   function disable(){state.enabled=false;state.drawing=false;state.points=[];if(state.panel)state.panel.style.display="none";setActive(false);refresh();}
   API.registerObjectPanelOwner(TYPE,"animate");API.registerObjectEvaluator(ID,evaluator);API.registerObjectRenderer(ID,renderer);API.registerStageOverlayRenderer(ID,overlay);
   API.overlay.addEventListener("pointerdown",pointerDown,true);API.overlay.addEventListener("pointermove",pointerMove,true);API.overlay.addEventListener("pointerup",pointerUp,true);API.overlay.addEventListener("pointercancel",pointerUp,true);
-  window.__LukeAnimateLatticeWarp={enable:enable,disable:disable,state:state};enable();
+  window.__LukeAnimateLatticeWarp={version:"1.1",enable:enable,disable:disable,state:state};enable();
 })();
 
