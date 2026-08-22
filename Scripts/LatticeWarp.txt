@@ -1,7 +1,9 @@
-/* Luke Animate Lattice Warp v1.1
+/* Luke Animate Lattice Warp v1.2
    Draw a closed point cage, link a native layer/object, and smoothly deform
    vector points or raster images as the linked artwork moves through it.
-   Cage objects and links are stored directly in the Luke Animate project. */
+   Cage objects and links are stored directly in the Luke Animate project.
+   v1.2 matches the DemBones panel style and adds Add Point, Increase Mesh,
+   Smooth Points, plus Rectangle, Limb and Bone point distributions. */
 (function(){
   "use strict";
   var API=LukeAnimate;
@@ -15,9 +17,9 @@
   if(!API||typeof API.addDrawObject!=="function"||typeof API.registerObjectRenderer!=="function") throw new Error("Lattice Warp requires a current Luke Animate build.");
 
   var old=window.__LukeAnimateLatticeWarp;
-  if(old&&old.version==="1.1"&&old.enable){old.enable();return;}
+  if(old&&old.version==="1.2"&&old.enable){old.enable();return;}
   if(old&&old.disable)old.disable();
-  var state={enabled:true,drawing:false,points:[],activeCageId:"",dragIndex:-1,pointerId:null,panel:null,imageCache:new Map()};
+  var state={enabled:true,drawing:false,addingPoint:false,points:[],activeCageId:"",dragIndex:-1,pointerId:null,panel:null,imageCache:new Map()};
   function num(v,d){v=Number(v);return Number.isFinite(v)?v:d;}
   function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
   function objects(){return API.getDrawObjects()||[];}
@@ -93,6 +95,51 @@
     return{x:cx+(dx*c-dy*s)/(Math.abs(t.sx)<1e-6?1e-6:t.sx),y:cy+(dx*s+dy*c)/(Math.abs(t.sy)<1e-6?1e-6:t.sy)};
   }
   function warpedLocal(o,e,cage,p,time){return stageToLocal(o,e,warpPoint(cage,localToStage(o,e,p),time));}
+  function activeCage(){return cageById(state.activeCageId);}
+  function nearestEdgeIndex(points,p){
+    var best=0,bestDistance=Infinity;
+    for(var i=0;i<points.length;i++){
+      var a=points[i],b=points[(i+1)%points.length],dx=b.x-a.x,dy=b.y-a.y,length2=dx*dx+dy*dy;
+      var t=length2?clamp(((p.x-a.x)*dx+(p.y-a.y)*dy)/length2,0,1):0;
+      var x=a.x+dx*t,y=a.y+dy*t,d=Math.hypot(p.x-x,p.y-y);
+      if(d<bestDistance){bestDistance=d;best=i;}
+    }
+    return best;
+  }
+  function addPointToCage(cage,stagePoint){
+    if(!cage||!Array.isArray(cage.points)||cage.points.length<3)return;
+    var effective=API.getEffectiveObject?API.getEffectiveObject(cage,API.time):cage;
+    var local=stageToLocal(cage,effective,stagePoint),edge=nearestEdgeIndex(cage.points,local),next=(edge+1)%cage.points.length;
+    var rest=Array.isArray(cage.restPoints)&&cage.restPoints.length===cage.points.length?cage.restPoints.slice():restBoundary(cage.points);
+    var a=rest[edge],b=rest[next],restPoint={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+    API.pushUndo();cage.points.splice(edge+1,0,local);rest.splice(edge+1,0,restPoint);cage.restPoints=rest;cage.editorBounds=bounds(cage.points);state.addingPoint=false;refresh();
+  }
+  function increaseMesh(){
+    var cage=activeCage();if(!cage||cage.points.length<3)return;
+    var points=cage.points.slice(),rest=Array.isArray(cage.restPoints)&&cage.restPoints.length===points.length?cage.restPoints.slice():restBoundary(points),nextPoints=[],nextRest=[];
+    API.pushUndo();for(var i=0;i<points.length;i++){var j=(i+1)%points.length;nextPoints.push(points[i],{x:(points[i].x+points[j].x)/2,y:(points[i].y+points[j].y)/2});nextRest.push(rest[i],{x:(rest[i].x+rest[j].x)/2,y:(rest[i].y+rest[j].y)/2});}
+    cage.points=nextPoints;cage.restPoints=nextRest;cage.editorBounds=bounds(nextPoints);refresh();
+  }
+  function smoothPoints(){
+    var cage=activeCage();if(!cage||cage.points.length<3)return;var source=cage.points.slice();API.pushUndo();
+    cage.points=source.map(function(p,i){var before=source[(i+source.length-1)%source.length],after=source[(i+1)%source.length];return{x:p.x*.5+(before.x+after.x)*.25,y:p.y*.5+(before.y+after.y)*.25};});
+    cage.editorBounds=bounds(cage.points);refresh();
+  }
+  function distributedPoints(kind,count,b){
+    count=Math.max(4,count||8);var cx=(b.x1+b.x2)/2,cy=(b.y1+b.y2)/2,w=Math.max(40,b.x2-b.x1),h=Math.max(40,b.y2-b.y1),out=[],i;
+    if(kind==="limb"||kind==="bone"){
+      var horizontal=w>=h,half=Math.max(2,Math.floor(count/2)),length=horizontal?w:h,thickness=Math.max(18,(horizontal?h:w)*(kind==="bone"?.55:.72));
+      for(i=0;i<half;i++){var u=i/(half-1),along=-length/2+u*length,taper=kind==="bone"?(.45+.55*Math.sin(Math.PI*u)):1;out.push(horizontal?{x:cx+along,y:cy-thickness*taper/2}:{x:cx-thickness*taper/2,y:cy+along});}
+      for(i=half-1;i>=0;i--){var v=i/(half-1),along2=-length/2+v*length,taper2=kind==="bone"?(.45+.55*Math.sin(Math.PI*v)):1;out.push(horizontal?{x:cx+along2,y:cy+thickness*taper2/2}:{x:cx+thickness*taper2/2,y:cy+along2});}
+      return out;
+    }
+    var per=Math.max(1,Math.ceil(count/4));
+    for(i=0;i<per;i++)out.push({x:b.x1+(b.x2-b.x1)*i/per,y:b.y1});
+    for(i=0;i<per;i++)out.push({x:b.x2,y:b.y1+(b.y2-b.y1)*i/per});
+    for(i=0;i<per;i++)out.push({x:b.x2-(b.x2-b.x1)*i/per,y:b.y2});
+    for(i=0;i<per;i++)out.push({x:b.x1,y:b.y2-(b.y2-b.y1)*i/per});return out;
+  }
+  function distribute(kind){var cage=activeCage();if(!cage||cage.points.length<3)return;API.pushUndo();var pts=distributedPoints(kind,cage.points.length,bounds(cage.points));cage.points=pts;cage.restPoints=pts.map(function(p){return{x:p.x,y:p.y};});cage.editorBounds=bounds(pts);refresh();}
 
   function evaluator(o,time,e){
     if(!o||!o[LINK]||o.type===TYPE||!Array.isArray(e.points))return e;
@@ -142,7 +189,7 @@
   }
   function eventPoint(ev){var r=API.overlay.getBoundingClientRect();return API.stageToScenePoint({x:(ev.clientX-r.left)*API.width/r.width,y:(ev.clientY-r.top)*API.height/r.height});}
   function nearestHandle(p){var best=null,dist=11; cages().forEach(function(c){cageData(c,API.time).target.forEach(function(q,i){var d=Math.hypot(q.x-p.x,q.y-p.y);if(d<dist){dist=d;best={cage:c,index:i};}});});return best;}
-  function pointerDown(ev){if(!state.enabled)return;var p=eventPoint(ev);if(state.drawing){ev.preventDefault();ev.stopPropagation();if(state.points.length>=3&&Math.hypot(p.x-state.points[0].x,p.y-state.points[0].y)<12){finishCage();}else{state.points.push(p);refresh();}return;}var hit=nearestHandle(p);if(hit){ev.preventDefault();ev.stopPropagation();API.pushUndo();state.activeCageId=String(hit.cage.id);API.selectDrawObject(hit.cage);state.dragIndex=hit.index;state.pointerId=ev.pointerId;API.overlay.setPointerCapture(ev.pointerId);renderPanel();}}
+  function pointerDown(ev){if(!state.enabled)return;var p=eventPoint(ev);if(state.addingPoint&&activeCage()){ev.preventDefault();ev.stopPropagation();addPointToCage(activeCage(),p);return;}if(state.drawing){ev.preventDefault();ev.stopPropagation();if(state.points.length>=3&&Math.hypot(p.x-state.points[0].x,p.y-state.points[0].y)<12){finishCage();}else{state.points.push(p);refresh();}return;}var hit=nearestHandle(p);if(hit){ev.preventDefault();ev.stopPropagation();API.pushUndo();state.activeCageId=String(hit.cage.id);API.selectDrawObject(hit.cage);state.dragIndex=hit.index;state.pointerId=ev.pointerId;API.overlay.setPointerCapture(ev.pointerId);renderPanel();}}
   function pointerMove(ev){if(state.dragIndex<0||state.pointerId!==ev.pointerId)return;var cage=cageById(state.activeCageId);if(!cage)return;var p=eventPoint(ev),effective=API.getEffectiveObject?API.getEffectiveObject(cage,API.time):cage;cage.points[state.dragIndex]=stageToLocal(cage,effective,p);cage.editorBounds=bounds(cage.points);refresh();}
   function pointerUp(ev){if(state.pointerId!==ev.pointerId)return;state.dragIndex=-1;state.pointerId=null;try{API.overlay.releasePointerCapture(ev.pointerId);}catch(e){}refresh();}
   function finishCage(){
@@ -153,18 +200,21 @@
   function deleteCage(){var cage=cageById(state.activeCageId);if(!cage)return;if(typeof API.removeDrawObject==="function")API.removeDrawObject(cage);state.activeCageId="";refresh();}
   function renderPanel(){
     if(!state.panel)return;var sel=selected(),cs=cages();var select=state.panel.querySelector("#lw-cage");select.innerHTML='<option value="">Choose cage…</option>'+cs.map(function(c){return'<option value="'+esc(c.id)+'" '+(String(c.id)===String(state.activeCageId)?"selected":"")+'>'+esc(c.name||"Lattice Warp")+'</option>';}).join("");
-    state.panel.querySelector("#lw-status").textContent=state.drawing?"Click points around the warp area. Click the first point to close.":sel?(sel.type===TYPE?"Warp cage selected. Use Animate to move, rotate, scale and keyframe it.":(sel[LINK]?"Selected layer is linked to a lattice.":"Select a cage, then link this layer.")):"Select a layer or image to link.";
+    state.panel.querySelector("#lw-status").textContent=state.addingPoint?"Click an edge of the selected lattice to add a point.":state.drawing?"Click points around the warp area. Click the first point to close.":sel?(sel.type===TYPE?"Warp cage selected. Use Animate to move, rotate, scale and keyframe it.":(sel[LINK]?"Selected layer is linked to a lattice.":"Select a cage, then link this layer.")):"Select a layer or image to link.";
     state.panel.querySelector("#lw-draw").textContent=state.drawing?"Cancel Drawing":"Draw Lattice";
+    state.panel.querySelector("#lw-add-point").classList.toggle("active",state.addingPoint);
+    state.panel.querySelector("#lw-add-point").textContent=state.addingPoint?"Cancel Add Point":"Add Point";
+    Array.prototype.forEach.call(state.panel.querySelectorAll("[data-needs-cage]"),function(button){button.disabled=!activeCage();});
   }
   function makePanel(){
-    if(!document.getElementById(STYLE_ID)){var style=document.createElement("style");style.id=STYLE_ID;style.textContent="#"+PANEL_ID+"{position:fixed;right:18px;top:110px;width:270px;background:#fff;border:1px solid #cdbce1;border-radius:12px;box-shadow:0 12px 35px #2b174533;z-index:9000;padding:13px;font:13px system-ui;color:#342442}#"+PANEL_ID+" h3{margin:0 0 9px;color:#673b94}#"+PANEL_ID+" button,#"+PANEL_ID+" select{width:100%;margin:4px 0;padding:7px;border:1px solid #c8b6db;border-radius:7px;background:#faf7ff}#"+PANEL_ID+" .row{display:grid;grid-template-columns:1fr 1fr;gap:6px}#lw-status{font-size:12px;color:#66576f;margin:7px 0}";document.head.appendChild(style);}
-    var p=document.getElementById(PANEL_ID)||document.createElement("div");p.id=PANEL_ID;p.innerHTML='<h3>Lattice Warp</h3><div id="lw-status"></div><button id="lw-draw">Draw Lattice</button><select id="lw-cage"></select><div class="row"><button id="lw-link">Link Selected</button><button id="lw-unlink">Unlink</button></div><div class="row"><button id="lw-delete">Delete Cage</button><button id="lw-close">Close</button></div><small>Drag purple points to reshape. Select the cage layer and use Animate for move, rotate, scale and keyframes.</small>';document.body.appendChild(p);state.panel=p;if(API.registerFloatingPanel)API.registerFloatingPanel(p);
-    p.querySelector("#lw-draw").onclick=function(){state.drawing=!state.drawing;state.points=[];renderPanel();};p.querySelector("#lw-cage").onchange=function(e){state.activeCageId=e.target.value;refresh();};p.querySelector("#lw-link").onclick=linkSelected;p.querySelector("#lw-unlink").onclick=unlinkSelected;p.querySelector("#lw-delete").onclick=deleteCage;p.querySelector("#lw-close").onclick=disable;renderPanel();
+    if(!document.getElementById(STYLE_ID)){var style=document.createElement("style");style.id=STYLE_ID;style.textContent="#"+PANEL_ID+"{position:fixed;right:18px;top:110px;width:300px;max-height:calc(100vh - 140px);overflow:hidden;background:#e8ebef;border:1px solid #aeb7c2;border-radius:12px;box-shadow:0 14px 40px #26313d33;z-index:10000;font:12px system-ui;color:#27313d;display:flex;flex-direction:column}#"+PANEL_ID+" .lw-head{display:flex;align-items:center;padding:9px 10px;background:#fff;border-bottom:1px solid #d3d8df;cursor:move}#"+PANEL_ID+" .lw-title{flex:1}#"+PANEL_ID+" .lw-title strong{display:block;font-size:14px;color:#29434a}#"+PANEL_ID+" .lw-title span{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#7b8491}#"+PANEL_ID+" .lw-close{width:30px;height:30px;border:1px solid #bbc3cd;border-radius:8px;background:#fff;font-size:19px;color:#566270;cursor:pointer}#"+PANEL_ID+" .lw-body{overflow:auto;padding:8px}#"+PANEL_ID+" .lw-section{background:#fff;border:1px solid #d2d7de;border-radius:10px;padding:9px;margin-bottom:8px}#"+PANEL_ID+" h3{margin:0 0 8px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#66717e}#"+PANEL_ID+" button,#"+PANEL_ID+" select{width:100%;min-width:0;padding:7px;border:1px solid #b8c0ca;border-radius:8px;background:#eceff2;color:#4b5766;font-size:10px;cursor:pointer}#"+PANEL_ID+" button:hover{border-color:#0e9c86}#"+PANEL_ID+" button.active{background:#0e9c86;border-color:#0e9c86;color:#fff;font-weight:700}#"+PANEL_ID+" button.danger{color:#ad4d4d;border-color:#ddbcbc}#"+PANEL_ID+" button:disabled{opacity:.42;cursor:default}#"+PANEL_ID+" select{background:#f4f5f7}#"+PANEL_ID+" .row{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}#"+PANEL_ID+" .row.three{grid-template-columns:repeat(3,1fr)}#lw-status{font-size:10px;line-height:1.4;color:#596573;border:1px solid #cbd2da;border-radius:8px;background:#fff;padding:8px 10px;margin:0 8px 8px}#"+PANEL_ID+" small{display:block;font-size:9.5px;line-height:1.4;color:#6b7582;margin-top:7px}";document.head.appendChild(style);}
+    var p=document.getElementById(PANEL_ID)||document.createElement("div");p.id=PANEL_ID;p.innerHTML='<div class="lw-head" data-floating-panel-drag><div class="lw-title"><strong>Lattice Warp</strong><span>Mesh Deformation</span></div><button class="lw-close" id="lw-close" title="Close">×</button></div><div class="lw-body"><div class="lw-section"><h3>Create & Select</h3><button id="lw-draw">Draw Lattice</button><select id="lw-cage" style="margin-top:7px"></select></div><div class="lw-section"><h3>Edit Mesh</h3><div class="row"><button id="lw-add-point" data-needs-cage>Add Point</button><button id="lw-increase" data-needs-cage>Increase Mesh</button></div><button id="lw-smooth" data-needs-cage style="margin-top:7px">Smooth Points</button><small>Point distribution</small><div class="row three"><button data-lw-distribute="rectangle" data-needs-cage>Rectangle</button><button data-lw-distribute="limb" data-needs-cage>Limb</button><button data-lw-distribute="bone" data-needs-cage>Bone</button></div></div><div class="lw-section"><h3>Link Artwork</h3><div class="row" style="margin-top:0"><button id="lw-link">Link Selected</button><button id="lw-unlink">Unlink</button></div><button class="danger" id="lw-delete" data-needs-cage style="margin-top:7px">Delete Cage</button><small>Drag mesh points to reshape. Select the cage layer in Animate to move, rotate, scale and keyframe the complete lattice.</small></div></div><div id="lw-status"></div>';document.body.appendChild(p);state.panel=p;if(API.registerFloatingPanel)API.registerFloatingPanel(p);
+    p.querySelector("#lw-draw").onclick=function(){state.drawing=!state.drawing;state.addingPoint=false;state.points=[];renderPanel();};p.querySelector("#lw-cage").onchange=function(e){state.activeCageId=e.target.value;state.addingPoint=false;refresh();};p.querySelector("#lw-add-point").onclick=function(){state.addingPoint=!state.addingPoint;state.drawing=false;state.points=[];renderPanel();};p.querySelector("#lw-increase").onclick=increaseMesh;p.querySelector("#lw-smooth").onclick=smoothPoints;Array.prototype.forEach.call(p.querySelectorAll("[data-lw-distribute]"),function(button){button.onclick=function(){distribute(button.getAttribute("data-lw-distribute"));};});p.querySelector("#lw-link").onclick=linkSelected;p.querySelector("#lw-unlink").onclick=unlinkSelected;p.querySelector("#lw-delete").onclick=deleteCage;p.querySelector("#lw-close").onclick=disable;renderPanel();
   }
   function enable(){state.enabled=true;makePanel();state.panel.style.display="block";setActive(true);refresh();}
-  function disable(){state.enabled=false;state.drawing=false;state.points=[];if(state.panel)state.panel.style.display="none";setActive(false);refresh();}
+  function disable(){state.enabled=false;state.drawing=false;state.addingPoint=false;state.points=[];if(state.panel)state.panel.style.display="none";setActive(false);refresh();}
   API.registerObjectPanelOwner(TYPE,"animate");API.registerObjectEvaluator(ID,evaluator);API.registerObjectRenderer(ID,renderer);API.registerStageOverlayRenderer(ID,overlay);
   API.overlay.addEventListener("pointerdown",pointerDown,true);API.overlay.addEventListener("pointermove",pointerMove,true);API.overlay.addEventListener("pointerup",pointerUp,true);API.overlay.addEventListener("pointercancel",pointerUp,true);
-  window.__LukeAnimateLatticeWarp={version:"1.1",enable:enable,disable:disable,state:state};enable();
+  window.__LukeAnimateLatticeWarp={version:"1.2",enable:enable,disable:disable,state:state};enable();
 })();
 
