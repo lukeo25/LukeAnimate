@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v191: exposes native drawing-object removal to configured tools so persistent helper objects such as Lattice Warp cages can be removed through the canonical layer/frame model. -->
 <!-- LukeAnimate GPT v190: pinned/following layers now inherit the complete parent transform. Uniform scale and independent X/Y scale are composed once, together with rotation and the scaled local offset, so the follower rotates and resizes smoothly without double-applying scale. -->
 <!-- LukeAnimate GPT v189: moves the single live Layers panel from Particles & Effects into Animate, keeping drawing, Clip and effect layer controls beside Animate selection/transform controls without duplicating state or event handlers. -->
 <!-- LukeAnimate GPT v188: native drawing-layer follow links. Every drawing layer now has a Follow selector in the Layers list. Linking captures the current relative offset and makes the child follow the parent layer's animated movement, rotation and scale without duplicating keys. Links persist in the native drawing-layer project model, can be removed with Follow: none, and reject circular relationships. -->
@@ -11731,6 +11732,12 @@ ctx.fill();</textarea>
       ensureDrawObjectMetadata(object);
       drawObjects.push(object);
       return object;
+    },
+    removeDrawObject(object){
+      const index=drawObjects.indexOf(object);
+      if(index<0) return false;
+      deleteDrawObject(index);
+      return true;
     },
     selectDrawObject(object){
       const index = drawObjects.indexOf(object);
