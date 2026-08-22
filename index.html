@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v189: moves the single live Layers panel from Particles & Effects into Animate, keeping drawing, Clip and effect layer controls beside Animate selection/transform controls without duplicating state or event handlers. -->
 <!-- LukeAnimate GPT v188: native drawing-layer follow links. Every drawing layer now has a Follow selector in the Layers list. Linking captures the current relative offset and makes the child follow the parent layer's animated movement, rotation and scale without duplicating keys. Links persist in the native drawing-layer project model, can be removed with Follow: none, and reject circular relationships. -->
 <!-- LukeAnimate GPT v172: image/text layer timing parity. Image, video and text drawing layers now expose explicit timeline start-trim, end-trim and whole-block move controls plus fade-in/fade-out transparency handles. Layer fades multiply the object's normal/keyframed opacity during preview and WebM export, and persist with canonical Wick drawing frames. Existing object keyframes, layer exposure, rig-aware off-stage proxies and WebM stage cropping are preserved. -->
 <!-- LukeAnimate GPT v171: rig-aware off-stage proxies. DemBones curves that share one rigId now produce one combined editor-only proxy bounding box for the whole rig instead of one box per curve. StickRig parts resolve to one containing StickRig/root proxy while editing that rig Clip, while top-level StickRig roots remain one proxy each. Dragging a rig proxy moves every represented member through the existing transform/Auto-Keyframe system; manual + Keyframe writes a transform key to every represented member. Proxy boxes remain editor-only and never enter WebM capture. -->
@@ -2610,7 +2611,7 @@
     </div>
   </div>
 
-  <div class="group">
+  <div class="group" id="all-layers-panel">
     <h2>All Layers</h2>
     <div id="layer-list"></div>
     <div class="btn-row">
@@ -2939,6 +2940,7 @@
       <div class="btn-row" style="margin-bottom:8px;">
         <span id="selected-count" class="audio-filename" style="flex:0 0 auto;">0 selected</span>
       </div>
+      <div id="animate-layers-slot"></div>
       <div class="convert-to-clip-button-row">
         <button class="btn" id="btn-convert-to-clip" title="Convert the current selection into a Clip">
           <span>Convert</span>
@@ -11060,8 +11062,9 @@ ctx.fill();</textarea>
   };
 
   // ---- main tool-panel switching ----
-  // Particles & Effects is the full original editor and is the permanent home
-  // for paths, points, layers, all effect settings, timeline controls and export.
+  // Particles & Effects is the full original editor and remains the home for
+  // paths, points, effect settings, timeline controls and export. The shared
+  // Layers panel now lives in Animate beside the selection/transform controls.
   // The other icons temporarily replace it with their specialised panels.
   function showParticlesPanel(options){
     const preserveObjectSelection = !!(options && options.preserveObjectSelection);
@@ -11089,6 +11092,14 @@ ctx.fill();</textarea>
     if(name === 'type') renderLayerBehaviourSelect();
     if(name === 'animate') renderClipLibrary();
   }
+
+  function moveLayersPanelToAnimate(){
+    const panel=document.getElementById('all-layers-panel');
+    const slot=document.getElementById('animate-layers-slot');
+    if(panel && slot && panel.parentNode!==slot) slot.appendChild(panel);
+  }
+
+  moveLayersPanelToAnimate();
 
   function routeSelectionToPanel(panelId, preserveObjectSelection){
     if(panelId === 'particles') showParticlesPanel({ preserveObjectSelection: !!preserveObjectSelection });
