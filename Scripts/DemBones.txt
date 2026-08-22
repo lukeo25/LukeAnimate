@@ -1,4 +1,8 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.39
+/* Luke Animate Dem Bones + MyCharacter GPT v16.40
+   v16.40 replaces Expressions/Frame Bones with pinned Gizmos/Gizmo Bones.
+   Imported Gizmo SVG slots remember the selected Gizmo Bone, follow its
+   animated position, rotation and scale, and paint a G badge on that bone.
+   Existing Frame_Bone rigs are upgraded to Gizmo Bones when loaded.
    v16.39 removes misleading default highlighting from Use Stage Selection,
    Add Bone and Add Part. Add Bone and Add Part now highlight only while their
    respective interactive modes are genuinely active.
@@ -123,7 +127,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.39";
+  var TOOL_VERSION = "16.40";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1162,6 +1166,11 @@
     if(!rig)return;
     var by={};
     (rig.bones||[]).forEach(function(b){
+      /* Frame_Bone was the pre-v16.40 name for the Gizmo pin control. */
+      if(String(b.type||'').toLowerCase()==='frame'){
+        b.type='gizmo';
+        if(!b.name||/^frame[_ ]bone/i.test(String(b.name)))b.name='Gizmo Bone';
+      }
       b.restHead=b.restHead||clone(b.head)||{x:0,y:0};
       b.restTail=b.restTail||clone(b.tail)||{x:b.restHead.x+40,y:b.restHead.y};
       b.restLength=Math.max(.001,n(b.restLength,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y)));
@@ -1502,7 +1511,7 @@
     API.pushUndo();
     var connected=autoConnectNewBone(head,tail);
     type=type||"bone";
-    var typeName=type==="stretchy"?"Stretchy Bone":(type==="bone"?"Bone":type);
+    var typeName=type==="stretchy"?"Stretchy Bone":(type==="gizmo"?"Gizmo Bone":(type==="bone"?"Bone":type));
     var bone={
       id:uid("bone"),
       name:typeName+" "+(rig.bones.length+1),
@@ -2799,6 +2808,26 @@
     return String(bone&&bone.type||'').toLowerCase()==='stretchy';
   }
 
+  function isGizmoBone(bone){
+    var type=String(bone&&bone.type||'').toLowerCase();
+    return type==='gizmo'||type==='frame';
+  }
+
+  function gizmoPinnedToBone(rig,boneId){
+    var found=false;
+    if(!boneId)return false;
+    allObjectArrays().some(function(list){
+      return (list||[]).some(function(object){
+        var gizmo=object&&(object.demBonesGizmo||object.demBonesExpression);
+        if(gizmo&&(!rig||String(gizmo.rigId)===String(rig.id))&&String(gizmo.boneId||'')===String(boneId)){
+          found=true;return true;
+        }
+        return false;
+      });
+    });
+    return found;
+  }
+
   function dummyBoxGeometry(head,tail,rotateOffset){
     head=head||{x:0,y:0};tail=tail||{x:1,y:0};
     var dx=n(tail.x,0)-n(head.x,0),dy=n(tail.y,0)-n(head.y,0);
@@ -3490,6 +3519,36 @@
       var slot=activeExpressionSlot(ex.rig,ex.type,exTime);
       var r=Object.assign({},effective);
       r.opacity=slot===ex.slot?n(ex.baseOpacity,1):0;
+      /* Gizmos are rigidly pinned to their Gizmo Bone instead of being
+         deformed by the skin. Legacy expression objects without boneId keep
+         their old fixed placement. */
+      if(ex.boneId){
+        var gizmoBone=(ex.rig.bones||[]).filter(function(b){return String(b.id)===String(ex.boneId);})[0];
+        var gizmoPose=posedTransformMap(ex.rig,exTime)[ex.boneId];
+        if(gizmoBone&&gizmoPose){
+          var restAnchor=ex.restAnchor||gizmoBone.restHead;
+          var poseAnchor=gizmoPose.head;
+          var restAngle=angleOf(gizmoBone.restHead,gizmoBone.restTail);
+          var poseAngle=angleOf(gizmoPose.head,gizmoPose.tail);
+          var restLength=Math.max(.001,Math.hypot(gizmoBone.restTail.x-gizmoBone.restHead.x,gizmoBone.restTail.y-gizmoBone.restHead.y));
+          var poseLength=Math.max(.001,Math.hypot(gizmoPose.tail.x-gizmoPose.head.x,gizmoPose.tail.y-gizmoPose.head.y));
+          var gizmoScale=poseLength/restLength;
+          var gizmoRotation=poseAngle-restAngle;
+          if(Array.isArray(effective.points)){
+            r.points=effective.points.map(function(point){
+              var offset=rotateVector((n(point.x,0)-restAnchor.x)*gizmoScale,(n(point.y,0)-restAnchor.y)*gizmoScale,gizmoRotation);
+              return{x:poseAnchor.x+offset.x,y:poseAnchor.y+offset.y};
+            });
+          }
+          if(Array.isArray(effective.bezierHandles)){
+            r.bezierHandles=effective.bezierHandles.map(function(handle){
+              var input=rotateVector(n(handle.inX,0)*gizmoScale,n(handle.inY,0)*gizmoScale,gizmoRotation);
+              var output=rotateVector(n(handle.outX,0)*gizmoScale,n(handle.outY,0)*gizmoScale,gizmoRotation);
+              return{inX:input.x,inY:input.y,outX:output.x,outY:output.y};
+            });
+          }
+        }
+      }
       return r;
     }
 
@@ -5778,9 +5837,9 @@
   function deleteCurvePointKey(){var rig=state.activeRig,o=findObjectById(state.selectedCurveId);if(!rig||!o)return;var list=(rig.pointKeys&&rig.pointKeys[o.id])||[],t=currentTime(),before=list.length;rig.pointKeys[o.id]=list.filter(function(k){return Math.abs(k.time-t)>=.0005;});notify(before!==rig.pointKeys[o.id].length?"Curve key deleted.":"No curve key on this frame.",false);renderAll();}
 
   function importExpressionSvg(text,type,slot){
-    var rig=state.activeRig;if(!rig){notify("Build or load a part first.",true);return;}var objects=svgTextToObjects(text,state.svgQuality);if(!objects.length){notify("No supported SVG shapes were found.",true);return;}var b=combinedBounds(objects),anchor=selectedBone();var tx=anchor?anchor.restHead.x-b.cx:0,ty=anchor?anchor.restHead.y-b.cy:0;objects.forEach(function(o){shiftObject(o,tx,ty);o.demBonesExpression={rigId:rig.id,rig:rig,type:type,slot:slot,baseOpacity:n(o.opacity,1)};API.addDrawObject(o,"animate");});rig.expressions[type].slots[slot]={name:slot,objectIds:objects.map(function(o){return o.id;})};syncRigRefs(rig);if(!characterPartForRigId(rig.id))registerLooseBuildRig(rig,rigObjects(rig),objects);API.refreshUI();renderAll();notify(type+" expression slot "+slot+" imported.",false);
+    var rig=state.activeRig;if(!rig){notify("Build or load a part first.",true);return;}var anchor=selectedBone();if(!anchor||!isGizmoBone(anchor)){notify("Select a Gizmo Bone before importing a Gizmo.",true);return;}var objects=svgTextToObjects(text,state.svgQuality);if(!objects.length){notify("No supported SVG shapes were found.",true);return;}var b=combinedBounds(objects),tx=anchor.restHead.x-b.cx,ty=anchor.restHead.y-b.cy;objects.forEach(function(o){shiftObject(o,tx,ty);o.demBonesExpression={rigId:rig.id,rig:rig,type:type,slot:slot,baseOpacity:n(o.opacity,1),boneId:anchor.id,restAnchor:clone(anchor.restHead)};API.addDrawObject(o,"animate");});rig.expressions[type].slots[slot]={name:slot,boneId:anchor.id,objectIds:objects.map(function(o){return o.id;})};syncRigRefs(rig);if(!characterPartForRigId(rig.id))registerLooseBuildRig(rig,rigObjects(rig),objects);API.refreshUI();renderAll();notify(type+" Gizmo slot "+slot+" pinned to "+(anchor.name||"Gizmo Bone")+".",false);
   }
-  function setExpressionKey(type,slot){var rig=state.activeRig;if(!rig)return;var bucket=rig.expressions[type],t=currentTime(),key=(bucket.keys||[]).filter(function(k){return Math.abs(k.time-t)<.0005;})[0];if(key)key.slot=slot;else bucket.keys.push({time:t,slot:slot});bucket.keys.sort(function(a,b){return a.time-b.time;});API.refreshUI();renderAll();notify("Expression key set on frame "+currentFrame()+".",false);}
+  function setExpressionKey(type,slot){var rig=state.activeRig;if(!rig)return;var bucket=rig.expressions[type],t=currentTime(),key=(bucket.keys||[]).filter(function(k){return Math.abs(k.time-t)<.0005;})[0];if(key)key.slot=slot;else bucket.keys.push({time:t,slot:slot});bucket.keys.sort(function(a,b){return a.time-b.time;});API.refreshUI();renderAll();notify("Gizmo key set on frame "+currentFrame()+".",false);}
   function clearExpressionKey(type){var rig=state.activeRig;if(!rig)return;var bucket=rig.expressions[type],t=currentTime();bucket.keys=bucket.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});API.refreshUI();renderAll();}
 
   function loadSvgFile(file,asExpression){
@@ -5792,8 +5851,8 @@
       try{
         if(asExpression){
           /*
-            Expression SVGs are intentionally NOT stage-centred. Their existing
-            behaviour places them at the selected Lip_Bone / Frame_Bone anchor.
+            Gizmo SVGs are intentionally NOT stage-centred. Their existing
+            behaviour places them at the selected Gizmo Bone anchor.
           */
           importExpressionSvg(
             reader.result,
@@ -6786,6 +6845,14 @@
       (h.y+t.y)/2-6
     );
 
+    if(isGizmoBone(bone)&&gizmoPinnedToBone(null,bone.id)){
+      var gx=(h.x+t.x)/2,gy=(h.y+t.y)/2;
+      ctx.fillStyle="#7c3aed";ctx.strokeStyle="#ffffff";ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(gx,gy,9,0,Math.PI*2);ctx.fill();ctx.stroke();
+      ctx.fillStyle="#ffffff";ctx.font="bold 10px Arial";ctx.textAlign="center";ctx.textBaseline="middle";
+      ctx.fillText("G",gx,gy+.5);ctx.textAlign="start";ctx.textBaseline="alphabetic";
+    }
+
     ctx.restore();
   }
 
@@ -6970,7 +7037,7 @@
 
   function panelHtml(){
     return '<div class="db-head" data-db-drag><img src="'+esc(ICON_URL)+'" alt=""><div class="db-title"><strong>Dem Bones</strong><span>MyCharacter · Build Parts · Bone Animation</span></div><div class="db-frame">Frame <b data-db-frame>'+currentFrame()+'</b></div><button class="db-close" data-db-close type="button">×</button></div>'+ 
-      '<div class="db-tabs"><div class="db-tab-group"><span class="db-tab-group-label">1 Rig a part</span><div class="db-tabs-row">'+tabButton('source','Build Parts')+tabButton('bones','Bones')+tabButton('editbone','Edit Bone')+tabButton('animate','Animate')+tabButton('curves','Curves')+tabButton('expression','Expression')+'</div></div><div class="db-tab-group"><span class="db-tab-group-label">2 Build the character</span><div class="db-tabs-row two">'+tabButton('character','Build Character')+tabButton('help','Help')+'</div></div></div>'+ 
+      '<div class="db-tabs"><div class="db-tab-group"><span class="db-tab-group-label">1 Rig a part</span><div class="db-tabs-row">'+tabButton('source','Build Parts')+tabButton('bones','Bones')+tabButton('editbone','Edit Bone')+tabButton('animate','Animate')+tabButton('curves','Curves')+tabButton('expression','Gizmos')+'</div></div><div class="db-tab-group"><span class="db-tab-group-label">2 Build the character</span><div class="db-tabs-row two">'+tabButton('character','Build Character')+tabButton('help','Help')+'</div></div></div>'+
       '<div data-db-steps>'+workflowStepsHtml()+'</div><div class="db-body" data-db-body></div>'+ 
       '<input class="db-hidden" type="file" accept=".svg,image/svg+xml" data-db-svg>'+ 
       '<input class="db-hidden" type="file" accept=".png,image/png" data-db-png>'+ 
@@ -7073,7 +7140,7 @@
     var rig=state.activeRig;
     var hasBones=!!(rig&&rig.bones&&rig.bones.length);
     return '<div class="db-page active">'+
-      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone"'+(state.addBoneType==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(state.addBoneType==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="lip"'+(state.addBoneType==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(state.addBoneType==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-grid2"><button class="db-btn'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn'+(state.mode==='dummy-adjust'?' active':'')+'" data-db-add-dummy>Add Dummy</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div><p class="db-help" style="margin-top:7px">Stretchy Bones are shown with a purple dashed line. In Animate, drag their tail to change direction and length smoothly.</p></div>'+
+      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone"'+(state.addBoneType==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(state.addBoneType==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="lip"'+(state.addBoneType==='lip'?' selected':'')+'>Lip_Bone</option><option value="gizmo"'+(state.addBoneType==='gizmo'?' selected':'')+'>Gizmo Bone</option></select></div><div class="db-grid2"><button class="db-btn'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn'+(state.mode==='dummy-adjust'?' active':'')+'" data-db-add-dummy>Add Dummy</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div><p class="db-help" style="margin-top:7px">Gizmo Bones pin imported Gizmos and show a G badge. Stretchy Bones are shown with a purple dashed line.</p></div>'+
       envelopeDisplayHtml()+
       '<div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div>'+
       (hasBones?'<div class="db-section"><h3>Project Files</h3><button class="db-btn" style="width:100%" data-db-save-part>Save Part</button></div>':'')+
@@ -7088,7 +7155,7 @@
       ((rig&&rig.bones&&rig.bones.length)?'<div class="db-row"><label>Editing</label><select data-db-edit-bone-select>'+boneOptions+'</select></div>':'')+
       (b?
         '<div class="db-row"><label>Name</label><input value="'+esc(b.name)+'" data-db-edit-bone-name></div>'+
-        '<div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(b.type==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(b.type==='frame'?' selected':'')+'>Frame_Bone</option><option value="dummy"'+(b.type==='dummy'?' selected':'')+'>Dummy</option></select></div>'+
+        '<div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(b.type==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="lip"'+(b.type==='lip'?' selected':'')+'>Lip_Bone</option><option value="gizmo"'+(isGizmoBone(b)?' selected':'')+'>Gizmo Bone</option><option value="dummy"'+(b.type==='dummy'?' selected':'')+'>Dummy</option></select></div>'+
         '<div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div>'+
         (String(b.type||'').toLowerCase()==='dummy'?'':'<div class="db-row"><label>Strength</label><input type="number" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength-num></div>')+
         '<div class="db-help">'+(String(b.type||'').toLowerCase()==='dummy'?'Drag inside the box to move. Drag a corner to scale. Drag the round handle above the box to rotate.':'Drag the bone, its end points, or envelope handles directly on the stage.')+'</div>'+
@@ -7101,7 +7168,7 @@
 
   function curvesPage(){var rig=state.activeRig,objs=rig?rigObjects(rig).filter(function(x){return x&&x.type!=="image";}):[],o=findObjectById(state.selectedCurveId)||objs[0];if(o&&!state.selectedCurveId)state.selectedCurveId=o.id;var options=objs.map(function(x,i){return'<option value="'+esc(x.id)+'"'+(o&&o.id===x.id?' selected':'')+'>'+esc(x.name||('Curve '+(i+1)))+'</option>';}).join('');var points=o&&o.points||[];var rows=points.map(function(p,i){return'<div class="db-point-row'+(i===state.selectedPointIndex?' active':'')+'" data-db-point-index="'+i+'"><span>'+i+'</span><input type="number" step="0.1" value="'+round3(p.x)+'" data-db-point-x="'+i+'"><input type="number" step="0.1" value="'+round3(p.y)+'" data-db-point-y="'+i+'"></div>';}).join('');var bone=selectedBone();return '<div class="db-page active"><div class="db-section"><h3>Curves</h3>'+(o?'<div class="db-row"><label>Curve</label><select data-db-curve-select>'+options+'</select></div><div class="db-row"><label>Points</label><span>'+points.length+'</span></div><div class="db-grid3"><button class="db-btn'+(state.curvePointAddMode?' primary':'')+'" data-db-add-curve-point>'+(state.curvePointAddMode?'Click Curve…':'Add Point')+'</button><button class="db-btn" data-db-subdivide-curve>Subdivide All</button><button class="db-btn danger" data-db-delete-source-point>Delete Point</button></div><button class="db-btn" style="width:100%;margin-top:7px" data-db-center-on-bone>Center On '+(bone?esc(bone.name||'Bone'):'Rig')+'</button><div class="db-point-list" style="margin-top:7px">'+rows+'</div><div class="db-row" style="margin-top:8px"><label>Easing</label><select data-db-point-easing><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="ease-in-out">Ease In/Out</option><option value="hold">Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-point-key>Set Curve Key</button><button class="db-btn danger" data-db-delete-point-key>Delete Curve Key</button></div>':'<div class="db-empty">No editable curves in this part.</div>')+'</div></div>';}
 
-  function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Expression</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Import an SVG expression set. It is placed at the selected Lip_Bone or Frame_Bone head and can be keyed by slot.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import SVG Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Slot Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Slot Key</button></div></div></div>';}
+  function expressionPage(){var rig=state.activeRig,type=state.expressionType,bucket=rig&&rig.expressions&&rig.expressions[type],slots=bucket?Object.keys(bucket.slots):[],slotOptions=slots.map(function(s){return'<option value="'+esc(s)+'"'+(s===state.expressionSlot?' selected':'')+'>'+esc(s)+'</option>';}).join('');return '<div class="db-page active"><div class="db-section"><h3>Gizmos</h3><div class="db-subtabs"><button class="db-subtab'+(type==='lip'?' active':'')+'" data-db-expression-type="lip">Lip</button><button class="db-subtab'+(type==='wink'?' active':'')+'" data-db-expression-type="wink">Wink</button><button class="db-subtab'+(type==='frame'?' active':'')+'" data-db-expression-type="frame">Frame</button></div><p class="db-help">Select a Gizmo Bone, then import an SVG Gizmo slot. The Gizmo is pinned to that bone and follows its animation.</p><div class="db-row"><label>Slot name</label><input value="'+esc(state.expressionSlot||'Default')+'" data-db-expression-slot-name></div><div class="db-grid2"><button class="db-btn primary" data-db-import-expression>Import Gizmo Slot</button><select data-db-expression-slot><option value="">Choose slot</option>'+slotOptions+'</select></div><div class="db-grid2" style="margin-top:8px"><button class="db-btn primary" data-db-set-expression-key>Set Gizmo Key</button><button class="db-btn danger" data-db-clear-expression-key>Delete Gizmo Key</button></div></div></div>';}
 
   function commitPage(){return '<div class="db-page active"><div class="db-section"><h3>Commit</h3><p class="db-help">MyCharacter is committed as one real Luke Animate Clip containing one child Clip per part. Commit returns to Main Scene, removes the temporary Build Parts artwork, and leaves the Character with its bones visible for animation.</p><div class="db-row"><label>Clip name</label><input value="'+esc(state.character.name)+'" data-db-commit-name></div><button class="db-btn primary" style="width:100%" data-db-commit-character>Create / Update Character Clip</button></div></div>';}
   function helpPage(){return '<div class="db-page active"><div class="db-section"><h3>Help</h3><p class="db-help"><b>Build Parts:</b> get stage vectors, SVG or transparent PNG artwork, then add bones.</p><p class="db-help"><b>Bones:</b> choose Add Dummy to create a box control, then position it immediately by dragging inside, scaling from a corner or rotating from the round handle. Add Dummy turns Add Bone OFF. A bone can only be drawn after you deliberately click Add Bone. The first Dummy is the Part controller: dragging it transforms the complete part. Ordinary bones always deform the bound curves; Edit Bone changes the skeleton and the artwork follows immediately, while Animate adds keyed poses on top.</p><p class="db-help"><b>Stretchy Bones:</b> choose Stretchy Bone before adding, or change a selected bone type in Edit Bone. Their purple dashed line distinguishes them from normal bones. Drag the tail in Animate to key a new length; weighted artwork stretches smoothly along the bone.</p><p class="db-help"><b>MyCharacter:</b> double-click the Character on stage to open all parts and all bones for editing. Every Character also has a root Dummy. Moving, rotating or scaling it affects the whole Character and creates transform keys. Parts pinned to Part Dummies inherit Dummy scale.</p><p class="db-help"><b>Curves:</b> edit native point positions and create point animation keys without flattening the vector art.</p><p class="db-help"><b>SVG:</b> choose Draft, Standard, High or Maximum import quality. Maximum preserves the smoothest outline but uses more deformation points.</p></div></div>';}
@@ -7294,7 +7361,7 @@
     API.setSelectionInspectorSuppressed(TOOL_ID,true);
     API.setConfiguredToolActive(GROUP_ID,ITEM_ID,true);
     API.bringFloatingPanelToFront(state.panel);API.clampFloatingPanelToViewport(state.panel);
-    renderAll();notify('Dem Bones v16.33 ready · '+projectFps(API)+' fps.',false);
+    renderAll();notify('Dem Bones '+TOOL_VERSION+' ready · '+projectFps(API)+' fps.',false);
   }
   function close(){
     if(state.characterDummyActive)finishCharacterDummyControl();
@@ -7361,3 +7428,4 @@
   bindGlobal();
   open();
 })();
+
