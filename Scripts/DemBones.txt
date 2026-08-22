@@ -1,4 +1,7 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.38
+/* Luke Animate Dem Bones + MyCharacter GPT v16.39
+   v16.39 removes misleading default highlighting from Use Stage Selection,
+   Add Bone and Add Part. Add Bone and Add Part now highlight only while their
+   respective interactive modes are genuinely active.
    v16.38 sources off-stage skeletons and artwork ghosts from every live saved
    DemBones rig rather than only state.activeRig. They therefore remain visible
    in ordinary Luke Animate editing, timeline scrubbing/playback and while the
@@ -120,7 +123,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.38";
+  var TOOL_VERSION = "16.39";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -7034,7 +7037,7 @@
       '<div class="db-section">'+
         '<h3>MyCharacter</h3>'+
         '<div class="db-row"><label>Name</label><input value="'+(state.character.nameConfirmed?esc(state.character.name):'')+'" placeholder="Name character" data-db-character-name></div>'+
-        '<div class="db-grid2"><button class="db-btn primary" data-db-character-add-picker>'+(state.character.addPickerOpen?'Close Add Part':'Add Part')+'</button><button class="db-btn" data-db-character-load-part>Load Part</button></div>'+
+        '<div class="db-grid2"><button class="db-btn'+(state.character.addPickerOpen?' active':'')+'" data-db-character-add-picker>'+(state.character.addPickerOpen?'Close Add Part':'Add Part')+'</button><button class="db-btn" data-db-character-load-part>Load Part</button></div>'+
         '<div class="db-grid2" style="margin-top:7px"><button class="db-btn" data-db-character-save>Save Character</button><button class="db-btn" data-db-character-load>Load Character</button></div>'+
         addPicker+
         '<p class="db-help" style="margin-top:8px">Choose the exact unadded part, then place it with Adjust or animate it.</p>'+
@@ -7048,7 +7051,7 @@
   function sourcePage(){
     var q=svgQualityProfile(state.svgQuality).key;
     return '<div class="db-page active">'+
-      '<div class="db-section"><h3>Step 1 · Get Shapes</h3><p class="db-help">Select stage artwork or load a file, then add bones.</p><div class="db-grid3"><button class="db-btn primary" data-db-use-selection>Use Stage Selection</button><button class="db-btn" data-db-load-svg>Load SVG</button><button class="db-btn" data-db-load-png>Load PNG</button></div><div class="db-row" style="margin-top:7px"><label>SVG quality</label><select data-db-svg-quality><option value="draft"'+(q==='draft'?' selected':'')+'>Draft</option><option value="standard"'+(q==='standard'?' selected':'')+'>Standard</option><option value="high"'+(q==='high'?' selected':'')+'>High</option><option value="maximum"'+(q==='maximum'?' selected':'')+'>Maximum</option></select></div><label class="db-check" style="margin-top:7px"><input type="checkbox" data-db-remove-originals'+(state.removeOriginals?' checked':'')+'> Remove selected originals after conversion</label></div>'+
+      '<div class="db-section"><h3>Step 1 · Get Shapes</h3><p class="db-help">Select stage artwork or load a file, then add bones.</p><div class="db-grid3"><button class="db-btn" data-db-use-selection>Use Stage Selection</button><button class="db-btn" data-db-load-svg>Load SVG</button><button class="db-btn" data-db-load-png>Load PNG</button></div><div class="db-row" style="margin-top:7px"><label>SVG quality</label><select data-db-svg-quality><option value="draft"'+(q==='draft'?' selected':'')+'>Draft</option><option value="standard"'+(q==='standard'?' selected':'')+'>Standard</option><option value="high"'+(q==='high'?' selected':'')+'>High</option><option value="maximum"'+(q==='maximum'?' selected':'')+'>Maximum</option></select></div><label class="db-check" style="margin-top:7px"><input type="checkbox" data-db-remove-originals'+(state.removeOriginals?' checked':'')+'> Remove selected originals after conversion</label></div>'+
     '</div>';
   }
 
@@ -7070,7 +7073,7 @@
     var rig=state.activeRig;
     var hasBones=!!(rig&&rig.bones&&rig.bones.length);
     return '<div class="db-page active">'+
-      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone"'+(state.addBoneType==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(state.addBoneType==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="lip"'+(state.addBoneType==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(state.addBoneType==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-grid2"><button class="db-btn primary'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn'+(state.mode==='dummy-adjust'?' active':'')+'" data-db-add-dummy>Add Dummy</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div><p class="db-help" style="margin-top:7px">Stretchy Bones are shown with a purple dashed line. In Animate, drag their tail to change direction and length smoothly.</p></div>'+
+      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone"'+(state.addBoneType==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(state.addBoneType==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="lip"'+(state.addBoneType==='lip'?' selected':'')+'>Lip_Bone</option><option value="frame"'+(state.addBoneType==='frame'?' selected':'')+'>Frame_Bone</option></select></div><div class="db-grid2"><button class="db-btn'+(state.mode==='add-bone'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn'+(state.mode==='dummy-adjust'?' active':'')+'" data-db-add-dummy>Add Dummy</button><button class="db-btn" data-db-bind-rig>Bind</button><button class="db-btn danger" data-db-clear-bones>Clear All</button></div><p class="db-help" style="margin-top:7px">Stretchy Bones are shown with a purple dashed line. In Animate, drag their tail to change direction and length smoothly.</p></div>'+
       envelopeDisplayHtml()+
       '<div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div>'+
       (hasBones?'<div class="db-section"><h3>Project Files</h3><button class="db-btn" style="width:100%" data-db-save-part>Save Part</button></div>':'')+
