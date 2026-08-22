@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 18,
+  "version": 19,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -229,6 +229,15 @@
       "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Tools.svg",
       "items": [
         {
+          "id": "Lattice_Warp",
+          "label": "Lattice Warp",
+          "description": "Draw a point-based warp cage and link a layer so its artwork bends smoothly as it moves through the cage.",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/LatticeWarp.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/LatticeWarp.txt",
+          "action": "tool",
+          "F_Screen": 0
+        },
+        {
           "id": "Texture Pen",
           "label": "Texture Pen",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Pen.svg",
@@ -295,3 +304,4 @@
     }
   ]
 }
+
