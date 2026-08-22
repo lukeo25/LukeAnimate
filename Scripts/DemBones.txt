@@ -1,4 +1,8 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.37
+/* Luke Animate Dem Bones + MyCharacter GPT v16.38
+   v16.38 sources off-stage skeletons and artwork ghosts from every live saved
+   DemBones rig rather than only state.activeRig. They therefore remain visible
+   in ordinary Luke Animate editing, timeline scrubbing/playback and while the
+   DemBones panel is closed, not just while animating inside the tool.
    v16.37 makes off-stage ghost rendering artwork-driven rather than dependent
    on an off-stage bone segment. A curve/PNG crossing the stage boundary now
    creates the ghost canvas even when its controlling node is exactly on the
@@ -116,7 +120,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.37";
+  var TOOL_VERSION = "16.38";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -5976,19 +5980,21 @@
   function offstageBoneRecords(){
     var characterRecords=state.character.committed&&state.character.showBones?characterBoneDisplayRecords(currentTime()):[];
     if(characterRecords.length)return characterRecords;
-    if(!state.activeRig)return[];
-    var map=state.tab==='editbone'?editBoneDisplayTransformMap(state.activeRig,currentTime()):(state.tab==='bones'?restTransformMap(state.activeRig):posedTransformMap(state.activeRig,currentTime()));
-    return(state.activeRig.bones||[]).map(function(bone){var q=map[bone.id];return q?{part:null,bone:bone,head:q.head,tail:q.tail}:null;}).filter(Boolean);
+    var records=[];
+    allLiveDemBonesRigs().forEach(function(rig){
+      if(!rig)return;
+      var isActive=state.open&&state.activeRig===rig;
+      var map=isActive&&state.tab==='editbone'?editBoneDisplayTransformMap(rig,currentTime()):(isActive&&state.tab==='bones'?restTransformMap(rig):posedTransformMap(rig,currentTime()));
+      (rig.bones||[]).forEach(function(bone){var q=map[bone.id];if(q)records.push({part:null,bone:bone,head:q.head,tail:q.tail});});
+    });
+    return records;
   }
 
   function offstageGhostObjects(){
     var out=[],seen={};
     function add(part,object){if(!object)return;var key=String(object.id||'')||('ref-'+out.length);if(seen[key])return;seen[key]=true;out.push({part:part,object:object});}
-    if(state.character.committed&&state.character.parts.length){
-      state.character.parts.forEach(function(part){if(part&&part.rig)rigObjects(part.rig).forEach(function(object){add(part,object);});});
-    }else if(state.activeRig){
-      rigObjects(state.activeRig).forEach(function(object){add(null,object);});
-    }
+    if(state.character.committed&&state.character.parts.length)state.character.parts.forEach(function(part){if(part&&part.rig)rigObjects(part.rig).forEach(function(object){add(part,object);});});
+    allLiveDemBonesRigs().forEach(function(rig){var part=characterPartForRigId(rig&&rig.id);rigObjects(rig).forEach(function(object){add(part,object);});});
     return out;
   }
 
