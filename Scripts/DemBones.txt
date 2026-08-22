@@ -1,4 +1,9 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.33
+/* Luke Animate Dem Bones + MyCharacter GPT v16.34
+   v16.34 restores direct bone-node selection at shared joints by preferring
+   the bone tail that actually rotates that segment instead of allowing the
+   already-selected child head to steal the click. It also supplies interactive
+   node handles across the complete editing workspace, so bones can be dragged
+   beyond the stage edge and their off-stage nodes remain selectable/animatable.
    v16.33 adds Stretchy Bones. They use the existing smooth longitudinal skin
    deformation, but expose length as a distinct animated property: dragging a
    Stretchy Bone tail in Animate changes both its direction and keyed length.
@@ -100,7 +105,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.33";
+  var TOOL_VERSION = "16.34";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -125,6 +130,7 @@
     try{delete window[key];}catch(eDelete){window[key]=null;}
   });
   if(alreadyCurrent)return;
+  document.querySelectorAll('.db-offstage-bone-nodes').forEach(function(node){try{node.remove();}catch(ignoreNodeRemove){}});
   try{API.unregisterObjectEvaluator("luke-animate-dem-bones-evaluator");}catch(eOldEval){}
   try{API.unregisterStageOverlayRenderer("luke-animate-dem-bones-overlay");}catch(eOldOverlay){}
   try{if(typeof API.unregisterObjectRenderer==="function")API.unregisterObjectRenderer(RASTER_RENDERER_ID);}catch(eOldRaster){}
@@ -1381,6 +1387,23 @@
     var a=API.stageToScenePoint({x:0,y:0});
     var b=API.stageToScenePoint({x:pixels,y:0});
     return Math.max(.001,Math.hypot(b.x-a.x,b.y-a.y));
+  }
+
+  function boneHitHandlePriority(handle){
+    if(handle==="tail")return 0;
+    if(handle==="head")return 1;
+    return 2;
+  }
+
+  function betterBoneHit(candidate,current){
+    if(!candidate)return false;
+    if(!current)return true;
+    var epsilon=scenePixels(.75);
+    if(candidate.distance<current.distance-epsilon)return true;
+    if(Math.abs(candidate.distance-current.distance)<=epsilon){
+      return boneHitHandlePriority(candidate.handle)<boneHitHandlePriority(current.handle);
+    }
+    return false;
   }
 
   function nearestBoneEndpoint(point,ignoreId,includeDummies){
@@ -2846,9 +2869,8 @@
       var handle="line",distance=lineDistance;
       if(headDistance<=tailDistance&&headDistance<=lineDistance){handle="head";distance=headDistance;}
       else if(tailDistance<=lineDistance){handle="tail";distance=tailDistance;}
-      if((headDistance<=nodeThreshold||tailDistance<=nodeThreshold||lineDistance<=lineThreshold)&&(!best||distance<best.distance)){
-        best={part:record.part,bone:record.bone,handle:handle,head:record.head,tail:record.tail,distance:distance};
-      }
+      var candidate={part:record.part,bone:record.bone,handle:handle,head:record.head,tail:record.tail,distance:distance};
+      if((headDistance<=nodeThreshold||tailDistance<=nodeThreshold||lineDistance<=lineThreshold)&&betterBoneHit(candidate,best))best=candidate;
     });
     return best;
   }
@@ -3124,7 +3146,8 @@
       if(headDistance<=tailDistance&&headDistance<=lineDistance){handle="head";distance=headDistance;}
       else if(tailDistance<=lineDistance){handle="tail";distance=tailDistance;}
       var hit=headDistance<=nodeThreshold||tailDistance<=nodeThreshold||lineDistance<=lineThreshold;
-      if(hit&&(!best||distance<best.distance))best={part:record.part,bone:record.bone,handle:handle,head:record.head,tail:record.tail,distance:distance};
+      var candidate={part:record.part,bone:record.bone,handle:handle,head:record.head,tail:record.tail,distance:distance};
+      if(hit&&betterBoneHit(candidate,best))best=candidate;
     });
     return best;
   }
@@ -3189,9 +3212,6 @@
       if(selected&&sq){
         if(isDummyBone(selected)){
           var dh=dummyBoxHit(p,selected,sq,true,scenePixels);if(dh)return dh;
-        }else{
-          var hd=Math.hypot(p.x-sq.head.x,p.y-sq.head.y),td=Math.hypot(p.x-sq.tail.x,p.y-sq.tail.y);
-          if(Math.min(hd,td)<bestD)return{bone:selected,handle:hd<=td?"head":"tail",point:p,distance:Math.min(hd,td)};
         }
       }
     }
@@ -3203,7 +3223,7 @@
         if(dh&&(!best||dh.distance<best.distance))best=dh;
         return;
       }
-      [["head",q.head],["tail",q.tail]].forEach(function(pair){var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);if(d<bestD&&(!best||d<best.distance))best={bone:b,handle:pair[0],point:p,distance:d};});
+      [["tail",q.tail],["head",q.head]].forEach(function(pair){var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y),candidate={bone:b,handle:pair[0],point:p,distance:d};if(d<bestD&&betterBoneHit(candidate,best))best=candidate;});
       var ld=distancePointToSegment(p,q.head,q.tail);if(ld<lineD&&(!best||ld<best.distance-scenePixels(2)))best={bone:b,handle:"line",point:p,distance:ld};
     });
     return best;
@@ -5917,6 +5937,64 @@
 
   function selectedScenePoint(event){var rect=API.canvas.getBoundingClientRect(),sx=(event.clientX-rect.left)*(API.width/rect.width),sy=(event.clientY-rect.top)*(API.height/rect.height);return API.stageToScenePoint({x:sx,y:sy});}
   function stagePointFromScene(p){return API.sceneToStagePoint(p);}
+
+  var offstageBoneNodeLayer=null;
+  function ensureOffstageBoneNodeLayer(){
+    if(offstageBoneNodeLayer&&offstageBoneNodeLayer.isConnected)return offstageBoneNodeLayer;
+    var layer=document.createElement('div');
+    layer.className='db-offstage-bone-nodes';
+    layer.style.cssText='position:fixed;pointer-events:none;overflow:hidden;z-index:5200';
+    layer.addEventListener('pointerdown',function(event){
+      if(!event.target||!event.target.closest('.db-offstage-bone-node'))return;
+      onPointerDown(event);
+      if(!state.drag)return;
+      function move(moveEvent){onPointerMove(moveEvent);}
+      function up(upEvent){
+        window.removeEventListener('pointermove',move,true);
+        window.removeEventListener('pointerup',up,true);
+        window.removeEventListener('pointercancel',up,true);
+        onPointerUp(upEvent);
+      }
+      window.addEventListener('pointermove',move,true);
+      window.addEventListener('pointerup',up,true);
+      window.addEventListener('pointercancel',up,true);
+    },true);
+    document.body.appendChild(layer);offstageBoneNodeLayer=layer;return layer;
+  }
+
+  function offstageBoneRecords(){
+    var characterRecords=state.character.committed&&state.character.showBones?characterBoneDisplayRecords(currentTime()):[];
+    if(characterRecords.length)return characterRecords;
+    if(!state.activeRig)return[];
+    var map=state.tab==='editbone'?editBoneDisplayTransformMap(state.activeRig,currentTime()):(state.tab==='bones'?restTransformMap(state.activeRig):posedTransformMap(state.activeRig,currentTime()));
+    return(state.activeRig.bones||[]).map(function(bone){var q=map[bone.id];return q?{part:null,bone:bone,head:q.head,tail:q.tail}:null;}).filter(Boolean);
+  }
+
+  function renderOffstageBoneNodes(){
+    var layer=ensureOffstageBoneNodeLayer();
+    if(API.isExporting){layer.style.display='none';return;}
+    var wrap=document.getElementById('stage-wrap'),canvasRect=API.canvas.getBoundingClientRect();
+    if(!wrap||canvasRect.width<1||canvasRect.height<1){layer.style.display='none';return;}
+    var wrapRect=wrap.getBoundingClientRect();
+    layer.style.display='block';layer.style.left=wrapRect.left+'px';layer.style.top=wrapRect.top+'px';layer.style.width=wrap.clientWidth+'px';layer.style.height=wrap.clientHeight+'px';
+    var seen={},html=[];
+    offstageBoneRecords().forEach(function(record){
+      if(isDummyBone(record.bone))return;
+      [['tail',record.tail],['head',record.head]].forEach(function(entry){
+        var stage=stagePointFromScene(entry[1]);
+        var clientX=canvasRect.left+stage.x*(canvasRect.width/Math.max(1,API.width));
+        var clientY=canvasRect.top+stage.y*(canvasRect.height/Math.max(1,API.height));
+        var outside=clientX<canvasRect.left-2||clientX>canvasRect.right+2||clientY<canvasRect.top-2||clientY>canvasRect.bottom+2;
+        if(!outside||clientX<wrapRect.left||clientX>wrapRect.right||clientY<wrapRect.top||clientY>wrapRect.bottom)return;
+        var key=Math.round(clientX)+'|'+Math.round(clientY);
+        if(seen[key])return;seen[key]=true;
+        var selected=(state.open&&String(state.selectedBoneId)===String(record.bone.id))||(!state.open&&String(state.closedBoneId)===String(record.bone.id));
+        html.push('<span class="db-offstage-bone-node" title="'+esc(record.bone.name||'Bone')+' '+entry[0]+' — drag to animate" style="pointer-events:auto;position:absolute;left:'+(clientX-wrapRect.left-8)+'px;top:'+(clientY-wrapRect.top-8)+'px;width:16px;height:16px;border-radius:50%;box-sizing:border-box;background:'+(selected?'#0e9c86':'#fff')+';border:3px solid #0e9c86;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:grab"></span>');
+      });
+    });
+    layer.innerHTML=html.join('');
+  }
+
   function boneHit(event){
     var rig=state.activeRig;if(!rig)return null;
     var p=selectedScenePoint(event);
@@ -5929,9 +6007,6 @@
       if(selected&&sq){
         if(isDummyBone(selected)){
           var dummySelectedHit=dummyBoxHit(p,selected,sq,true,scenePixels);if(dummySelectedHit)return dummySelectedHit;
-        }else{
-          var own=[];own.push({bone:selected,handle:"head",distance:Math.hypot(p.x-sq.head.x,p.y-sq.head.y)});own.push({bone:selected,handle:"tail",distance:Math.hypot(p.x-sq.tail.x,p.y-sq.tail.y)});
-          own.sort(function(a,b){return a.distance-b.distance;});if(own[0].distance<bestD)return Object.assign({point:p},own[0]);
         }
       }
     }
@@ -5940,7 +6015,7 @@
       if(isDummyBone(b)){
         var dh=dummyBoxHit(p,b,q,String(b.id)===String(state.selectedBoneId),scenePixels);if(dh&&(!best||dh.distance<best.distance))best=dh;return;
       }
-      [["head",q.head],["tail",q.tail]].forEach(function(pair){var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y);if(d<bestD&&(!best||d<best.distance))best={bone:b,handle:pair[0],point:p,distance:d};});
+      [["tail",q.tail],["head",q.head]].forEach(function(pair){var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y),candidate={bone:b,handle:pair[0],point:p,distance:d};if(d<bestD&&betterBoneHit(candidate,best))best=candidate;});
       var ld=distancePointToSegment(p,q.head,q.tail);if(ld<lineD&&(!best||ld<best.distance-scenePixels(2)))best={bone:b,handle:"line",point:p,distance:ld};
     });
     return best;
@@ -6634,6 +6709,7 @@
   }
 
   function overlayRenderer(ctx){
+    renderOffstageBoneNodes();
     drawCharacterRootDummy(ctx);
     /*
       v15:
@@ -7184,4 +7260,3 @@
   bindGlobal();
   open();
 })();
-
