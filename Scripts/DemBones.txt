@@ -1,4 +1,8 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.35
+/* Luke Animate Dem Bones + MyCharacter GPT v16.36
+   v16.36 adds a translucent off-stage artwork ghost for both editable curves
+   and bone-deformed PNG meshes. The ghost uses the current evaluated bone pose
+   and is masked out over the normal stage, leaving the off-stage portion visible
+   beside the complete off-stage skeleton while its nodes are animated.
    v16.35 draws complete off-stage bones (segment, nodes and label) across the
    checkerboard editing workspace and captures a node drag from its first
    on-stage press, so crossing the stage boundary cannot end the edit.
@@ -108,7 +112,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.35";
+  var TOOL_VERSION = "16.36";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -5973,6 +5977,69 @@
     return(state.activeRig.bones||[]).map(function(bone){var q=map[bone.id];return q?{part:null,bone:bone,head:q.head,tail:q.tail}:null;}).filter(Boolean);
   }
 
+  function offstageGhostObjects(){
+    var out=[],seen={};
+    function add(part,object){if(!object)return;var key=String(object.id||'')||('ref-'+out.length);if(seen[key])return;seen[key]=true;out.push({part:part,object:object});}
+    if(state.character.committed&&state.character.parts.length){
+      state.character.parts.forEach(function(part){if(part&&part.rig)rigObjects(part.rig).forEach(function(object){add(part,object);});});
+    }else if(state.activeRig){
+      rigObjects(state.activeRig).forEach(function(object){add(null,object);});
+    }
+    return out;
+  }
+
+  function ghostObjectPointToScene(entry,effective,point,time){
+    var object=entry.object,b=objectBounds(object),cx=(b.x1+b.x2)/2,cy=(b.y1+b.y2)/2;
+    var uniform=n(effective.tscale,1),sx=uniform*n(effective.tscaleX,1),sy=uniform*n(effective.tscaleY,1);
+    var angle=n(effective.trotation,0)*Math.PI/180,cos=Math.cos(angle),sin=Math.sin(angle);
+    var dx=(n(point.x,0)-cx)*sx,dy=(n(point.y,0)-cy)*sy;
+    var scenePoint={x:cx+n(effective.tx,0)+dx*cos-dy*sin,y:cy+n(effective.ty,0)+dx*sin+dy*cos};
+    if(entry.part){
+      scenePoint=partLocalPointToCharacterScene(resolvedPartTransform(entry.part,time,{}),scenePoint);
+      var editing=typeof API.getEditingClipId==='function'?API.getEditingClipId():null;
+      if(!editing)scenePoint=characterRootPointToMainScene(scenePoint,time);
+    }
+    return scenePoint;
+  }
+
+  function ghostCanvasPoint(entry,effective,point,time,canvasRect,wrapRect){
+    var stage=stagePointFromScene(ghostObjectPointToScene(entry,effective,point,time));
+    return{x:canvasRect.left-wrapRect.left+stage.x*(canvasRect.width/Math.max(1,API.width)),y:canvasRect.top-wrapRect.top+stage.y*(canvasRect.height/Math.max(1,API.height))};
+  }
+
+  function drawOffstageArtworkGhost(canvas,canvasRect,wrapRect){
+    if(!canvas)return;
+    var width=Math.max(1,Math.round(canvas.parentNode.clientWidth)),height=Math.max(1,Math.round(canvas.parentNode.clientHeight));
+    var ratio=Math.max(1,Math.min(2,window.devicePixelRatio||1));canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);
+    var ghost=canvas.getContext('2d');ghost.setTransform(ratio,0,0,ratio,0,0);ghost.clearRect(0,0,width,height);ghost.globalAlpha=.24;
+    var time=currentTime();
+    offstageGhostObjects().forEach(function(entry){
+      var object=entry.object,effective=typeof API.getEffectiveObject==='function'?(API.getEffectiveObject(object,time)||object):object;
+      var geometry=deformedObjectGeometry(object,time);
+      if(!geometry||!Array.isArray(geometry.points)||geometry.points.length<2)return;
+      var points=geometry.points.map(function(point){return ghostCanvasPoint(entry,effective,point,time,canvasRect,wrapRect);});
+      if(object.type==='image'&&object.demBones&&object.demBones.raster){
+        var image=rasterImageForSource(effective.src!==undefined?effective.src:object.src);
+        if(!image||!image.complete||!image.naturalWidth)return;
+        var cols=Math.max(1,Math.round(n(object.demBones.rasterCols,8))),rows=Math.max(1,Math.round(n(object.demBones.rasterRows,8)));
+        if(points.length!==(cols+1)*(rows+1))return;
+        function idx(row,col){return row*(cols+1)+col;}function src(row,col){return{x:image.naturalWidth*(col/cols),y:image.naturalHeight*(row/rows)};}
+        for(var row=0;row<rows;row++)for(var col=0;col<cols;col++){
+          var p00=points[idx(row,col)],p10=points[idx(row,col+1)],p01=points[idx(row+1,col)],p11=points[idx(row+1,col+1)];
+          var s00=src(row,col),s10=src(row,col+1),s01=src(row+1,col),s11=src(row+1,col+1);
+          drawRasterTriangle(ghost,image,s00,s10,s11,p00,p10,p11);drawRasterTriangle(ghost,image,s00,s11,s01,p00,p11,p01);
+        }
+        return;
+      }
+      ghost.beginPath();ghost.moveTo(points[0].x,points[0].y);for(var i=1;i<points.length;i++)ghost.lineTo(points[i].x,points[i].y);if(object.closedPath)ghost.closePath();
+      ghost.lineWidth=Math.max(2,n(effective.strokeWidth,3));ghost.strokeStyle=String(effective.strokeColor||object.strokeColor||'#0e9c86');
+      if(object.closedPath&&effective.fillEnabled!==false){ghost.fillStyle=String(effective.fillColor||object.fillColor||'#4fe0c4');ghost.fill();}
+      if(effective.strokeEnabled!==false)ghost.stroke();
+    });
+    ghost.globalAlpha=1;
+    ghost.clearRect(canvasRect.left-wrapRect.left,canvasRect.top-wrapRect.top,canvasRect.width,canvasRect.height);
+  }
+
   function renderOffstageBoneNodes(){
     var layer=ensureOffstageBoneNodeLayer();
     if(API.isExporting){layer.style.display='none';return;}
@@ -6006,7 +6073,8 @@
         html.push('<span class="db-offstage-bone-node" title="'+esc(record.bone.name||'Bone')+' '+entry[0]+' — drag to animate" style="pointer-events:auto;position:absolute;left:'+(clientX-wrapRect.left-8)+'px;top:'+(clientY-wrapRect.top-8)+'px;width:16px;height:16px;border-radius:50%;box-sizing:border-box;background:'+(selected?'#0e9c86':'#fff')+';border:3px solid #0e9c86;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:grab"></span>');
       });
     });
-    layer.innerHTML=(svg.length?'<svg aria-label="Off-stage DemBones skeleton" style="position:absolute;inset:0;width:100%;height:100%;overflow:hidden;pointer-events:none">'+svg.join('')+'</svg>':'')+html.join('');
+    layer.innerHTML=(svg.length?'<canvas class="db-offstage-artwork-ghost" aria-label="Off-stage DemBones artwork ghost" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas><svg aria-label="Off-stage DemBones skeleton" style="position:absolute;inset:0;width:100%;height:100%;overflow:hidden;pointer-events:none">'+svg.join('')+'</svg>':'')+html.join('');
+    if(svg.length)drawOffstageArtworkGhost(layer.querySelector('.db-offstage-artwork-ghost'),canvasRect,wrapRect);
   }
 
   function boneHit(event){
