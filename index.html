@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v192: cache-keys the remote Tools configuration so newly published tools and icons appear immediately instead of an older Config.json remaining in browser/CDN cache. -->
 <!-- LukeAnimate GPT v191: exposes native drawing-object removal to configured tools so persistent helper objects such as Lattice Warp cages can be removed through the canonical layer/frame model. -->
 <!-- LukeAnimate GPT v190: pinned/following layers now inherit the complete parent transform. Uniform scale and independent X/Y scale are composed once, together with rotation and the scaled local offset, so the follower rotates and resizes smoothly without double-applying scale. -->
 <!-- LukeAnimate GPT v189: moves the single live Layers panel from Particles & Effects into Animate, keeping drawing, Clip and effect layer controls beside Animate selection/transform controls without duplicating state or event handlers. -->
@@ -11121,7 +11122,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=19';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
