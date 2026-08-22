@@ -1,4 +1,8 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.36
+/* Luke Animate Dem Bones + MyCharacter GPT v16.37
+   v16.37 makes off-stage ghost rendering artwork-driven rather than dependent
+   on an off-stage bone segment. A curve/PNG crossing the stage boundary now
+   creates the ghost canvas even when its controlling node is exactly on the
+   edge or still on-stage, and the ghost is more clearly visible.
    v16.36 adds a translucent off-stage artwork ghost for both editable curves
    and bone-deformed PNG meshes. The ghost uses the current evaluated bone pose
    and is masked out over the normal stage, leaving the off-stage portion visible
@@ -112,7 +116,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.36";
+  var TOOL_VERSION = "16.37";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -6011,11 +6015,11 @@
     if(!canvas)return;
     var width=Math.max(1,Math.round(canvas.parentNode.clientWidth)),height=Math.max(1,Math.round(canvas.parentNode.clientHeight));
     var ratio=Math.max(1,Math.min(2,window.devicePixelRatio||1));canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);
-    var ghost=canvas.getContext('2d');ghost.setTransform(ratio,0,0,ratio,0,0);ghost.clearRect(0,0,width,height);ghost.globalAlpha=.24;
+    var ghost=canvas.getContext('2d');ghost.setTransform(ratio,0,0,ratio,0,0);ghost.clearRect(0,0,width,height);ghost.globalAlpha=.4;
     var time=currentTime();
     offstageGhostObjects().forEach(function(entry){
       var object=entry.object,effective=typeof API.getEffectiveObject==='function'?(API.getEffectiveObject(object,time)||object):object;
-      var geometry=deformedObjectGeometry(object,time);
+      var geometry=object.demBones&&object.demBones.raster?deformedObjectGeometry(object,time):(Array.isArray(effective.points)?{points:effective.points,closedPath:effective.closedPath}:deformedObjectGeometry(object,time));
       if(!geometry||!Array.isArray(geometry.points)||geometry.points.length<2)return;
       var points=geometry.points.map(function(point){return ghostCanvasPoint(entry,effective,point,time,canvasRect,wrapRect);});
       if(object.type==='image'&&object.demBones&&object.demBones.raster){
@@ -6073,8 +6077,9 @@
         html.push('<span class="db-offstage-bone-node" title="'+esc(record.bone.name||'Bone')+' '+entry[0]+' — drag to animate" style="pointer-events:auto;position:absolute;left:'+(clientX-wrapRect.left-8)+'px;top:'+(clientY-wrapRect.top-8)+'px;width:16px;height:16px;border-radius:50%;box-sizing:border-box;background:'+(selected?'#0e9c86':'#fff')+';border:3px solid #0e9c86;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:grab"></span>');
       });
     });
-    layer.innerHTML=(svg.length?'<canvas class="db-offstage-artwork-ghost" aria-label="Off-stage DemBones artwork ghost" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas><svg aria-label="Off-stage DemBones skeleton" style="position:absolute;inset:0;width:100%;height:100%;overflow:hidden;pointer-events:none">'+svg.join('')+'</svg>':'')+html.join('');
-    if(svg.length)drawOffstageArtworkGhost(layer.querySelector('.db-offstage-artwork-ghost'),canvasRect,wrapRect);
+    var hasGhostObjects=offstageGhostObjects().length>0;
+    layer.innerHTML=(hasGhostObjects?'<canvas class="db-offstage-artwork-ghost" aria-label="Off-stage DemBones artwork ghost" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas>':'')+(svg.length?'<svg aria-label="Off-stage DemBones skeleton" style="position:absolute;inset:0;width:100%;height:100%;overflow:hidden;pointer-events:none">'+svg.join('')+'</svg>':'')+html.join('');
+    if(hasGhostObjects)drawOffstageArtworkGhost(layer.querySelector('.db-offstage-artwork-ghost'),canvasRect,wrapRect);
   }
 
   function boneHit(event){
