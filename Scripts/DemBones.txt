@@ -1,4 +1,7 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.43
+/* Luke Animate Dem Bones + MyCharacter GPT v16.44
+   v16.44 gives Gizmo and Dummy Bones direct single-click stage placement after
+   Add Bone, while retaining their movable/scaleable/rotatable box controls.
+   Control bones never expose envelopes, strength, or envelope resize handles.
    v16.43 restores one consistent bone-creation workflow. Bone, Stretchy Bone,
    Gizmo Bone and Dummy Bone all live in the Bone Type dropdown and share one
    Add Bone button. Drawn types enter stage placement; control types appear
@@ -138,7 +141,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.43";
+  var TOOL_VERSION = "16.44";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1581,14 +1584,14 @@
     state.addPreview=null;
     state.drag=null;
     state.tab="bones";
-    state.mode="dummy-adjust";
+    state.mode="control-place";
     ensureRigSkinBind(rig);
     extendRigSkinBindWithBone(rig,bone);
     syncRigRefs(rig);
     var characterPart=characterPartForRigId(rig.id);
     if(characterPart)syncCharacterPartRigRefs(characterPart);
     renderAll();API.refreshUI();
-    notify(bone.name+" added. Position it now: drag inside to move, drag a corner to scale, or drag the round handle to rotate. Click Add Bone only when you want to draw a bone.",false);
+    notify(bone.name+" added. Click once on the stage to place it. After placement, drag inside to move, drag a corner to scale, or use the round handle to rotate.",false);
     return bone;
   }
 
@@ -1597,7 +1600,7 @@
     API.pushUndo();var gizmo=selectedClipGizmo(),bounds=rigTargetBounds(rig),cx=gizmo?n(gizmo.x,0):(isFinite(bounds&&bounds.cx)?bounds.cx:0),cy=gizmo?n(gizmo.y,0):(isFinite(bounds&&bounds.cy)?bounds.cy:0),span=34;
     var count=(rig.bones||[]).filter(function(item){return isGizmoBone(item);}).length+1;
     var bone={id:uid('gizmo-bone'),name:'Gizmo Pin Bone '+count,type:'gizmo',parentId:'',restHead:{x:round3(cx),y:round3(cy)},restTail:{x:round3(cx+span),y:round3(cy)},restLength:span,restAngle:0,localRestAngle:0,envStart:2,envEnd:2,strength:.001,basePose:{dx:0,dy:0,rotation:0,scale:1,easing:'linear'},keys:[],controlsRig:false};
-    rig.bones=rig.bones||[];rig.bones.push(bone);normaliseRigBones(rig);state.selectedBoneId=bone.id;state.addPreview=null;state.drag=null;state.tab='bones';state.mode='dummy-adjust';ensureRigSkinBind(rig);extendRigSkinBindWithBone(rig,bone);syncRigRefs(rig);var part=characterPartForRigId(rig.id);if(part)syncCharacterPartRigRefs(part);renderAll();API.refreshUI();notify(bone.name+' added. Drag the box to position it, then pin the Clip Gizmo.',false);return bone;
+    rig.bones=rig.bones||[];rig.bones.push(bone);normaliseRigBones(rig);state.selectedBoneId=bone.id;state.addPreview=null;state.drag=null;state.tab='bones';state.mode='control-place';ensureRigSkinBind(rig);extendRigSkinBindWithBone(rig,bone);syncRigRefs(rig);var part=characterPartForRigId(rig.id);if(part)syncCharacterPartRigRefs(part);renderAll();API.refreshUI();notify(bone.name+' added. Click once on the stage to place it, then pin the Clip Gizmo.',false);return bone;
   }
 
   function deleteBoneById(boneId){
@@ -6325,7 +6328,7 @@
 
   function envelopeHandleHit(event){
     if(state.tab!=="editbone"||!state.showEnvelopes)return null;
-    var bone=selectedBone();if(!bone||String(bone.type||'').toLowerCase()==='dummy')return null;
+    var bone=selectedBone();if(!bone||isDummyBone(bone))return null;
     var map=editBoneDisplayTransformMap(state.activeRig,currentTime()),q=map[bone.id];if(!q)return null;
     var dx=q.tail.x-q.head.x,dy=q.tail.y-q.head.y,len=Math.max(.0001,Math.hypot(dx,dy)),perp={x:-dy/len,y:dx/len};
     var control=rigControlDummyTransform(state.activeRig,currentTime());
@@ -6614,6 +6617,19 @@
     }
     var hit=boneHit(event);
     if(state.tab==="bones"){
+      if(state.mode==="control-place"){
+        var placingControl=selectedBone();
+        if(placingControl&&isDummyBone(placingControl)){
+          event.preventDefault();event.stopImmediatePropagation();API.pushUndo();
+          var placeDx=point.x-placingControl.restHead.x,placeDy=point.y-placingControl.restHead.y;
+          placingControl.restHead={x:round3(placingControl.restHead.x+placeDx),y:round3(placingControl.restHead.y+placeDy)};
+          placingControl.restTail={x:round3(placingControl.restTail.x+placeDx),y:round3(placingControl.restTail.y+placeDy)};
+          state.mode="dummy-adjust";normaliseRigBones(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());
+          var placedPart=characterPartForRigId(state.activeRig&&state.activeRig.id);if(placedPart)syncCharacterPartRigRefs(placedPart);
+          renderAll();API.refreshUI();notify(placingControl.name+" placed. Drag inside the box whenever you want to move it.",false);return;
+        }
+        state.mode="select";
+      }
       /* Add Bone is a deliberate tool. Until that button is clicked, stage drags
          select/manipulate controls but can never create skeletal geometry. */
       if(state.mode==="add-bone"){
@@ -7285,6 +7301,7 @@
   }
 
   function envelopeDisplayHtml(){
+    if(isDummyBone(selectedBone()))return '';
     return '<div class="db-section"><h3>Envelopes</h3><label class="db-check"><input type="checkbox" data-db-show-envelopes'+(state.showEnvelopes?' checked':'')+'> Show envelopes and resize handles</label></div>';
   }
 
@@ -7292,7 +7309,7 @@
     var rig=state.activeRig;
     var hasBones=!!(rig&&rig.bones&&rig.bones.length);
     return '<div class="db-page active">'+
-      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone"'+(state.addBoneType==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(state.addBoneType==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="gizmo"'+(state.addBoneType==='gizmo'?' selected':'')+'>Gizmo Bone</option><option value="dummy"'+(state.addBoneType==='dummy'?' selected':'')+'>Dummy Bone</option></select></div><div class="db-grid2"><button class="db-btn'+(state.mode==='add-bone'||state.mode==='dummy-adjust'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-bind-rig>Bind</button></div><button class="db-btn danger" style="width:100%;margin-top:7px" data-db-clear-bones>Clear All</button><p class="db-help" style="margin-top:7px">Choose every bone type from the dropdown, then click Add Bone. Bone and Stretchy Bone are placed by dragging on stage. Gizmo and Dummy Bones appear immediately as movable box controls so you can place, scale and rotate them.</p></div>'+
+      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone"'+(state.addBoneType==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(state.addBoneType==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="gizmo"'+(state.addBoneType==='gizmo'?' selected':'')+'>Gizmo Bone</option><option value="dummy"'+(state.addBoneType==='dummy'?' selected':'')+'>Dummy Bone</option></select></div><div class="db-grid2"><button class="db-btn'+(state.mode==='add-bone'||state.mode==='dummy-adjust'||state.mode==='control-place'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-bind-rig>Bind</button></div><button class="db-btn danger" style="width:100%;margin-top:7px" data-db-clear-bones>Clear All</button><p class="db-help" style="margin-top:7px">Choose every bone type from the dropdown, then click Add Bone. Bone and Stretchy Bone use drag placement. Gizmo and Dummy Bones use one click on the stage for placement, then remain freely movable, scaleable and rotatable. Control bones never deform artwork and have no envelope.</p></div>'+
       envelopeDisplayHtml()+
       '<div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div>'+
       (hasBones?'<div class="db-section"><h3>Project Files</h3><button class="db-btn" style="width:100%" data-db-save-part>Save Part</button></div>':'')+
@@ -7309,8 +7326,8 @@
         '<div class="db-row"><label>Name</label><input value="'+esc(b.name)+'" data-db-edit-bone-name></div>'+
         '<div class="db-row"><label>Type</label><select data-db-edit-bone-type><option value="bone"'+(b.type==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(b.type==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="gizmo"'+(isGizmoBone(b)?' selected':'')+'>Gizmo Pin Bone</option><option value="dummy"'+(isPartDummyBone(b)?' selected':'')+'>Dummy</option></select></div>'+
         '<div class="db-row"><label>Parent</label><select data-db-edit-bone-parent>'+parents+'</select></div>'+
-        (String(b.type||'').toLowerCase()==='dummy'?'':'<div class="db-row"><label>Strength</label><input type="number" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength-num></div>')+
-        '<div class="db-help">'+(String(b.type||'').toLowerCase()==='dummy'?'Drag inside the box to move. Drag a corner to scale. Drag the round handle above the box to rotate.':'Drag the bone, its end points, or envelope handles directly on the stage.')+'</div>'+
+        (isDummyBone(b)?'':'<div class="db-row"><label>Strength</label><input type="number" min="0.05" max="4" step="0.05" value="'+round3(b.strength||1)+'" data-db-bone-strength-num></div>')+
+        '<div class="db-help">'+(isDummyBone(b)?'This control deforms nothing and has no envelope. Drag inside the box to move it anywhere, drag a corner to scale, or use the round handle to rotate.':'Drag the bone, its end points, or envelope handles directly on the stage.')+'</div>'+
         '<button class="db-btn danger" style="width:100%;margin-top:8px" data-db-delete-bone>Delete Bone</button>':
         '<div class="db-empty">Select a bone.</div>')+
       '</div>'+envelopeDisplayHtml()+'</div>';
