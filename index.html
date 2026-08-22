@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v190: pinned/following layers now inherit the complete parent transform. Uniform scale and independent X/Y scale are composed once, together with rotation and the scaled local offset, so the follower rotates and resizes smoothly without double-applying scale. -->
 <!-- LukeAnimate GPT v189: moves the single live Layers panel from Particles & Effects into Animate, keeping drawing, Clip and effect layer controls beside Animate selection/transform controls without duplicating state or event handlers. -->
 <!-- LukeAnimate GPT v188: native drawing-layer follow links. Every drawing layer now has a Follow selector in the Layers list. Linking captures the current relative offset and makes the child follow the parent layer's animated movement, rotation and scale without duplicating keys. Links persist in the native drawing-layer project model, can be removed with Follow: none, and reject circular relationships. -->
 <!-- LukeAnimate GPT v172: image/text layer timing parity. Image, video and text drawing layers now expose explicit timeline start-trim, end-trim and whole-block move controls plus fade-in/fade-out transparency handles. Layer fades multiply the object's normal/keyframed opacity during preview and WebM export, and persist with canonical Wick drawing frames. Existing object keyframes, layer exposure, rig-aware off-stage proxies and WebM stage cropping are preserved. -->
@@ -23414,20 +23415,21 @@ ctx.fill();</textarea>
   function nativeLayerFollowTransform(object,effective){
     const clip=object && object.type==='clipinstance';
     const source=effective||object||{};
+    const axes=getObjectScaleAxes(object,source);
     return clip
       ?{
           x:Number(source.x)||0,
           y:Number(source.y)||0,
           rotation:Number(source.rotation)||0,
-          scaleX:Number(source.scaleX!==undefined?source.scaleX:source.scale)||1,
-          scaleY:Number(source.scaleY!==undefined?source.scaleY:source.scale)||1
+          scaleX:axes.x,
+          scaleY:axes.y
         }
       :{
           x:Number(source.tx)||0,
           y:Number(source.ty)||0,
           rotation:Number(source.trotation)||0,
-          scaleX:Number(source.tscaleX!==undefined?source.tscaleX:source.tscale)||1,
-          scaleY:Number(source.tscaleY!==undefined?source.tscaleY:source.tscale)||1
+          scaleX:axes.x,
+          scaleY:axes.y
         };
   }
 
@@ -23437,12 +23439,12 @@ ctx.fill();</textarea>
       result.x=transform.x;result.y=transform.y;
       result.rotation=transform.rotation;
       result.scaleX=transform.scaleX;result.scaleY=transform.scaleY;
-      result.scale=Math.sqrt(Math.max(.000001,Math.abs(transform.scaleX*transform.scaleY)));
+      result.scale=1;
     }else{
       result.tx=transform.x;result.ty=transform.y;
       result.trotation=transform.rotation;
       result.tscaleX=transform.scaleX;result.tscaleY=transform.scaleY;
-      result.tscale=Math.sqrt(Math.max(.000001,Math.abs(transform.scaleX*transform.scaleY)));
+      result.tscale=1;
     }
     return result;
   }
@@ -23533,13 +23535,15 @@ ctx.fill();</textarea>
       const angle=-parentTransform.rotation*Math.PI/180;
       const dx=childTransform.x-parentTransform.x,dy=childTransform.y-parentTransform.y;
       const cos=Math.cos(angle),sin=Math.sin(angle);
+      const parentScaleX=Math.abs(parentTransform.scaleX)<.000001?(parentTransform.scaleX<0?-.000001:.000001):parentTransform.scaleX;
+      const parentScaleY=Math.abs(parentTransform.scaleY)<.000001?(parentTransform.scaleY<0?-.000001:.000001):parentTransform.scaleY;
       childLayer.followLayerId=parentId;
       childLayer.followLayerOffset={
-        x:(dx*cos-dy*sin)/Math.max(.000001,parentTransform.scaleX),
-        y:(dx*sin+dy*cos)/Math.max(.000001,parentTransform.scaleY),
+        x:(dx*cos-dy*sin)/parentScaleX,
+        y:(dx*sin+dy*cos)/parentScaleY,
         rotation:childTransform.rotation-parentTransform.rotation,
-        scaleX:childTransform.scaleX/Math.max(.000001,parentTransform.scaleX),
-        scaleY:childTransform.scaleY/Math.max(.000001,parentTransform.scaleY)
+        scaleX:childTransform.scaleX/parentScaleX,
+        scaleY:childTransform.scaleY/parentScaleY
       };
       nativeLayerFollowSync(childLayer);
     }
