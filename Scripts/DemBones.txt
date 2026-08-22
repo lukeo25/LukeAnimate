@@ -1,4 +1,7 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.34
+/* Luke Animate Dem Bones + MyCharacter GPT v16.35
+   v16.35 draws complete off-stage bones (segment, nodes and label) across the
+   checkerboard editing workspace and captures a node drag from its first
+   on-stage press, so crossing the stage boundary cannot end the edit.
    v16.34 restores direct bone-node selection at shared joints by preferring
    the bone tail that actually rotates that segment instead of allowing the
    already-selected child head to steal the click. It also supplies interactive
@@ -105,7 +108,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.34";
+  var TOOL_VERSION = "16.35";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -5977,9 +5980,20 @@
     if(!wrap||canvasRect.width<1||canvasRect.height<1){layer.style.display='none';return;}
     var wrapRect=wrap.getBoundingClientRect();
     layer.style.display='block';layer.style.left=wrapRect.left+'px';layer.style.top=wrapRect.top+'px';layer.style.width=wrap.clientWidth+'px';layer.style.height=wrap.clientHeight+'px';
-    var seen={},html=[];
+    var seen={},html=[],svg=[];
     offstageBoneRecords().forEach(function(record){
       if(isDummyBone(record.bone))return;
+      var headStage=stagePointFromScene(record.head),tailStage=stagePointFromScene(record.tail);
+      var headClient={x:canvasRect.left+headStage.x*(canvasRect.width/Math.max(1,API.width)),y:canvasRect.top+headStage.y*(canvasRect.height/Math.max(1,API.height))};
+      var tailClient={x:canvasRect.left+tailStage.x*(canvasRect.width/Math.max(1,API.width)),y:canvasRect.top+tailStage.y*(canvasRect.height/Math.max(1,API.height))};
+      var segmentOutside=headClient.x<canvasRect.left-2||headClient.x>canvasRect.right+2||headClient.y<canvasRect.top-2||headClient.y>canvasRect.bottom+2||tailClient.x<canvasRect.left-2||tailClient.x>canvasRect.right+2||tailClient.y<canvasRect.top-2||tailClient.y>canvasRect.bottom+2;
+      var intersectsWrap=Math.max(headClient.x,tailClient.x)>=wrapRect.left&&Math.min(headClient.x,tailClient.x)<=wrapRect.right&&Math.max(headClient.y,tailClient.y)>=wrapRect.top&&Math.min(headClient.y,tailClient.y)<=wrapRect.bottom;
+      if(segmentOutside&&intersectsWrap){
+        var selectedBone=(state.open&&String(state.selectedBoneId)===String(record.bone.id))||(!state.open&&String(state.closedBoneId)===String(record.bone.id));
+        var hx=headClient.x-wrapRect.left,hy=headClient.y-wrapRect.top,tx=tailClient.x-wrapRect.left,ty=tailClient.y-wrapRect.top;
+        svg.push('<line x1="'+hx+'" y1="'+hy+'" x2="'+tx+'" y2="'+ty+'" stroke="'+(selectedBone?'#0e9c86':'rgba(14,156,134,.9)')+'" stroke-width="'+(selectedBone?5:3)+'" stroke-linecap="round"/>');
+        svg.push('<text x="'+((hx+tx)/2+7)+'" y="'+((hy+ty)/2-7)+'" fill="#29434a" font-family="Arial,sans-serif" font-size="11">'+esc(record.bone.name||'Bone')+'</text>');
+      }
       [['tail',record.tail],['head',record.head]].forEach(function(entry){
         var stage=stagePointFromScene(entry[1]);
         var clientX=canvasRect.left+stage.x*(canvasRect.width/Math.max(1,API.width));
@@ -5992,7 +6006,7 @@
         html.push('<span class="db-offstage-bone-node" title="'+esc(record.bone.name||'Bone')+' '+entry[0]+' — drag to animate" style="pointer-events:auto;position:absolute;left:'+(clientX-wrapRect.left-8)+'px;top:'+(clientY-wrapRect.top-8)+'px;width:16px;height:16px;border-radius:50%;box-sizing:border-box;background:'+(selected?'#0e9c86':'#fff')+';border:3px solid #0e9c86;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:grab"></span>');
       });
     });
-    layer.innerHTML=html.join('');
+    layer.innerHTML=(svg.length?'<svg aria-label="Off-stage DemBones skeleton" style="position:absolute;inset:0;width:100%;height:100%;overflow:hidden;pointer-events:none">'+svg.join('')+'</svg>':'')+html.join('');
   }
 
   function boneHit(event){
@@ -7109,7 +7123,12 @@
 
   function bindGlobal(){
     if(state.listenersBound)return;state.listenersBound=true;var surface=API.overlay||API.canvas;
-    surface.addEventListener('pointerdown',onPointerDown,true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);surface.addEventListener('contextmenu',function(e){var hitPart=characterRightClickHit(e);if(!hitPart)return;e.preventDefault();e.stopImmediatePropagation();showCharacterContextMenu(e.clientX,e.clientY,hitPart);},true);
+    surface.addEventListener('pointerdown',function(event){
+      onPointerDown(event);
+      if(state.drag&&event.pointerId!==undefined&&surface.setPointerCapture){
+        try{surface.setPointerCapture(event.pointerId);}catch(ignoreCapture){}
+      }
+    },true);surface.addEventListener('pointermove',onPointerMove,true);surface.addEventListener('pointerup',onPointerUp,true);surface.addEventListener('pointercancel',onPointerUp,true);surface.addEventListener('contextmenu',function(e){var hitPart=characterRightClickHit(e);if(!hitPart)return;e.preventDefault();e.stopImmediatePropagation();showCharacterContextMenu(e.clientX,e.clientY,hitPart);},true);
     surface.addEventListener('dblclick',handleStageDoubleClick,true);
     /* Capture at window level as well so Luke Animate's native Clip double-click
        cannot consume the gesture before DemBones sees the assembled Character. */
