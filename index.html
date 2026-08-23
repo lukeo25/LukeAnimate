@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v206: blank-only timeline key selections can be converted into named empty Clips, preserving their selected frame timing and using the stage centre as the Clip pivot. -->
 <!-- LukeAnimate GPT v205: timeline marquee selection can box-select drawing keys and Convert Selected to Clip preserves their relative layers, frames, timing and artwork. -->
 <!-- LukeAnimate GPT v204: blank drawing keys occupy exactly one frame; the preceding drawing resumes on the following frame for the remainder of its original exposure. -->
 <!-- LukeAnimate GPT v202: Boolean Union, Subtract and Intersection use their dedicated repository SVG icons in the top drawing toolbar. -->
@@ -25,7 +26,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v205</title>
+<title>Luke Animate v206</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -10956,7 +10957,12 @@ ctx.fill();</textarea>
       if(wickSelectedTimelineFrameIds.has(String(frame.id))) selected.push({layer,frame});
     }));
     const drawable=selected.filter(item=>item.frame.object&&!item.frame.blank);
-    if(!drawable.length){logToSandbox('The selected key frames contain no artwork to convert',true);return true;}
+    if(!selected.length){
+      wickSelectedTimelineFrameIds.clear();
+      logToSandbox('Those timeline keys are no longer available. Box-select them again.',true);
+      updateSelectedCountUI();
+      return true;
+    }
 
     const firstFrame=Math.min(...selected.map(item=>item.frame.startFrame));
     const lastFrame=Math.max(...selected.map(item=>item.frame.endFrame));
@@ -10970,7 +10976,8 @@ ctx.fill();</textarea>
       x2=Math.max(x2,bounds.x2);y2=Math.max(y2,bounds.y2);
     });
     t=previousTime;
-    const cx=(x1+x2)/2,cy=(y1+y2)/2;
+    const cx=drawable.length?(x1+x2)/2:W/2;
+    const cy=drawable.length?(y1+y2)/2:H/2;
     const requestedName=prompt('Name this Clip:','Clip '+(clipCounter+1));
     if(requestedName===null) return true;
 
@@ -11031,7 +11038,7 @@ ctx.fill();</textarea>
     const instanceIndex=drawObjects.indexOf(clipInstance);
     if(instanceIndex>=0) selectedDrawIndices.add(instanceIndex);
     updateSelectedCountUI();renderLayerList();renderClipLibrary();updateInspector();renderTimeline();renderTransformHandles();
-    logToSandbox('Created Clip "'+clip.name+'" from '+drawable.length+' selected timeline key frame(s).');
+    logToSandbox('Created Clip "'+clip.name+'" from '+selected.length+' selected timeline key frame(s)'+(drawable.length?'':' (blank Clip)')+'.');
     return true;
   }
 
