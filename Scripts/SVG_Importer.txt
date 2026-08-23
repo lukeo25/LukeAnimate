@@ -1,3 +1,4 @@
+/* SVG Importer v4.0 — SVG folder imports create and open their Frame Gizmo automatically. */
 (function () {
   "use strict";
 
@@ -28,6 +29,7 @@
     "enterClip",
     "exitClip",
     "ensureTimelineFrameCount",
+    "openConfiguredTool",
     "pushUndo",
     "refreshUI",
     "selectDrawObject",
@@ -679,13 +681,13 @@
         centreVectors(result.objects, result.bounds, scale, { x: 0, y: 0 });
         prepared.push({ name: safeName(baseName(file.name), "Frame " + (i + 1)), objects: result.objects, warnings: result.warnings });
       }
-      createFolderClip(prepared);
+      await createFolderClip(prepared);
     } finally {
       setBusy(false);
     }
   }
 
-  function createFolderClip(frames) {
+  async function createFolderClip(frames) {
     var fps = Math.max(1, Number(API.fps) || 30);
     var clipName = state.folderName || "SVG_Clip";
     var originalFrame = Math.max(1, Math.round(Number(API.getCurrentFrame()) || 1));
@@ -720,10 +722,20 @@
     var restoredEditingClipId = typeof API.getEditingClipId === "function" ? API.getEditingClipId() : null;
     if (String(restoredEditingClipId || "") !== String(originalEditingClipId || "")) throw new Error("Luke Animate did not restore the original timeline after building the Gizmo Clip.");
     var instance = API.createClipInstance(clip.id, { name: clipName, x: Number(centre.x) || 0, y: Number(centre.y) || 0, scale: 1, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1 });
+    instance._lukeAnimateFrameGizmo = {
+      enabled: true,
+      baseFrame: 1,
+      manualFrame: null,
+      keys: []
+    };
     var stageLayer = API.createDrawingLayer(clipName, { pushUndo: false, refresh: false });
     API.setDrawingLayerFrameObject(stageLayer.id, originalFrame, instance, { pushUndo: false, refresh: false });
     API.refreshUI(); API.selectDrawObject(instance); API.refreshUI();
-    log("Complete.\nCreated Clip “" + clipName + "” with " + frames.length + " named SVG frame" + (frames.length === 1 ? "" : "s") + ".");
+    await API.openConfiguredTool("animate", "FrameGizmo");
+    var frameGizmo = window.__LukeAnimateFrameGizmoV3;
+    if (frameGizmo && typeof frameGizmo.enable === "function") frameGizmo.enable();
+    if (frameGizmo && typeof frameGizmo.render === "function") frameGizmo.render();
+    log("Complete.\nCreated Gizmo Clip “" + clipName + "” with " + frames.length + " named SVG frame" + (frames.length === 1 ? "" : "s") + ".\nFrame Gizmo was added and opened automatically.");
   }
 
   async function importClipMode(sanitized) {
