@@ -1,4 +1,6 @@
 /* Luke Animate Dem Bones + MyCharacter GPT v16.48
+   v16.51 evaluates an attached Clip Gizmo directly from its parent bone pose.
+   The Gizmo Bone stores only the local attachment offset, exactly like a pin.
    v16.50 preserves Gizmo key object identity during controller cleanup so
    timeline drag and delete operate on the live stored keys.
    v16.49 automatically opens and displays FrameGizmo whenever a Clip Gizmo
@@ -3626,8 +3628,16 @@
       stops.forEach(function(stop){if(!wantedStop||Math.abs(stop.frame-wantedFrame)<Math.abs(wantedStop.frame-wantedFrame))wantedStop=stop;});
       if(wantedStop){gizmoOut.clipStopTime=wantedStop.time;gizmoOut.clipStopFrame=wantedStop.frame;gizmoOut.clipStopName=wantedStop.name;}
       if(gizmoRig&&gizmo.boneId&&gizmo.pin){
-        var pinBone=(gizmoRig.bones||[]).filter(function(bone){return String(bone.id)===String(gizmo.boneId);})[0],pinPose=posedTransformMap(gizmoRig,gizmoTime)[gizmo.boneId];
-        if(pinBone&&pinPose){var poseAngle=angleOf(pinPose.head,pinPose.tail),poseLength=Math.max(.001,Math.hypot(pinPose.tail.x-pinPose.head.x,pinPose.tail.y-pinPose.head.y)),offset=rotateVector(n(gizmo.pin.along,0)*poseLength,n(gizmo.pin.across,0)*poseLength,poseAngle),ratio=poseLength/Math.max(.001,n(pinBone.restLength,poseLength));gizmoOut.x=pinPose.head.x+offset.x;gizmoOut.y=pinPose.head.y+offset.y;gizmoOut.rotation=n(gizmo.pin.rotation,0)+(poseAngle-n(gizmo.pin.restAngle,poseAngle));gizmoOut.scale=n(gizmo.pin.scale,1)*ratio;gizmoOut.scaleX=n(gizmo.pin.scaleX,1)*ratio;gizmoOut.scaleY=n(gizmo.pin.scaleY,1)*ratio;}
+        var poses=posedTransformMap(gizmoRig,gizmoTime),pinBone=(gizmoRig.bones||[]).filter(function(bone){return String(bone.id)===String(gizmo.boneId);})[0],pinPose=poses[gizmo.boneId];
+        if(pinBone&&pinPose){
+          var parentBone=pinBone.parentId?(gizmoRig.bones||[]).filter(function(bone){return String(bone.id)===String(pinBone.parentId);})[0]:null,parentPose=parentBone?poses[parentBone.id]:null;
+          if(parentBone&&parentPose){
+            var parentRestAngle=angleOf(parentBone.restHead,parentBone.restTail),parentPoseAngle=angleOf(parentPose.head,parentPose.tail),parentRestLength=Math.max(.001,n(parentBone.restLength,Math.hypot(parentBone.restTail.x-parentBone.restHead.x,parentBone.restTail.y-parentBone.restHead.y))),parentPoseLength=Math.max(.001,Math.hypot(parentPose.tail.x-parentPose.head.x,parentPose.tail.y-parentPose.head.y)),parentRatio=parentPoseLength/parentRestLength,storedOffset=pinBone.gizmoParentOffset,localAnchor=storedOffset?{x:n(storedOffset.x,0),y:n(storedOffset.y,0)}:inverseRotateVector(pinBone.restHead.x-parentBone.restHead.x,pinBone.restHead.y-parentBone.restHead.y,parentRestAngle),anchorOffset=rotateVector(localAnchor.x*parentRatio,localAnchor.y*parentRatio,parentPoseAngle),pinDistance=Math.max(.001,n(pinBone.restLength,1))*parentRatio,pinOffset=rotateVector(n(gizmo.pin.along,0)*pinDistance,n(gizmo.pin.across,0)*pinDistance,parentPoseAngle);
+            gizmoOut.x=parentPose.head.x+anchorOffset.x+pinOffset.x;gizmoOut.y=parentPose.head.y+anchorOffset.y+pinOffset.y;gizmoOut.rotation=n(gizmo.pin.rotation,0)+(parentPoseAngle-parentRestAngle);gizmoOut.scale=n(gizmo.pin.scale,1)*parentRatio;gizmoOut.scaleX=n(gizmo.pin.scaleX,1)*parentRatio;gizmoOut.scaleY=n(gizmo.pin.scaleY,1)*parentRatio;
+          }else{
+            var poseAngle=angleOf(pinPose.head,pinPose.tail),poseLength=Math.max(.001,Math.hypot(pinPose.tail.x-pinPose.head.x,pinPose.tail.y-pinPose.head.y)),offset=rotateVector(n(gizmo.pin.along,0)*poseLength,n(gizmo.pin.across,0)*poseLength,poseAngle),ratio=poseLength/Math.max(.001,n(pinBone.restLength,poseLength));gizmoOut.x=pinPose.head.x+offset.x;gizmoOut.y=pinPose.head.y+offset.y;gizmoOut.rotation=n(gizmo.pin.rotation,0)+(poseAngle-n(gizmo.pin.restAngle,poseAngle));gizmoOut.scale=n(gizmo.pin.scale,1)*ratio;gizmoOut.scaleX=n(gizmo.pin.scaleX,1)*ratio;gizmoOut.scaleY=n(gizmo.pin.scaleY,1)*ratio;
+          }
+        }
       }
       return gizmoOut;
     }
