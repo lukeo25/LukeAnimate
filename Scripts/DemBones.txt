@@ -1,4 +1,7 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.47
+/* Luke Animate Dem Bones + MyCharacter GPT v16.48
+   v16.48 restores Gizmo Bone repositioning in Bones setup while keeping
+   Gizmos out of Animate hit-testing. Moving one updates its parent offset so
+   the attached Clip remains at the newly placed position and follows properly.
    v16.47 makes Use Selected Clip complete the Gizmo attachment: the selected
    Clip snaps to the selected Gizmo Bone, stays selected for FrameGizmo, and
    follows the Gizmo Bone through its normal parent-bone hierarchy.
@@ -149,7 +152,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.47";
+  var TOOL_VERSION = "16.48";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -2961,9 +2964,8 @@
   }
 
   function dummyBoxHit(point,bone,q,selected,pixelUnit){
-    /* Gizmo Bones are display-only followers. They are intentionally absent
-       from stage hit-testing and can only be chosen in the Animate sidebar. */
-    if(isGizmoBone(bone))return null;
+    /* Gizmo Bones are setup controls in Bones, but never Animate hits. */
+    if(isGizmoBone(bone)&&state.tab!=="bones")return null;
     if(!isDummyBone(bone)||!q)return null;
     pixelUnit=typeof pixelUnit==='function'?pixelUnit:function(v){return v;};
     var geom=dummyBoxGeometry(q.head,q.tail,pixelUnit(28));
@@ -6823,7 +6825,7 @@
           state.drag.parent.restAngle=angleOf(state.drag.parent.restHead,state.drag.parent.restTail);
         }
       }
-      cb.restLength=Math.max(.001,Math.hypot(cb.restTail.x-cb.restHead.x,cb.restTail.y-cb.restHead.y));cb.restAngle=angleOf(cb.restHead,cb.restTail);
+      cb.restLength=Math.max(.001,Math.hypot(cb.restTail.x-cb.restHead.x,cb.restTail.y-cb.restHead.y));cb.restAngle=angleOf(cb.restHead,cb.restTail);if(isGizmoBone(cb)&&cb.parentId)setGizmoBoneParent(cb,cb.parentId);
       enforceRestChains();normaliseRigBones(state.activeRig);
       syncRigDisplayGeometry(state.activeRig,currentTime());
       syncCharacterPartRigRefs(state.drag.part);API.refreshUI();return;
@@ -6866,7 +6868,7 @@
           state.drag.parent.restAngle=angleOf(state.drag.parent.restHead,state.drag.parent.restTail);
         }
       }
-      b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));b.restAngle=angleOf(b.restHead,b.restTail);enforceRestChains();normaliseRigBones(state.activeRig);
+      b.restLength=Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y));b.restAngle=angleOf(b.restHead,b.restTail);if(isGizmoBone(b)&&b.parentId)setGizmoBoneParent(b,b.parentId);enforceRestChains();normaliseRigBones(state.activeRig);
       syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();return;
     }
     if(state.drag.kind==="animate-bone"){
@@ -7380,7 +7382,7 @@
   function gizmoAnimateSidebarHtml(){
     var gizmoBones=((state.activeRig&&state.activeRig.bones)||[]).filter(isGizmoBone);
     if(!gizmoBones.length)return '';
-    return '<div class="db-section"><h3>Gizmos</h3><p class="db-help">Gizmos are display-only followers. Select them here; they cannot be selected on the stage.</p><div class="db-list">'+gizmoBones.map(function(bone){var active=String(state.selectedBoneId)===String(bone.id),clip=clipGizmoForBone(bone,true);return '<button type="button" class="db-bone-row'+(active?' active':'')+'" data-db-animate-gizmo-id="'+esc(bone.id)+'"><img src="https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.svg" alt="" width="22" height="22"><span style="text-align:left"><strong>'+esc((clip&&clip.name)||bone.name||'Gizmo')+'</strong><small style="display:block;color:#78828e">'+esc(bone.parentId&&boneById(bone.parentId)?'Follows '+(boneById(bone.parentId).name||'parent bone'):'No parent bone')+'</small></span><span class="db-pill">Gizmo</span></button>';}).join('')+'</div></div>';
+    return '<div class="db-section"><h3>Gizmos</h3><p class="db-help">Gizmos are display-only followers. Select them here during Animate; reposition their Gizmo Bones on stage in Bones.</p><div class="db-list">'+gizmoBones.map(function(bone){var active=String(state.selectedBoneId)===String(bone.id),clip=clipGizmoForBone(bone,true);return '<button type="button" class="db-bone-row'+(active?' active':'')+'" data-db-animate-gizmo-id="'+esc(bone.id)+'"><img src="https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.svg" alt="" width="22" height="22"><span style="text-align:left"><strong>'+esc((clip&&clip.name)||bone.name||'Gizmo')+'</strong><small style="display:block;color:#78828e">'+esc(bone.parentId&&boneById(bone.parentId)?'Follows '+(boneById(bone.parentId).name||'parent bone'):'No parent bone')+'</small></span><span class="db-pill">Gizmo</span></button>';}).join('')+'</div></div>';
   }
 
   function animatePage(){
