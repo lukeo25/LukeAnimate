@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v201: Boolean contours are reduced into clean closed Bézier paths. Smooth sections use curve handles while genuine corners remain sharp, eliminating dense stair-step anchor chains. -->
 <!-- LukeAnimate GPT v200: Boolean results use 4× supersampled masks and fine contour fitting so curves remain smooth and straight edges stay crisp. -->
 <!-- LukeAnimate GPT v199: adds top-bar Boolean Union/Subtract/Intersection beside the existing Fill tool. New artwork drawn while a blank drawing frame is selected now occupies that exact frame instead of creating another drawing layer. -->
 <!-- LukeAnimate GPT v198: loads Lattice Warp v1.5 with persistent per-linked-object mesh density. -->
@@ -21,7 +22,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v200</title>
+<title>Luke Animate v201</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -7634,6 +7635,22 @@ ctx.fill();</textarea>
     context.restore();return true;
   }
 
+  function makeBooleanClosedBezier(points){
+    const count=points.length,handles=points.map(()=>({inX:0,inY:0,outX:0,outY:0})),modes=points.map(()=>'smooth');
+    if(count<3)return{handles,modes};
+    const unit=(x,y)=>{const length=Math.hypot(x,y)||1;return{x:x/length,y:y/length};};
+    for(let index=0;index<count;index++){
+      const previous=points[(index-1+count)%count],current=points[index],next=points[(index+1)%count];
+      const incoming=unit(current.x-previous.x,current.y-previous.y),outgoing=unit(next.x-current.x,next.y-current.y);
+      const turn=Math.acos(Math.max(-1,Math.min(1,incoming.x*outgoing.x+incoming.y*outgoing.y)));
+      if(turn>.62){modes[index]='corner';continue;}
+      const tangent=unit(next.x-previous.x,next.y-previous.y),inLength=Math.hypot(current.x-previous.x,current.y-previous.y),outLength=Math.hypot(next.x-current.x,next.y-current.y);
+      handles[index].inX=-tangent.x*inLength*.34;handles[index].inY=-tangent.y*inLength*.34;
+      handles[index].outX=tangent.x*outLength*.34;handles[index].outY=tangent.y*outLength*.34;
+    }
+    return{handles,modes};
+  }
+
   function booleanSelectedShapes(operation){
     const indices=Array.from(selectedDrawIndices).filter(index=>index>=0&&index<drawObjects.length).sort((a,b)=>a-b);
     if(indices.length<2){logToSandbox('Select at least two vector shapes for a Boolean operation.',true);return false;}
@@ -7657,9 +7674,10 @@ ctx.fill();</textarea>
     if(!count){logToSandbox('The Boolean '+operation+' produced no visible area.',true);return false;}
     let contour=traceFloodRegionBoundary(region,rw,rh);
     if(contour.length<3){logToSandbox('Could not trace the Boolean result.',true);return false;}
-    contour=simplifyPolylineRdp(contour.concat([contour[0]]),Math.max(.3,scale*.18)).slice(0,-1);
-    if(contour.length>2200){const step=Math.ceil(contour.length/2200);contour=contour.filter((_,index)=>index%step===0);}
-    const style=drawStyle(),base=objects[0],result=ensureDrawObjectMetadata({type:'freehand',name:'Boolean '+operation,points:contour.map(point=>({x:point.x/scale,y:point.y/scale})),closedPath:true,fillEnabled:true,strokeEnabled:false,fillColor:base.fillColor||style.fillColor,strokeColor:base.strokeColor||style.strokeColor,strokeWidth:0,opacity:1,tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,keyframes:[]});
+    contour=simplifyPolylineRdp(contour.concat([contour[0]]),Math.max(1.25,scale*.85)).slice(0,-1);
+    if(contour.length>500){const step=Math.ceil(contour.length/500);contour=contour.filter((_,index)=>index%step===0);}
+    const resultPoints=contour.map(point=>({x:point.x/scale,y:point.y/scale})),booleanBezier=makeBooleanClosedBezier(resultPoints);
+    const style=drawStyle(),base=objects[0],result=ensureDrawObjectMetadata({type:'freehand',name:'Boolean '+operation,points:resultPoints,bezierHandles:booleanBezier.handles,bezierModes:booleanBezier.modes,closedPath:true,fillEnabled:true,strokeEnabled:false,fillColor:base.fillColor||style.fillColor,strokeColor:base.strokeColor||style.strokeColor,strokeWidth:0,opacity:1,tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,keyframes:[]});
     pushUndo();
     const replacedLayerIds=objects.map(object=>object&&object.timelineLayerId).filter(Boolean);
     for(let index=indices.length-1;index>=0;index--)drawObjects.splice(indices[index],1);
