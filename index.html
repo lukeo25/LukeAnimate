@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v219: Clip Gizmos automatically load and display FrameGizmo whenever selected from Animate, attached, or reached through a Gizmo Bone. -->
 <!-- LukeAnimate GPT v218: Gizmo keys can be selected, dragged to another frame and removed directly with Delete or Backspace. -->
 <!-- LukeAnimate GPT v217: zooming while editing a Clip keeps the Clip origin fixed in the viewport instead of zooming toward the workspace corner. -->
 <!-- LukeAnimate GPT v216: inline text editing temporarily hides the original canvas rendering of that same text object, removing the apparent duplicate beneath the live editor. -->
@@ -38,7 +39,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v218</title>
+<title>Luke Animate v219</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -12382,6 +12383,17 @@ ctx.fill();</textarea>
       delete target.object._lukeAnimateLipService;
       if(target.ownerClip) ensureClipSceneFrames(target.ownerClip);
       this.refreshUI();
+      return true;
+    },
+    async openConfiguredTool(groupId,itemId){
+      const groups=lukeAnimateConfig&&Array.isArray(lukeAnimateConfig.groups)?lukeAnimateConfig.groups:[];
+      const wantedGroup=groups.find(entry=>String(entry&&entry.id||'')===String(groupId||''));
+      const wantedItem=wantedGroup&&Array.isArray(wantedGroup.items)
+        ?wantedGroup.items.find(entry=>String(entry&&(entry.id||entry.label)||'')===String(itemId||''))
+        :null;
+      if(!wantedGroup||!wantedItem)return false;
+      const button=this.getConfiguredToolButton(wantedGroup.id,wantedItem.id||wantedItem.label);
+      await runConfiguredItem(wantedGroup,wantedItem,button);
       return true;
     },
     reloadConfig(){ return loadLukeAnimateConfig(true); }
