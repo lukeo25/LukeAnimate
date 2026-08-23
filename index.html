@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v214: text double-click cancels an untouched pending new-text editor before editing the hit object, eliminating the duplicate object created by the first click. -->
 <!-- LukeAnimate GPT v213: expands Text to more than sixty categorized Google Fonts and loads fonts on demand instead of downloading the entire menu at startup. -->
 <!-- LukeAnimate GPT v212: clicking or double-clicking existing text while the Text tool is active edits that exact object in place instead of creating an extra stage item. -->
 <!-- LukeAnimate GPT v211: Boolean actions collapse under an Intersection-icon dropdown, while Align and Distribute collapse under an Align-Top-icon dropdown with icon-labelled choices. -->
@@ -33,7 +34,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v213</title>
+<title>Luke Animate v214</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -7845,12 +7846,9 @@ ctx.fill();</textarea>
     const style = drawStyle();
 
     if(stageTool === 'text'){
-      let existingTextIndex=-1;
-      for(let index=drawObjects.length-1;index>=0;index--){
-        const object=drawObjects[index];
-        if(!object||object.type!=='text'||object.enabled===false||(typeof nativeObjectLayerLocked==='function'&&nativeObjectLayerLocked(object)))continue;
-        if(pointInBounds(c.x,c.y,getEffectiveBounds(object),6)){existingTextIndex=index;break;}
-      }
+      let existingTextIndex=textObjectIndexAtPoint(c);
+      const selectedText=selectedTextObject();
+      if(existingTextIndex<0&&selectedText)existingTextIndex=selectedText.idx;
       if(existingTextIndex>=0){
         selectDrawObject(existingTextIndex,false,false);
         openTextSettingsPanel();
@@ -7981,6 +7979,18 @@ ctx.fill();</textarea>
     return sel && sel.obj && sel.obj.type === 'text' ? sel : null;
   }
 
+  function textObjectIndexAtPoint(point){
+    const selected=Array.from(selectedDrawIndices).filter(index=>index>=0&&index<drawObjects.length).reverse();
+    const remaining=[];
+    for(let index=drawObjects.length-1;index>=0;index--)if(!selected.includes(index))remaining.push(index);
+    for(const index of selected.concat(remaining)){
+      const object=drawObjects[index];
+      if(!object||object.type!=='text'||object.enabled===false||(typeof nativeObjectLayerLocked==='function'&&nativeObjectLayerLocked(object)))continue;
+      if(pointInBounds(point.x,point.y,getEffectiveBounds(object),12))return index;
+    }
+    return -1;
+  }
+
   function updateTextPanelControls(){
     const fillEnabled = document.getElementById('text-fill-enabled').checked;
     const strokeEnabled = document.getElementById('text-stroke-enabled').checked;
@@ -8107,7 +8117,9 @@ ctx.fill();</textarea>
       activeEditor.focus();
       return;
     }
-    finishStageTextEntry(true);
+    const pendingEditor=stageTextEditorElement();
+    const pendingUntouched=stageTextEdit&&stageTextEdit.existingIndex===null&&!String(pendingEditor.innerText||pendingEditor.textContent||'').trim();
+    finishStageTextEntry(!pendingUntouched);
     const editor = stageTextEditorElement();
     const existing = Number.isInteger(existingIndex) ? drawObjects[existingIndex] : null;
     if(existing && existing.type === 'text'){
