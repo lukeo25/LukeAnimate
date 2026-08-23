@@ -1,4 +1,6 @@
 /* Luke Animate Dem Bones + MyCharacter GPT v16.48
+   v16.50 preserves Gizmo key object identity during controller cleanup so
+   timeline drag and delete operate on the live stored keys.
    v16.49 automatically opens and displays FrameGizmo whenever a Clip Gizmo
    is selected from Animate, attached, or selected through its Gizmo Bone.
    v16.48 restores Gizmo Bone repositioning in Bones setup while keeping
@@ -2888,7 +2890,7 @@
     var data=instance[key];
     if(!data||typeof data!=='object')data=instance[key]={enabled:true,baseFrame:1,manualFrame:null,keys:[]};
     data.enabled=data.enabled!==false;data.baseFrame=Math.max(1,Math.round(n(data.baseFrame,1)));if(!Array.isArray(data.keys))data.keys=[];
-    data.keys=data.keys.filter(function(item){return item&&isFinite(Number(item.time))&&isFinite(Number(item.frame));}).map(function(item){return{time:Math.max(0,n(item.time,0)),frame:Math.max(1,Math.round(n(item.frame,1)))};}).sort(function(a,b){return a.time-b.time;});
+    data.keys=data.keys.filter(function(item){return item&&isFinite(Number(item.time))&&isFinite(Number(item.frame));});data.keys.forEach(function(item){item.time=Math.max(0,n(item.time,0));item.frame=Math.max(1,Math.round(n(item.frame,1)));});data.keys.sort(function(a,b){return a.time-b.time;});
     return data;
   }
 
