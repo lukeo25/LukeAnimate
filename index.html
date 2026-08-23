@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v227: timeline, playhead and waveform dragging provide audible audio scrubbing and stop cleanly on the chosen frame. -->
 <!-- LukeAnimate GPT v226: returning from a Clip restores the complete main stage at 100% instead of carrying the Clip zoom and scroll position outward. -->
 <!-- LukeAnimate GPT v225: Clip editing zooms to 600% with a vector-sharp adaptive workspace, while the main stage remains capped at 300%. -->
 <!-- LukeAnimate GPT v224: Clip editing redraws native vector artwork at the displayed zoom resolution instead of CSS-enlarging the canvas bitmap. -->
@@ -45,7 +46,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v226</title>
+<title>Luke Animate v227</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3264,7 +3265,7 @@ ctx.fill();</textarea>
     <div id="timeline-tracks"></div>
     <div class="timeline-track-row" id="audio-track-row" style="display:none;">
       <div class="timeline-track-name">🔊 Audio</div>
-      <div class="timeline-track" id="audio-track">
+      <div class="timeline-track" id="audio-track" title="Click or drag to scrub audio frame by frame">
         <canvas id="audio-waveform" width="1200" height="20" style="width:100%;height:100%;display:block;"></canvas>
       </div>
     </div>
@@ -15731,7 +15732,7 @@ ctx.fill();</textarea>
     renderClipFrameNameList();
   }
 
-  function scrubToClientX(clientX){
+  function scrubToClientX(clientX, audible){
     const ruler = document.getElementById('timeline-ruler');
     const rect = ruler.getBoundingClientRect();
     const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
@@ -15740,6 +15741,7 @@ ctx.fill();</textarea>
     t = Math.min(timelineDuration, frame / info.fps);
     syncActiveSceneFrameForTime(t, true);
     syncAudioToTime();
+    if(audible) previewAudioScrubAtCurrentTime();
     updateInspector();
     renderTransformHandles();
   }
@@ -15748,12 +15750,13 @@ ctx.fill();</textarea>
     e.preventDefault();
     e.stopPropagation();
     playing = false;
-    stopAudioIfLoaded();
-    scrubToClientX(e.clientX);
-    function onMove(ev){ scrubToClientX(ev.clientX); }
+    beginAudioScrub();
+    scrubToClientX(e.clientX, true);
+    function onMove(ev){ scrubToClientX(ev.clientX, true); }
     function onUp(){
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      endAudioScrub();
     }
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -15772,6 +15775,7 @@ ctx.fill();</textarea>
     promptClipFrameNameAtClientX(event.clientX);
   });
   document.getElementById('timeline-playhead-handle').addEventListener('mousedown', beginTimelineScrub);
+  document.getElementById('audio-track').addEventListener('mousedown', beginTimelineScrub);
 
   function beginOnionRangeDrag(event, side){
     event.preventDefault();
@@ -15874,6 +15878,8 @@ ctx.fill();</textarea>
   // ---------------- audio track ----------------
   const audioEl = document.getElementById('audio-el');
   let audioObjectUrl = null;
+  let audioScrubActive = false;
+  let audioScrubPauseTimer = 0;
 
   function drawWaveform(audioBuffer){
     const canvas = document.getElementById('audio-waveform');
@@ -16009,6 +16015,40 @@ ctx.fill();</textarea>
   function syncAudioToTime(){
     if(!audioLoaded) return;
     try{ audioEl.currentTime = Math.min(t, audioEl.duration || t); }catch(err){ /* not ready yet */ }
+  }
+
+  function beginAudioScrub(){
+    audioScrubActive=!!audioLoaded;
+    if(audioScrubPauseTimer){clearTimeout(audioScrubPauseTimer);audioScrubPauseTimer=0;}
+    if(audioLoaded)audioEl.pause();
+  }
+
+  function previewAudioScrubAtCurrentTime(){
+    if(!audioScrubActive||!audioLoaded)return;
+    const duration=Number.isFinite(Number(audioEl.duration))?Number(audioEl.duration):(Number(audioDuration)||timelineDuration);
+    const target=Math.max(0,Math.min(Math.max(0,duration-.001),Number(t)||0));
+    try{
+      if(Math.abs((Number(audioEl.currentTime)||0)-target)>.015)audioEl.currentTime=target;
+      if(audioEl.paused){
+        const result=audioEl.play();
+        if(result&&typeof result.catch==='function')result.catch(()=>{});
+      }
+    }catch(error){}
+    if(audioScrubPauseTimer)clearTimeout(audioScrubPauseTimer);
+    // A short grain makes the frame under the pointer audible without allowing
+    // the soundtrack to keep running when the pointer temporarily stops.
+    audioScrubPauseTimer=setTimeout(()=>{
+      audioScrubPauseTimer=0;
+      if(audioScrubActive&&audioLoaded)audioEl.pause();
+    },90);
+  }
+
+  function endAudioScrub(){
+    audioScrubActive=false;
+    if(audioScrubPauseTimer){clearTimeout(audioScrubPauseTimer);audioScrubPauseTimer=0;}
+    if(!audioLoaded)return;
+    audioEl.pause();
+    syncAudioToTime();
   }
 
   function playAudioIfLoaded(){
