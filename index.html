@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v200: Boolean results use 4× supersampled masks and fine contour fitting so curves remain smooth and straight edges stay crisp. -->
 <!-- LukeAnimate GPT v199: adds top-bar Boolean Union/Subtract/Intersection beside the existing Fill tool. New artwork drawn while a blank drawing frame is selected now occupies that exact frame instead of creating another drawing layer. -->
 <!-- LukeAnimate GPT v198: loads Lattice Warp v1.5 with persistent per-linked-object mesh density. -->
 <!-- LukeAnimate GPT v197: loads Lattice Warp v1.4 with smooth dense-cage raster deformation. -->
@@ -20,7 +21,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v199</title>
+<title>Luke Animate v200</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -7638,7 +7639,10 @@ ctx.fill();</textarea>
     if(indices.length<2){logToSandbox('Select at least two vector shapes for a Boolean operation.',true);return false;}
     const objects=indices.map(index=>drawObjects[index]).filter(Boolean);
     if(objects.length<2)return false;
-    const maxRaster=1400,scale=Math.min(1,maxRaster/Math.max(W,H)),rw=Math.max(2,Math.ceil(W*scale)),rh=Math.max(2,Math.ceil(H*scale));
+    /* Supersample before tracing. The old 1× mask baked one-stage-pixel stairs
+       into every curved Boolean edge. Four samples per scene pixel retain the
+       source curvature while the raster ceiling protects large documents. */
+    const maxRaster=4096,scale=Math.max(1,Math.min(4,maxRaster/Math.max(W,H))),rw=Math.max(2,Math.ceil(W*scale)),rh=Math.max(2,Math.ceil(H*scale));
     const resultCanvas=document.createElement('canvas');resultCanvas.width=rw;resultCanvas.height=rh;const resultContext=resultCanvas.getContext('2d',{alpha:true});resultContext.scale(scale,scale);
     if(!drawBooleanMaskObject(resultContext,objects[0])){logToSandbox('The lowest selected object is not a supported vector shape.',true);return false;}
     for(let index=1;index<objects.length;index++){
@@ -7653,8 +7657,8 @@ ctx.fill();</textarea>
     if(!count){logToSandbox('The Boolean '+operation+' produced no visible area.',true);return false;}
     let contour=traceFloodRegionBoundary(region,rw,rh);
     if(contour.length<3){logToSandbox('Could not trace the Boolean result.',true);return false;}
-    contour=simplifyPolylineRdp(contour.concat([contour[0]]),1).slice(0,-1);
-    if(contour.length>900){const step=Math.ceil(contour.length/900);contour=contour.filter((_,index)=>index%step===0);}
+    contour=simplifyPolylineRdp(contour.concat([contour[0]]),Math.max(.3,scale*.18)).slice(0,-1);
+    if(contour.length>2200){const step=Math.ceil(contour.length/2200);contour=contour.filter((_,index)=>index%step===0);}
     const style=drawStyle(),base=objects[0],result=ensureDrawObjectMetadata({type:'freehand',name:'Boolean '+operation,points:contour.map(point=>({x:point.x/scale,y:point.y/scale})),closedPath:true,fillEnabled:true,strokeEnabled:false,fillColor:base.fillColor||style.fillColor,strokeColor:base.strokeColor||style.strokeColor,strokeWidth:0,opacity:1,tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,keyframes:[]});
     pushUndo();
     const replacedLayerIds=objects.map(object=>object&&object.timelineLayerId).filter(Boolean);
