@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v210: Align and Distribute use the eight dedicated repository SVG icons as individual top-bar action buttons. -->
 <!-- LukeAnimate GPT v209: adds top-bar Align and Distribute tools for arranging selected stage objects by edges, centres, or even horizontal/vertical spacing. -->
 <!-- LukeAnimate GPT v208: Frame Gizmos display their attached Clip definition name directly underneath the dial and refresh it when the Clip is renamed. -->
 <!-- LukeAnimate GPT v207: Convert Selected to Clip removes the selected source key blocks completely, leaving only the new Clip exposure while preserving every unselected key. -->
@@ -29,7 +30,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v209</title>
+<title>Luke Animate v210</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -2318,20 +2319,15 @@
       <button class="draw-tool icon-only" id="tool-boolean-union" type="button" title="Boolean Union — combine selected shapes" aria-label="Boolean Union"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Union.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')"><span class="draw-tool-fallback" aria-hidden="true">∪</span><span class="sr-only">Boolean Union</span></button>
       <button class="draw-tool icon-only" id="tool-boolean-subtract" type="button" title="Boolean Subtract — subtract upper selected shapes from the lowest selected shape" aria-label="Boolean Subtract"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Subtract.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')"><span class="draw-tool-fallback" aria-hidden="true">−</span><span class="sr-only">Boolean Subtract</span></button>
       <button class="draw-tool icon-only" id="tool-boolean-intersection" type="button" title="Boolean Intersection — keep overlap of selected shapes" aria-label="Boolean Intersection"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Intersect.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')"><span class="draw-tool-fallback" aria-hidden="true">∩</span><span class="sr-only">Boolean Intersection</span></button>
-      <select id="tool-align" title="Align selected stage objects" aria-label="Align selected objects">
-        <option value="">Align…</option>
-        <option value="left">Left edges</option>
-        <option value="center-x">Horizontal centres</option>
-        <option value="right">Right edges</option>
-        <option value="top">Top edges</option>
-        <option value="center-y">Vertical centres</option>
-        <option value="bottom">Bottom edges</option>
-      </select>
-      <select id="tool-distribute" title="Distribute selected stage objects evenly" aria-label="Distribute selected objects">
-        <option value="">Distribute…</option>
-        <option value="horizontal">Horizontal spacing</option>
-        <option value="vertical">Vertical spacing</option>
-      </select>
+      <span class="toolbar-sep"></span>
+      <button class="draw-tool icon-only arrange-tool" id="tool-align-left" type="button" title="Align selected objects to their left edges" aria-label="Align left"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignL.svg" alt=""><span class="sr-only">Align left</span></button>
+      <button class="draw-tool icon-only arrange-tool" id="tool-align-center-x" type="button" title="Align selected objects by their horizontal centres" aria-label="Align horizontal centres"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignC.svg" alt=""><span class="sr-only">Align horizontal centres</span></button>
+      <button class="draw-tool icon-only arrange-tool" id="tool-align-right" type="button" title="Align selected objects to their right edges" aria-label="Align right"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignR.svg" alt=""><span class="sr-only">Align right</span></button>
+      <button class="draw-tool icon-only arrange-tool" id="tool-align-top" type="button" title="Align selected objects to their top edges" aria-label="Align top"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignT.svg" alt=""><span class="sr-only">Align top</span></button>
+      <button class="draw-tool icon-only arrange-tool" id="tool-align-center-y" type="button" title="Align selected objects by their vertical centres" aria-label="Align vertical centres"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignMid.svg" alt=""><span class="sr-only">Align vertical centres</span></button>
+      <button class="draw-tool icon-only arrange-tool" id="tool-align-bottom" type="button" title="Align selected objects to their bottom edges" aria-label="Align bottom"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignB.svg" alt=""><span class="sr-only">Align bottom</span></button>
+      <button class="draw-tool icon-only arrange-tool" id="tool-distribute-horizontal" type="button" title="Distribute selected objects with equal horizontal spacing" aria-label="Distribute horizontally"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/DistH.svg" alt=""><span class="sr-only">Distribute horizontally</span></button>
+      <button class="draw-tool icon-only arrange-tool" id="tool-distribute-vertical" type="button" title="Distribute selected objects with equal vertical spacing" aria-label="Distribute vertically"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/DistV.svg" alt=""><span class="sr-only">Distribute vertically</span></button>
       <span class="toolbar-sep"></span>
       <label class="toolbar-field">Fill<input type="color" id="draw-fillcolor" value="#4fe0c4" title="Fill colour"></label>
       <label class="toolbar-field">Border<input type="color" id="draw-strokecolor" value="#1b1f24" title="Border colour"></label>
@@ -7787,12 +7783,11 @@ ctx.fill();</textarea>
     return true;
   }
 
-  document.getElementById('tool-align').addEventListener('change',event=>{
-    const value=event.target.value;event.target.value='';if(value)alignSelectedObjects(value);
+  [['tool-align-left','left'],['tool-align-center-x','center-x'],['tool-align-right','right'],['tool-align-top','top'],['tool-align-center-y','center-y'],['tool-align-bottom','bottom']].forEach(entry=>{
+    document.getElementById(entry[0]).addEventListener('click',()=>alignSelectedObjects(entry[1]));
   });
-  document.getElementById('tool-distribute').addEventListener('change',event=>{
-    const value=event.target.value;event.target.value='';if(value)distributeSelectedObjects(value);
-  });
+  document.getElementById('tool-distribute-horizontal').addEventListener('click',()=>distributeSelectedObjects('horizontal'));
+  document.getElementById('tool-distribute-vertical').addEventListener('click',()=>distributeSelectedObjects('vertical'));
 
   function handleDrawMouseDown(e){
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
