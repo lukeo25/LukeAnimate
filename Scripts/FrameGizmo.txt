@@ -1,5 +1,5 @@
 /*
-  Luke Animate Frame Gizmo GPT v3.1
+  Luke Animate Frame Gizmo GPT v3.2
   Stage-side named-frame controller for selected Clip instances.
 
   The controller is shown only while exactly one Clip instance is selected.
@@ -13,7 +13,7 @@
   const STYLE_ID = "lukeanimate-frame-gizmo-v3-style";
   const DOCK_ID = "lukeanimate-frame-gizmo-v3-dock";
   const DATA_KEY = "_lukeAnimateFrameGizmo";
-  const VERSION = "3.1";
+  const VERSION = "3.2";
   const TOOL_GROUP_ID = String(group && group.id ? group.id : "animate");
   const TOOL_ITEM_ID = String(item && (item.id || item.label) ? (item.id || item.label) : "FrameGizmo");
   const TOOL_ICON_URL = String(item && item.iconUrl ? item.iconUrl : "https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.svg");
@@ -34,11 +34,16 @@
   const previousV2 = window.__LukeAnimateFrameGizmoV2;
   if(previousV2 && typeof previousV2.disable === "function") previousV2.disable();
   const previous = window.__LukeAnimateFrameGizmoV3;
-  if(previous && typeof previous.enable === "function"){
+  if(previous && previous.version === VERSION && typeof previous.enable === "function"){
     previous.enable();
     setToolSelected(true);
     return;
   }
+  if(previous && typeof previous.disable === "function") previous.disable();
+  const staleDock = document.getElementById(DOCK_ID);
+  if(staleDock) staleDock.remove();
+  const staleStyle = document.getElementById(STYLE_ID);
+  if(staleStyle) staleStyle.remove();
 
   const state = {
     enabled:true,
@@ -284,7 +289,7 @@
       #${DOCK_ID}{
         position:fixed;
         width:172px;
-        height:162px;
+        height:184px;
         display:none;
         z-index:1800;
         overflow:visible;
@@ -305,7 +310,7 @@
       #${DOCK_ID}:hover{opacity:.84}
       #${DOCK_ID}.fg3-dragging{opacity:.94;cursor:grabbing}
       #${DOCK_ID} *{box-sizing:border-box}
-      #${DOCK_ID} .fg3-body{width:172px;height:162px;overflow:visible;padding:0;margin:0;background:transparent}
+      #${DOCK_ID} .fg3-body{width:172px;height:184px;overflow:visible;padding:0;margin:0;background:transparent}
       #${DOCK_ID} .fg3-dial-wrap{width:172px;height:162px;padding:0;margin:0;overflow:visible;background:transparent}
       #${DOCK_ID} .fg3-dial{display:block;width:172px;height:162px;overflow:visible;user-select:none;background:transparent}
       #${DOCK_ID} .fg3-dial-disc{fill:rgba(99,207,154,.22);stroke:rgba(49,189,123,.72);stroke-width:6}
@@ -321,6 +326,7 @@
       #${DOCK_ID} .fg3-stop-hit.active .fg3-stop-inner{fill:#fff}
       #${DOCK_ID} .fg3-stop-label{fill:#111827;font-size:15px;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;pointer-events:none}
       #${DOCK_ID} .fg3-stop-frame{fill:#45665a;font-size:9px;font-family:Consolas,monospace;pointer-events:none}
+      #${DOCK_ID} .fg3-clip-name{width:172px;margin-top:-2px;padding:2px 7px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#17212b;font-size:12px;font-weight:750;line-height:18px;text-shadow:0 1px 2px rgba(255,255,255,.96);pointer-events:none}
     `;
     document.head.appendChild(style);
   }
@@ -352,7 +358,7 @@
     const wrapRect = wrap.getBoundingClientRect();
     const rect = dock.getBoundingClientRect();
     const width = rect.width || 172;
-    const height = rect.height || 162;
+    const height = rect.height || 184;
     const margin = 4;
     state.x = clamp(event.clientX - state.dragOffsetX,wrapRect.left + margin,wrapRect.right - width - margin);
     state.y = clamp(event.clientY - state.dragOffsetY,wrapRect.top + margin,wrapRect.bottom - height - margin);
@@ -407,11 +413,14 @@
       return;
     }
 
+    const clip = selectedClipDefinition(instance);
+    const clipName = String(clip && clip.name || instance.name || "Clip");
     const data = ensureControllerData(instance);
     const stop = currentStop(instance,stops);
     const signature = [
       instance.id,
       instance.clipId,
+      clipName,
       stops.map(item=>item.frame+":"+item.name+":"+(item.named?1:0)).join("|"),
       data.enabled?1:0,
       data.baseFrame,
@@ -522,6 +531,11 @@
 
     dialWrap.appendChild(svg);
     body.appendChild(dialWrap);
+    const clipNameNode = document.createElement("div");
+    clipNameNode.className = "fg3-clip-name";
+    clipNameNode.title = clipName;
+    clipNameNode.textContent = clipName;
+    body.appendChild(clipNameNode);
     requestAnimationFrame(positionDock);
   }
 
@@ -535,7 +549,7 @@
     const shellRect = shell.getBoundingClientRect();
     const rect = dock.getBoundingClientRect();
     const width = rect.width || 172;
-    const height = rect.height || 162;
+    const height = rect.height || 184;
     const margin = 8;
 
     if(!Number.isFinite(state.x) || !Number.isFinite(state.y)){
@@ -579,7 +593,7 @@
     setToolSelected(false);
   }
 
-  window.__LukeAnimateFrameGizmoV3 = {enable,disable,render:()=>renderDock(true)};
+  window.__LukeAnimateFrameGizmoV3 = {version:VERSION,enable,disable,render:()=>renderDock(true)};
   ensureDock();
   setToolSelected(true);
   window.addEventListener("resize",positionDock);
