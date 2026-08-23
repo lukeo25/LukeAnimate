@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v228: the Audio timeline row has the same direct red delete control as other timeline layers. -->
 <!-- LukeAnimate GPT v227: timeline, playhead and waveform dragging provide audible audio scrubbing and stop cleanly on the chosen frame. -->
 <!-- LukeAnimate GPT v226: returning from a Clip restores the complete main stage at 100% instead of carrying the Clip zoom and scroll position outward. -->
 <!-- LukeAnimate GPT v225: Clip editing zooms to 600% with a vector-sharp adaptive workspace, while the main stage remains capped at 300%. -->
@@ -46,7 +47,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v227</title>
+<title>Luke Animate v228</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -1328,7 +1329,8 @@
 
   /* ---------- v125 Wick-style drawing layers and independent frames ---------- */
   .timeline-track-row.wick-drawing-layer .timeline-track-name,
-  .timeline-track-row.fx-timeline-layer .timeline-track-name{
+  .timeline-track-row.fx-timeline-layer .timeline-track-name,
+  .timeline-track-row.audio-timeline-layer .timeline-track-name{
     cursor:pointer; font-weight:650; color:#45515f;
     display:flex; align-items:center; gap:3px; padding-right:2px;
   }
@@ -3263,8 +3265,11 @@ ctx.fill();</textarea>
       </div>
     </div>
     <div id="timeline-tracks"></div>
-    <div class="timeline-track-row" id="audio-track-row" style="display:none;">
-      <div class="timeline-track-name">🔊 Audio</div>
+    <div class="timeline-track-row audio-timeline-layer" id="audio-track-row" style="display:none;">
+      <div class="timeline-track-name">
+        <button type="button" class="wick-layer-delete-button" id="btn-audio-layer-delete" title="Delete audio layer" aria-label="Delete audio layer">×</button>
+        <span class="wick-layer-name-text">🔊 Audio</span>
+      </div>
       <div class="timeline-track" id="audio-track" title="Click or drag to scrub audio frame by frame">
         <canvas id="audio-waveform" width="1200" height="20" style="width:100%;height:100%;display:block;"></canvas>
       </div>
@@ -16008,6 +16013,11 @@ ctx.fill();</textarea>
     handleAudioFile(file);
   });
   document.getElementById('btn-audio-remove').addEventListener('click', clearLoadedAudio);
+  document.getElementById('btn-audio-layer-delete').addEventListener('click', event=>{
+    event.preventDefault();
+    event.stopPropagation();
+    clearLoadedAudio();
+  });
   document.getElementById('chk-audioinclude').addEventListener('change', (e)=>{
     includeAudioInExport = e.target.checked;
   });
