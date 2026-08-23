@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v225: Clip editing zooms to 600% with a vector-sharp adaptive workspace, while the main stage remains capped at 300%. -->
 <!-- LukeAnimate GPT v224: Clip editing redraws native vector artwork at the displayed zoom resolution instead of CSS-enlarging the canvas bitmap. -->
 <!-- LukeAnimate GPT v222: Gizmo keys drag by absolute destination frame without rebuilding the timeline under the pointer, preventing keys from jumping away. -->
 <!-- LukeAnimate GPT v221: Clip Gizmos inherit their parent bone pose directly, using the Gizmo Bone only as the local pin offset. -->
@@ -43,7 +44,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v224</title>
+<title>Luke Animate v225</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3327,7 +3328,7 @@ ctx.fill();</textarea>
   let stageZoom = 1;
   let clipEditLogicalWidth = W;
   let clipEditLogicalHeight = H;
-  const MIN_ZOOM = 0.25, MAX_ZOOM = 3;
+  const MIN_ZOOM = 0.25, MAX_STAGE_ZOOM = 3, MAX_CLIP_ZOOM = 6;
   let stageGuides = { vertical:[], horizontal:[] };
   let snapToGuides = true;
   let rulersVisible = true;
@@ -3833,14 +3834,17 @@ ctx.fill();</textarea>
     const wrap=document.getElementById('stage-wrap');
     const wrapRect=wrap ? wrap.getBoundingClientRect() : {width:W,height:H};
     const zoom=Math.max(.05,Number(stageZoom)||1);
-    const visibleW=Math.max(W,Math.ceil(Math.max(1,wrapRect.width)/zoom));
-    const visibleH=Math.max(H,Math.ceil(Math.max(1,wrapRect.height)/zoom));
+    const visibleW=Math.ceil(Math.max(1,wrapRect.width)/zoom);
+    const visibleH=Math.ceil(Math.max(1,wrapRect.height)/zoom);
 
-    // Give the Clip at least one full stage of editable room on every side,
-    // and at least one viewport of extra room around the current view.
+    // At 100% this retains a full stage of editable room on every side. As the
+    // user zooms toward 600%, reduce the logical off-stage extent while keeping
+    // at least the same three-stage-wide displayed workspace. This lets the
+    // backing store redraw vectors at the real zoom resolution without asking
+    // the browser for an impractically huge 17k-wide canvas.
     return {
-      width:Math.max(W*3,visibleW*2),
-      height:Math.max(H*3,visibleH*2)
+      width:Math.max(W,visibleW*2,Math.ceil(W*3/zoom)),
+      height:Math.max(H,visibleH*2,Math.ceil(H*3/zoom))
     };
   }
 
@@ -3860,6 +3864,7 @@ ctx.fill();</textarea>
 
   function syncClipEditCanvasExtent(recentre){
     if(!editingClipId){
+      stageZoom=Math.min(stageZoom,MAX_STAGE_ZOOM);
       clipEditLogicalWidth=W;
       clipEditLogicalHeight=H;
       if(canvas.width!==W)canvas.width=W;
@@ -13972,9 +13977,10 @@ ctx.fill();</textarea>
     const shell = document.getElementById('canvas-shell');
 
     if(editingClipId){
-      const logicalW=editCanvasLogicalWidth();
-      const logicalH=editCanvasLogicalHeight();
-      applyClipEditCanvasResolution({width:logicalW,height:logicalH});
+      const size=desiredClipEditCanvasExtent();
+      const extentChanged=clipEditLogicalWidth!==size.width||clipEditLogicalHeight!==size.height;
+      applyClipEditCanvasResolution(size);
+      if(extentChanged&&clips[editingClipId])centreClipEditView(clips[editingClipId]);
     }else if(Math.abs(stageZoom - 1) < 0.001){
       // back to responsive "fit whatever space is available" mode
       canvasEl.style.width = '';
@@ -14014,7 +14020,8 @@ ctx.fill();</textarea>
         y:rect.top+origin.y*stageZoom
       };
     }
-    stageZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +z.toFixed(2)));
+    const maximumZoom=editingClipId?MAX_CLIP_ZOOM:MAX_STAGE_ZOOM;
+    stageZoom = Math.max(MIN_ZOOM, Math.min(maximumZoom, +z.toFixed(2)));
     applyZoom();
     if(clipOriginClientPoint&&wrap&&canvasEl&&clips[editingClipId]){
       const pivot=ensureClipPivot(clips[editingClipId]);
