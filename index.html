@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v203: Boolean results inherit the lowest selected shape’s fill and border appearance. Drawing-frame blocks, including blank frames, can move or resize with ripple adjustment of neighbouring frames. -->
+<!-- LukeAnimate GPT v204: blank drawing keys occupy exactly one frame; the preceding drawing resumes on the following frame for the remainder of its original exposure. -->
 <!-- LukeAnimate GPT v202: Boolean Union, Subtract and Intersection use their dedicated repository SVG icons in the top drawing toolbar. -->
 <!-- LukeAnimate GPT v201: Boolean contours are reduced into clean closed Bézier paths. Smooth sections use curve handles while genuine corners remain sharp, eliminating dense stair-step anchor chains. -->
 <!-- LukeAnimate GPT v200: Boolean results use 4× supersampled masks and fine contour fitting so curves remain smooth and straight edges stay crisp. -->
@@ -24,7 +24,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v203</title>
+<title>Luke Animate v204</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -18928,6 +18928,8 @@ ctx.fill();</textarea>
     const next=layer.frames.filter(frame=>frame.startFrame>frameIndex).sort((a,b)=>a.startFrame-b.startFrame)[0] || null;
     let newEnd=current ? current.endFrame : (next ? next.startFrame-1 : totalFrames);
     let source=current && current.object ? current : wickPreviousDrawableFrame(layer,frameIndex);
+    const resumeEnd=current ? current.endFrame : frameIndex;
+    const resumeSource=mode==='blank' && current && current.object ? current.object : null;
 
     if(current){
       if(current.startFrame < frameIndex){
@@ -18946,13 +18948,24 @@ ctx.fill();</textarea>
       object.timelineLayerOrder=layer.order;
       blank=false;
     }
-    const frame={id:wickNextFrameId(),startFrame:frameIndex,endFrame:Math.max(frameIndex,newEnd),blank,object,_sequence:layer.frames.length+1};
+    const frameEnd=mode==='blank' ? frameIndex : Math.max(frameIndex,newEnd);
+    const frame={id:wickNextFrameId(),startFrame:frameIndex,endFrame:frameEnd,blank,object,_sequence:layer.frames.length+1};
     if(object){
       object.frameLinkId=frame.id;
       object.frameLinkStart=frame.startFrame;
       object.frameLinkEnd=frame.endFrame;
     }
     layer.frames.push(frame);
+    if(resumeSource && resumeEnd>frameIndex){
+      const resumeObject=wickCloneObjectAtTime(resumeSource,(frameIndex+1)/getTimelineFPS());
+      resumeObject.timelineLayerId=layer.id;
+      resumeObject.timelineLayerOrder=layer.order;
+      const resumeFrame={id:wickNextFrameId(),startFrame:frameIndex+1,endFrame:resumeEnd,blank:false,object:resumeObject,_sequence:layer.frames.length+1};
+      resumeObject.frameLinkId=resumeFrame.id;
+      resumeObject.frameLinkStart=resumeFrame.startFrame;
+      resumeObject.frameLinkEnd=resumeFrame.endFrame;
+      layer.frames.push(resumeFrame);
+    }
     wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
     return frame;
   }
@@ -23752,4 +23765,3 @@ ctx.fill();</textarea>
 </script>
 </body>
 </html>
-
