@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v203: Boolean results inherit the lowest selected shape’s fill and border appearance. Drawing-frame blocks, including blank frames, can move or resize with ripple adjustment of neighbouring frames. -->
 <!-- LukeAnimate GPT v202: Boolean Union, Subtract and Intersection use their dedicated repository SVG icons in the top drawing toolbar. -->
 <!-- LukeAnimate GPT v201: Boolean contours are reduced into clean closed Bézier paths. Smooth sections use curve handles while genuine corners remain sharp, eliminating dense stair-step anchor chains. -->
 <!-- LukeAnimate GPT v200: Boolean results use 4× supersampled masks and fine contour fitting so curves remain smooth and straight edges stay crisp. -->
@@ -23,7 +24,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v202</title>
+<title>Luke Animate v203</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -7678,7 +7679,7 @@ ctx.fill();</textarea>
     contour=simplifyPolylineRdp(contour.concat([contour[0]]),Math.max(1.25,scale*.85)).slice(0,-1);
     if(contour.length>500){const step=Math.ceil(contour.length/500);contour=contour.filter((_,index)=>index%step===0);}
     const resultPoints=contour.map(point=>({x:point.x/scale,y:point.y/scale})),booleanBezier=makeBooleanClosedBezier(resultPoints);
-    const style=drawStyle(),base=objects[0],result=ensureDrawObjectMetadata({type:'freehand',name:'Boolean '+operation,points:resultPoints,bezierHandles:booleanBezier.handles,bezierModes:booleanBezier.modes,closedPath:true,fillEnabled:true,strokeEnabled:false,fillColor:base.fillColor||style.fillColor,strokeColor:base.strokeColor||style.strokeColor,strokeWidth:0,opacity:1,tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,keyframes:[]});
+    const style=drawStyle(),base=objects[0],baseEffective=getEffectiveObj(base,t),result=ensureDrawObjectMetadata({type:'freehand',name:'Boolean '+operation,points:resultPoints,bezierHandles:booleanBezier.handles,bezierModes:booleanBezier.modes,closedPath:true,fillEnabled:(baseEffective.fillEnabled!==undefined?baseEffective.fillEnabled:base.fillEnabled)!==false,strokeEnabled:(baseEffective.strokeEnabled!==undefined?baseEffective.strokeEnabled:base.strokeEnabled)!==false,fillColor:baseEffective.fillColor||base.fillColor||style.fillColor,strokeColor:baseEffective.strokeColor||base.strokeColor||style.strokeColor,strokeWidth:Math.max(0,Number(baseEffective.strokeWidth!==undefined?baseEffective.strokeWidth:base.strokeWidth)||0),opacity:1,tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,keyframes:[]});
     pushUndo();
     const replacedLayerIds=objects.map(object=>object&&object.timelineLayerId).filter(Boolean);
     for(let index=indices.length-1;index>=0;index--)drawObjects.splice(indices[index],1);
@@ -19476,6 +19477,30 @@ ctx.fill();</textarea>
     return frame;
   }
 
+  function wickApplyLayerFrameRangeRipple(frameId,requestedStart,requestedEnd,mode){
+    const owner=wickFrameOwnerById(frameId);if(!owner)return null;
+    const layer=owner.layer,frame=owner.frame,total=wickTotalFrameIndex(timelineDuration),ordered=layer.frames.slice().sort((a,b)=>a.startFrame-b.startFrame||a.endFrame-b.endFrame),originalStart=frame.startFrame,originalEnd=frame.endFrame;
+    let start=Math.max(0,Math.min(total,Math.round(Number(requestedStart)||0))),end=Math.max(start,Math.min(total,Math.round(Number(requestedEnd)!==Number(requestedEnd)?start:Number(requestedEnd))));
+    if(mode==='move'){
+      const duration=originalEnd-originalStart+1,others=ordered.filter(item=>item!==frame),targetCentre=(start+end)/2,insertAt=others.findIndex(item=>targetCentre<(item.startFrame+item.endFrame+1)/2);
+      if(insertAt<0)insertAt=others.length;others.splice(insertAt,0,frame);
+      let cursor=0;
+      others.forEach(item=>{const length=item===frame?duration:Math.max(1,item.endFrame-item.startFrame+1);item.startFrame=cursor;item.endFrame=Math.min(total,cursor+length-1);cursor=item.endFrame+1;wickSyncFrameFadeMetadata(item);});
+      if(others.length){const last=others[others.length-1];if(last.endFrame<total){last.endFrame=total;wickSyncFrameFadeMetadata(last);}}
+    }else if(mode==='left'){
+      start=Math.min(originalEnd,start);frame.startFrame=start;
+      if(start>originalStart){const previous=layer.frames.filter(item=>item!==frame&&item.endFrame<originalStart).sort((a,b)=>b.endFrame-a.endFrame)[0];if(previous){previous.endFrame=start-1;wickSyncFrameFadeMetadata(previous);}}
+      layer.frames.slice().forEach(item=>{if(item===frame)return;if(item.endFrame<start)return;if(item.startFrame>=start&&item.startFrame<originalStart){layer.frames=layer.frames.filter(candidate=>candidate!==item);return;}if(item.startFrame<start&&item.endFrame>=start)item.endFrame=start-1;wickSyncFrameFadeMetadata(item);});
+      wickSyncFrameFadeMetadata(frame);
+    }else{
+      end=Math.max(originalStart,end);frame.endFrame=end;
+      if(end<originalEnd){const next=layer.frames.filter(item=>item!==frame&&item.startFrame>originalStart).sort((a,b)=>a.startFrame-b.startFrame)[0];if(next){next.startFrame=end+1;wickSyncFrameFadeMetadata(next);}}
+      layer.frames.slice().forEach(item=>{if(item===frame)return;if(item.startFrame>end)return;if(item.endFrame>originalEnd&&item.endFrame<=end){layer.frames=layer.frames.filter(candidate=>candidate!==item);return;}if(item.startFrame<=end&&item.endFrame>end)item.startFrame=end+1;wickSyncFrameFadeMetadata(item);});
+      wickSyncFrameFadeMetadata(frame);
+    }
+    wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);return frame;
+  }
+
   /*
     v172 drawing-layer timing:
       body drag  = move the whole exposed block
@@ -19497,7 +19522,6 @@ ctx.fill();</textarea>
     const originalStart=frame.startFrame;
     const originalEnd=frame.endFrame;
     const originalLength=originalEnd-originalStart;
-    const limits=wickFrameRangeLimits(layer,frame);
     const startPointerFrame=wickFrameFromTrackClientX(track,startX,info);
     let previewStart=originalStart;
     let previewEnd=originalEnd;
@@ -19509,26 +19533,14 @@ ctx.fill();</textarea>
       const deltaFrames=pointerFrame-startPointerFrame;
 
       if(mode==='left'){
-        previewStart=Math.max(
-          limits.minStart,
-          Math.min(originalEnd,originalStart+deltaFrames)
-        );
+        previewStart=Math.max(0,Math.min(originalEnd,originalStart+deltaFrames));
         previewEnd=originalEnd;
       }else if(mode==='right'){
         previewStart=originalStart;
-        previewEnd=Math.max(
-          originalStart,
-          Math.min(limits.maxEnd,originalEnd+deltaFrames)
-        );
+        previewEnd=Math.max(originalStart,Math.min(wickTotalFrameIndex(timelineDuration),originalEnd+deltaFrames));
       }else{
-        const maxStart=Math.max(
-          limits.minStart,
-          limits.maxEnd-originalLength
-        );
-        previewStart=Math.max(
-          limits.minStart,
-          Math.min(maxStart,originalStart+deltaFrames)
-        );
+        const maxStart=Math.max(0,wickTotalFrameIndex(timelineDuration)-originalLength);
+        previewStart=Math.max(0,Math.min(maxStart,originalStart+deltaFrames));
         previewEnd=previewStart+originalLength;
       }
 
@@ -19591,10 +19603,11 @@ ctx.fill();</textarea>
 
       if(moved){
         pushUndo();
-        wickApplyLayerFrameRange(
+        wickApplyLayerFrameRangeRipple(
           frame.id,
           previewStart,
-          previewEnd
+          previewEnd,
+          mode
         );
         syncActiveSceneFrameForTime(t,false);
         renderTimeline();
@@ -19820,7 +19833,7 @@ ctx.fill();</textarea>
         label.textContent=frame.startFrame===frame.endFrame?String(frame.startFrame+1):(frame.startFrame+1)+'–'+(frame.endFrame+1);
         span.appendChild(label);
 
-        if(!frame.blank){
+        {
           const startHandle=document.createElement('div');
           startHandle.className='wick-layer-edge-handle left';
           startHandle.title='Drag to move, shorten or extend the layer start';
