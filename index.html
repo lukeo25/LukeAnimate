@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v209: adds top-bar Align and Distribute tools for arranging selected stage objects by edges, centres, or even horizontal/vertical spacing. -->
 <!-- LukeAnimate GPT v208: Frame Gizmos display their attached Clip definition name directly underneath the dial and refresh it when the Clip is renamed. -->
 <!-- LukeAnimate GPT v207: Convert Selected to Clip removes the selected source key blocks completely, leaving only the new Clip exposure while preserving every unselected key. -->
 <!-- LukeAnimate GPT v206: blank-only timeline key selections can be converted into named empty Clips, preserving their selected frame timing and using the stage centre as the Clip pivot. -->
@@ -28,7 +29,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v208</title>
+<title>Luke Animate v209</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -2317,6 +2318,20 @@
       <button class="draw-tool icon-only" id="tool-boolean-union" type="button" title="Boolean Union — combine selected shapes" aria-label="Boolean Union"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Union.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')"><span class="draw-tool-fallback" aria-hidden="true">∪</span><span class="sr-only">Boolean Union</span></button>
       <button class="draw-tool icon-only" id="tool-boolean-subtract" type="button" title="Boolean Subtract — subtract upper selected shapes from the lowest selected shape" aria-label="Boolean Subtract"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Subtract.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')"><span class="draw-tool-fallback" aria-hidden="true">−</span><span class="sr-only">Boolean Subtract</span></button>
       <button class="draw-tool icon-only" id="tool-boolean-intersection" type="button" title="Boolean Intersection — keep overlap of selected shapes" aria-label="Boolean Intersection"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Intersect.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')"><span class="draw-tool-fallback" aria-hidden="true">∩</span><span class="sr-only">Boolean Intersection</span></button>
+      <select id="tool-align" title="Align selected stage objects" aria-label="Align selected objects">
+        <option value="">Align…</option>
+        <option value="left">Left edges</option>
+        <option value="center-x">Horizontal centres</option>
+        <option value="right">Right edges</option>
+        <option value="top">Top edges</option>
+        <option value="center-y">Vertical centres</option>
+        <option value="bottom">Bottom edges</option>
+      </select>
+      <select id="tool-distribute" title="Distribute selected stage objects evenly" aria-label="Distribute selected objects">
+        <option value="">Distribute…</option>
+        <option value="horizontal">Horizontal spacing</option>
+        <option value="vertical">Vertical spacing</option>
+      </select>
       <span class="toolbar-sep"></span>
       <label class="toolbar-field">Fill<input type="color" id="draw-fillcolor" value="#4fe0c4" title="Fill colour"></label>
       <label class="toolbar-field">Border<input type="color" id="draw-strokecolor" value="#1b1f24" title="Border colour"></label>
@@ -7703,6 +7718,81 @@ ctx.fill();</textarea>
   document.getElementById('tool-boolean-union').addEventListener('click',()=>booleanSelectedShapes('union'));
   document.getElementById('tool-boolean-subtract').addEventListener('click',()=>booleanSelectedShapes('subtract'));
   document.getElementById('tool-boolean-intersection').addEventListener('click',()=>booleanSelectedShapes('intersection'));
+
+  function selectedArrangeItems(){
+    return Array.from(selectedDrawIndices)
+      .filter(index=>index>=0&&index<drawObjects.length)
+      .map(index=>({index,object:drawObjects[index]}))
+      .filter(item=>item.object&&!(typeof nativeObjectLayerLocked==='function'&&nativeObjectLayerLocked(item.object)))
+      .map(item=>Object.assign(item,{bounds:getEffectiveBounds(item.object)}));
+  }
+
+  function moveArrangedObject(item,dx,dy){
+    const object=item.object,effective=getEffectiveObj(object,t),isClip=object.type==='clipinstance';
+    const xField=isClip?'x':'tx',yField=isClip?'y':'ty';
+    const currentX=Number(effective[xField]!==undefined?effective[xField]:object[xField])||0;
+    const currentY=Number(effective[yField]!==undefined?effective[yField]:object[yField])||0;
+    setObjectFieldForCurrentTime(object,xField,currentX+dx);
+    setObjectFieldForCurrentTime(object,yField,currentY+dy);
+  }
+
+  function finishArrange(items,message){
+    items.forEach(item=>renderKeyframeList(item.object));
+    updateInspector();renderLayerList();renderTimeline();renderTransformHandles();renderOffstageObjectProxies();
+    logToSandbox(message);
+  }
+
+  function alignSelectedObjects(mode){
+    const items=selectedArrangeItems();
+    if(items.length<2){logToSandbox('Select at least two unlocked stage objects to align.',true);return false;}
+    const selection={
+      x1:Math.min(...items.map(item=>item.bounds.x1)),y1:Math.min(...items.map(item=>item.bounds.y1)),
+      x2:Math.max(...items.map(item=>item.bounds.x2)),y2:Math.max(...items.map(item=>item.bounds.y2))
+    };
+    pushUndo();
+    items.forEach(item=>{
+      const bounds=item.bounds;
+      let dx=0,dy=0;
+      if(mode==='left')dx=selection.x1-bounds.x1;
+      else if(mode==='center-x')dx=(selection.x1+selection.x2-bounds.x1-bounds.x2)/2;
+      else if(mode==='right')dx=selection.x2-bounds.x2;
+      else if(mode==='top')dy=selection.y1-bounds.y1;
+      else if(mode==='center-y')dy=(selection.y1+selection.y2-bounds.y1-bounds.y2)/2;
+      else if(mode==='bottom')dy=selection.y2-bounds.y2;
+      moveArrangedObject(item,dx,dy);
+    });
+    finishArrange(items,'Aligned '+items.length+' selected objects.');
+    return true;
+  }
+
+  function distributeSelectedObjects(axis){
+    const items=selectedArrangeItems();
+    if(items.length<3){logToSandbox('Select at least three unlocked stage objects to distribute.',true);return false;}
+    const horizontal=axis==='horizontal';
+    items.sort((a,b)=>(horizontal?a.bounds.x1:a.bounds.y1)-(horizontal?b.bounds.x1:b.bounds.y1));
+    const first=items[0].bounds,last=items[items.length-1].bounds;
+    const totalSize=items.reduce((sum,item)=>sum+(horizontal?item.bounds.x2-item.bounds.x1:item.bounds.y2-item.bounds.y1),0);
+    const span=horizontal?last.x2-first.x1:last.y2-first.y1;
+    const gap=(span-totalSize)/(items.length-1);
+    let cursor=horizontal?first.x1:first.y1;
+    pushUndo();
+    items.forEach((item,index)=>{
+      if(index>0&&index<items.length-1){
+        const start=horizontal?item.bounds.x1:item.bounds.y1;
+        moveArrangedObject(item,horizontal?cursor-start:0,horizontal?0:cursor-start);
+      }
+      cursor+=(horizontal?item.bounds.x2-item.bounds.x1:item.bounds.y2-item.bounds.y1)+gap;
+    });
+    finishArrange(items,'Distributed '+items.length+' selected objects '+axis+'ly.');
+    return true;
+  }
+
+  document.getElementById('tool-align').addEventListener('change',event=>{
+    const value=event.target.value;event.target.value='';if(value)alignSelectedObjects(value);
+  });
+  document.getElementById('tool-distribute').addEventListener('change',event=>{
+    const value=event.target.value;event.target.value='';if(value)distributeSelectedObjects(value);
+  });
 
   function handleDrawMouseDown(e){
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
