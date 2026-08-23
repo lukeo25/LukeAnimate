@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v211: Boolean actions collapse under an Intersection-icon dropdown, while Align and Distribute collapse under an Align-Top-icon dropdown with icon-labelled choices. -->
 <!-- LukeAnimate GPT v210: Align and Distribute use the eight dedicated repository SVG icons as individual top-bar action buttons. -->
 <!-- LukeAnimate GPT v209: adds top-bar Align and Distribute tools for arranging selected stage objects by edges, centres, or even horizontal/vertical spacing. -->
 <!-- LukeAnimate GPT v208: Frame Gizmos display their attached Clip definition name directly underneath the dial and refresh it when the Clip is renamed. -->
@@ -30,7 +31,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v210</title>
+<title>Luke Animate v211</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -1350,6 +1351,17 @@
     background:rgba(63,174,155,.58); outline:2px solid var(--accent); outline-offset:1px;
     z-index:8;
   }
+  .toolbar-action-menu{
+    position:fixed;z-index:26000;display:grid;grid-template-columns:repeat(3,38px);gap:5px;
+    padding:6px;border:1px solid #3f4853;border-radius:9px;background:#626a74;
+    box-shadow:0 8px 24px rgba(0,0,0,.28);
+  }
+  .toolbar-action-menu button{
+    width:38px;height:36px;padding:6px;display:flex;align-items:center;justify-content:center;
+    border:1px solid rgba(255,255,255,.18);border-radius:6px;background:#565e67;cursor:pointer;
+  }
+  .toolbar-action-menu button:hover,.toolbar-action-menu button:focus-visible{background:var(--accent-dim);border-color:var(--accent);outline:none;}
+  .toolbar-action-menu img{width:23px;height:23px;display:block;filter:grayscale(1) brightness(0) invert(1);pointer-events:none;}
   .wick-layer-frame.timeline-frame-selected{
     outline:2px solid #b72f72; outline-offset:1px; z-index:7;
     box-shadow:0 0 0 2px rgba(255,255,255,.82) inset;
@@ -2316,18 +2328,8 @@
         <span class="draw-tool-fallback" aria-hidden="true">T</span><span class="sr-only">Text</span>
       </button>
       <span class="toolbar-sep"></span>
-      <button class="draw-tool icon-only" id="tool-boolean-union" type="button" title="Boolean Union — combine selected shapes" aria-label="Boolean Union"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Union.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')"><span class="draw-tool-fallback" aria-hidden="true">∪</span><span class="sr-only">Boolean Union</span></button>
-      <button class="draw-tool icon-only" id="tool-boolean-subtract" type="button" title="Boolean Subtract — subtract upper selected shapes from the lowest selected shape" aria-label="Boolean Subtract"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Subtract.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')"><span class="draw-tool-fallback" aria-hidden="true">−</span><span class="sr-only">Boolean Subtract</span></button>
-      <button class="draw-tool icon-only" id="tool-boolean-intersection" type="button" title="Boolean Intersection — keep overlap of selected shapes" aria-label="Boolean Intersection"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Intersect.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')"><span class="draw-tool-fallback" aria-hidden="true">∩</span><span class="sr-only">Boolean Intersection</span></button>
-      <span class="toolbar-sep"></span>
-      <button class="draw-tool icon-only arrange-tool" id="tool-align-left" type="button" title="Align selected objects to their left edges" aria-label="Align left"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignL.svg" alt=""><span class="sr-only">Align left</span></button>
-      <button class="draw-tool icon-only arrange-tool" id="tool-align-center-x" type="button" title="Align selected objects by their horizontal centres" aria-label="Align horizontal centres"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignC.svg" alt=""><span class="sr-only">Align horizontal centres</span></button>
-      <button class="draw-tool icon-only arrange-tool" id="tool-align-right" type="button" title="Align selected objects to their right edges" aria-label="Align right"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignR.svg" alt=""><span class="sr-only">Align right</span></button>
-      <button class="draw-tool icon-only arrange-tool" id="tool-align-top" type="button" title="Align selected objects to their top edges" aria-label="Align top"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignT.svg" alt=""><span class="sr-only">Align top</span></button>
-      <button class="draw-tool icon-only arrange-tool" id="tool-align-center-y" type="button" title="Align selected objects by their vertical centres" aria-label="Align vertical centres"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignMid.svg" alt=""><span class="sr-only">Align vertical centres</span></button>
-      <button class="draw-tool icon-only arrange-tool" id="tool-align-bottom" type="button" title="Align selected objects to their bottom edges" aria-label="Align bottom"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignB.svg" alt=""><span class="sr-only">Align bottom</span></button>
-      <button class="draw-tool icon-only arrange-tool" id="tool-distribute-horizontal" type="button" title="Distribute selected objects with equal horizontal spacing" aria-label="Distribute horizontally"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/DistH.svg" alt=""><span class="sr-only">Distribute horizontally</span></button>
-      <button class="draw-tool icon-only arrange-tool" id="tool-distribute-vertical" type="button" title="Distribute selected objects with equal vertical spacing" aria-label="Distribute vertically"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/DistV.svg" alt=""><span class="sr-only">Distribute vertically</span></button>
+      <button class="draw-tool icon-only" id="tool-boolean-menu" type="button" title="Boolean operations" aria-label="Boolean operations"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Intersect.svg" alt=""><span class="sr-only">Boolean operations</span></button>
+      <button class="draw-tool icon-only" id="tool-arrange-menu" type="button" title="Align and distribute" aria-label="Align and distribute"><img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/AlignT.svg" alt=""><span class="sr-only">Align and distribute</span></button>
       <span class="toolbar-sep"></span>
       <label class="toolbar-field">Fill<input type="color" id="draw-fillcolor" value="#4fe0c4" title="Fill colour"></label>
       <label class="toolbar-field">Border<input type="color" id="draw-strokecolor" value="#1b1f24" title="Border colour"></label>
@@ -7711,9 +7713,44 @@ ctx.fill();</textarea>
     logToSandbox('Boolean '+operation+' created an editable vector result.');return true;
   }
 
-  document.getElementById('tool-boolean-union').addEventListener('click',()=>booleanSelectedShapes('union'));
-  document.getElementById('tool-boolean-subtract').addEventListener('click',()=>booleanSelectedShapes('subtract'));
-  document.getElementById('tool-boolean-intersection').addEventListener('click',()=>booleanSelectedShapes('intersection'));
+  let openToolbarActionMenuElement=null;
+  let openToolbarActionMenuTrigger=null;
+  function closeToolbarActionMenu(){
+    if(openToolbarActionMenuElement)openToolbarActionMenuElement.remove();
+    openToolbarActionMenuElement=null;openToolbarActionMenuTrigger=null;
+  }
+  function openToolbarActionMenu(trigger,actions){
+    if(openToolbarActionMenuElement){
+      if(openToolbarActionMenuTrigger===trigger){closeToolbarActionMenu();return;}
+      closeToolbarActionMenu();
+    }
+    const menu=document.createElement('div');menu.className='toolbar-action-menu';menu.setAttribute('role','menu');
+    actions.forEach(action=>{
+      const button=document.createElement('button');button.type='button';button.title=action.label;button.setAttribute('aria-label',action.label);button.setAttribute('role','menuitem');
+      const icon=document.createElement('img');icon.src=action.icon;icon.alt='';button.appendChild(icon);
+      button.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();closeToolbarActionMenu();action.run();});
+      menu.appendChild(button);
+    });
+    document.body.appendChild(menu);openToolbarActionMenuElement=menu;openToolbarActionMenuTrigger=trigger;
+    const rect=trigger.getBoundingClientRect(),menuRect=menu.getBoundingClientRect();
+    menu.style.left=Math.max(6,Math.min(window.innerWidth-menuRect.width-6,rect.left))+'px';
+    menu.style.top=Math.min(window.innerHeight-menuRect.height-6,rect.bottom+5)+'px';
+  }
+  document.addEventListener('pointerdown',event=>{
+    if(openToolbarActionMenuElement&&!openToolbarActionMenuElement.contains(event.target)&&!event.target.closest('#tool-boolean-menu,#tool-arrange-menu'))closeToolbarActionMenu();
+  },true);
+  window.addEventListener('blur',closeToolbarActionMenu);
+  window.addEventListener('resize',closeToolbarActionMenu,{passive:true});
+
+  const arrangeIconBase='https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/';
+  document.getElementById('tool-boolean-menu').addEventListener('click',event=>{
+    event.preventDefault();event.stopPropagation();
+    openToolbarActionMenu(event.currentTarget,[
+      {label:'Boolean Union',icon:arrangeIconBase+'Union.svg',run:()=>booleanSelectedShapes('union')},
+      {label:'Boolean Subtract',icon:arrangeIconBase+'Subtract.svg',run:()=>booleanSelectedShapes('subtract')},
+      {label:'Boolean Intersection',icon:arrangeIconBase+'Intersect.svg',run:()=>booleanSelectedShapes('intersection')}
+    ]);
+  });
 
   function selectedArrangeItems(){
     return Array.from(selectedDrawIndices)
@@ -7783,11 +7820,19 @@ ctx.fill();</textarea>
     return true;
   }
 
-  [['tool-align-left','left'],['tool-align-center-x','center-x'],['tool-align-right','right'],['tool-align-top','top'],['tool-align-center-y','center-y'],['tool-align-bottom','bottom']].forEach(entry=>{
-    document.getElementById(entry[0]).addEventListener('click',()=>alignSelectedObjects(entry[1]));
+  document.getElementById('tool-arrange-menu').addEventListener('click',event=>{
+    event.preventDefault();event.stopPropagation();
+    openToolbarActionMenu(event.currentTarget,[
+      {label:'Align left',icon:arrangeIconBase+'AlignL.svg',run:()=>alignSelectedObjects('left')},
+      {label:'Align horizontal centres',icon:arrangeIconBase+'AlignC.svg',run:()=>alignSelectedObjects('center-x')},
+      {label:'Align right',icon:arrangeIconBase+'AlignR.svg',run:()=>alignSelectedObjects('right')},
+      {label:'Align top',icon:arrangeIconBase+'AlignT.svg',run:()=>alignSelectedObjects('top')},
+      {label:'Align vertical centres',icon:arrangeIconBase+'AlignMid.svg',run:()=>alignSelectedObjects('center-y')},
+      {label:'Align bottom',icon:arrangeIconBase+'AlignB.svg',run:()=>alignSelectedObjects('bottom')},
+      {label:'Distribute horizontally',icon:arrangeIconBase+'DistH.svg',run:()=>distributeSelectedObjects('horizontal')},
+      {label:'Distribute vertically',icon:arrangeIconBase+'DistV.svg',run:()=>distributeSelectedObjects('vertical')}
+    ]);
   });
-  document.getElementById('tool-distribute-horizontal').addEventListener('click',()=>distributeSelectedObjects('horizontal'));
-  document.getElementById('tool-distribute-vertical').addEventListener('click',()=>distributeSelectedObjects('vertical'));
 
   function handleDrawMouseDown(e){
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
