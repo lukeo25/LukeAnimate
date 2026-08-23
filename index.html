@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v207: Convert Selected to Clip removes the selected source key blocks completely, leaving only the new Clip exposure while preserving every unselected key. -->
 <!-- LukeAnimate GPT v206: blank-only timeline key selections can be converted into named empty Clips, preserving their selected frame timing and using the stage centre as the Clip pivot. -->
 <!-- LukeAnimate GPT v205: timeline marquee selection can box-select drawing keys and Convert Selected to Clip preserves their relative layers, frames, timing and artwork. -->
 <!-- LukeAnimate GPT v204: blank drawing keys occupy exactly one frame; the preceding drawing resumes on the following frame for the remainder of its original exposure. -->
@@ -26,7 +27,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v206</title>
+<title>Luke Animate v207</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -11024,7 +11025,10 @@ ctx.fill();</textarea>
     const firstClipFrame=sceneFrameAtIndex(clip.sceneFrames,0);
     clip.drawObjects=firstClipFrame&&Array.isArray(firstClipFrame.objects)?firstClipFrame.objects:[];
 
-    selected.forEach(({frame})=>{frame.object=null;frame.blank=true;});
+    const selectedSourceIds=new Set(selected.map(item=>String(item.frame.id)));
+    selectedByLayer.forEach(({source})=>{
+      source.frames=(source.frames||[]).filter(frame=>!selectedSourceIds.has(String(frame.id)));
+    });
     const clipInstance=ensureDrawObjectMetadata({type:'clipinstance',clipId:clip.id,name:clip.name,x:cx,y:cy,scale:1,scaleX:1,scaleY:1,rotation:0,timeOffset:-firstFrame/fps,opacity:1,keyframes:[]});
     const instanceLayer=wickRegisterObjectLayer(clipInstance,firstFrame,lastFrame);
     wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
