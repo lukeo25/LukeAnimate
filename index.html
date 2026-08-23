@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v223: Gizmo key dragging uses a frozen starting frame and frame-cell pixel delta, preserving the grab offset across selection/layout changes. -->
 <!-- LukeAnimate GPT v222: Gizmo keys drag by absolute destination frame without rebuilding the timeline under the pointer, preventing keys from jumping away. -->
 <!-- LukeAnimate GPT v221: Clip Gizmos inherit their parent bone pose directly, using the Gizmo Bone only as the local pin offset. -->
 <!-- LukeAnimate GPT v220: Gizmo key identity survives timeline refreshes so move/delete work, and choosing a Gizmo mouth with Auto-Keyframe off cannot overwrite the keyed sequence. -->
@@ -42,7 +43,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v222</title>
+<title>Luke Animate v223</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -15159,17 +15160,18 @@ ctx.fill();</textarea>
         event.preventDefault();
         event.stopPropagation();
         closeKeyframeContextMenu();
-        selectFrameGizmoTimelineKey(obj,key,dot);
         startX = event.clientX;
-        const trackRect = track.getBoundingClientRect();
         const dragFrameInfo = getTimelineFrameInfo();
+        const startFrame=frameIndexForTime(Number(key.time)||0,timelineDuration);
+        const framePixelWidth=Math.max(1,dragFrameInfo.frameWidth);
+        selectFrameGizmoTimelineKey(obj,key,dot);
         let historyPushed=false;
         function onMove(moveEvent){
           if(!moved && Math.abs(moveEvent.clientX-startX) < 2) return;
           moved = true;
           if(!historyPushed){pushUndo();historyPushed=true;}
-          const fraction=Math.max(0,Math.min(0.999999,(moveEvent.clientX-trackRect.left)/Math.max(1,trackRect.width)));
-          const destinationFrame=Math.max(0,Math.min(dragFrameInfo.totalFrames,Math.floor(fraction*dragFrameInfo.totalCells)));
+          const frameDelta=Math.round((moveEvent.clientX-startX)/framePixelWidth);
+          const destinationFrame=Math.max(0,Math.min(dragFrameInfo.totalFrames,startFrame+frameDelta));
           key.time=destinationFrame/dragFrameInfo.fps;
           dot.style.left=timelineFrameCenterPercent(destinationFrame,dragFrameInfo)+'%';
         }
