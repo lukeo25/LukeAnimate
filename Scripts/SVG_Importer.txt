@@ -25,6 +25,9 @@
     "setDrawingLayerFrameObject",
     "createImageClip",
     "createClipInstance",
+    "enterClip",
+    "exitClip",
+    "ensureTimelineFrameCount",
     "pushUndo",
     "refreshUI",
     "selectDrawObject",
@@ -56,7 +59,9 @@
     file: null,
     fileName: "",
     sourceText: "",
-    busy: false
+    busy: false,
+    folderFiles: [],
+    folderName: ""
   };
 
   var panel = document.createElement("section");
@@ -76,17 +81,24 @@
     '  <button class="la-svg-close" type="button" title="Close" aria-label="Close">×</button>',
     '</header>',
     '<div class="la-svg-body">',
-    '  <label class="la-svg-file-box" for="la-svg-file">',
+    '  <label id="la-svg-file-box" class="la-svg-file-box" for="la-svg-file">',
     '    <strong>Load SVG</strong>',
     '    <span>Choose an .svg file from your computer</span>',
     '    <input id="la-svg-file" type="file" accept=".svg,image/svg+xml">',
     '  </label>',
     '  <div id="la-svg-file-summary" class="la-svg-summary">No SVG loaded.</div>',
+    '  <label id="la-svg-folder-box" class="la-svg-file-box is-hidden" for="la-svg-folder">',
+    '    <strong>Load SVG Folder</strong>',
+    '    <span>Choose a folder containing SVG files</span>',
+    '    <input id="la-svg-folder" type="file" accept=".svg,image/svg+xml" webkitdirectory multiple>',
+    '  </label>',
+    '  <div id="la-svg-folder-summary" class="la-svg-summary is-hidden">No SVG folder loaded.</div>',
     '',
     '  <fieldset class="la-svg-mode">',
     '    <legend>Import as</legend>',
     '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-curves" value="curves" checked> <span><b>Curves</b><small>Editable Luke Animate vector paths</small></span></label>',
     '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-clip" value="clip"> <span><b>Vector Clip</b><small>Editable Luke Animate vector paths inside one real Clip</small></span></label>',
+    '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-folder" value="folder"> <span><b>SVG Folder Clip</b><small>One named Clip frame per SVG file</small></span></label>',
     '  </fieldset>',
     '',
     '  <div id="la-svg-curves-options" class="la-svg-options">',
@@ -98,7 +110,7 @@
     '    <label>New Clip name',
     '      <input id="la-svg-clip-name" type="text" value="SVG_Clip" maxlength="80">',
     '    </label>',
-    '    <div class="la-svg-note">Vector Clip mode converts supported SVG geometry to editable Luke Animate vector paths, then places those paths inside one real Clip. It does not create an image object.</div>',
+    '    <div id="la-svg-clip-note" class="la-svg-note">Vector Clip mode converts supported SVG geometry to editable Luke Animate vector paths, then places those paths inside one real Clip. It does not create an image object.</div>',
     '  </div>',
     '',
     '  <label>Optional target width',
@@ -134,13 +146,19 @@
   API.setConfiguredToolActive(GROUP_ID, TOOL_ID, true);
 
   var fileInput = panel.querySelector("#la-svg-file");
+  var fileBox = panel.querySelector("#la-svg-file-box");
   var fileSummary = panel.querySelector("#la-svg-file-summary");
+  var folderInput = panel.querySelector("#la-svg-folder");
+  var folderBox = panel.querySelector("#la-svg-folder-box");
+  var folderSummary = panel.querySelector("#la-svg-folder-summary");
   var curvesRadio = panel.querySelector("#la-svg-mode-curves");
   var clipRadio = panel.querySelector("#la-svg-mode-clip");
+  var folderRadio = panel.querySelector("#la-svg-mode-folder");
   var curvesOptions = panel.querySelector("#la-svg-curves-options");
   var clipOptions = panel.querySelector("#la-svg-clip-options");
   var separateInput = panel.querySelector("#la-svg-separate");
   var clipNameInput = panel.querySelector("#la-svg-clip-name");
+  var clipNote = panel.querySelector("#la-svg-clip-note");
   var widthInput = panel.querySelector("#la-svg-width");
   var keepDefsInput = panel.querySelector("#la-svg-keep-defs");
   var removeImagesInput = panel.querySelector("#la-svg-remove-images");
@@ -174,8 +192,13 @@
     });
   });
 
+  folderInput.addEventListener("change", function () {
+    loadSvgFolder(folderInput.files);
+  });
+
   curvesRadio.addEventListener("change", updateMode);
   clipRadio.addEventListener("change", updateMode);
+  folderRadio.addEventListener("change", updateMode);
 
   clearLogButton.addEventListener("click", function () {
     setLog("Ready.");
@@ -262,22 +285,36 @@
 
   function updateMode() {
     var curves = curvesRadio.checked;
+    var folder = folderRadio.checked;
     curvesOptions.classList.toggle("is-hidden", !curves);
     clipOptions.classList.toggle("is-hidden", curves);
+    fileBox.classList.toggle("is-hidden", folder);
+    fileSummary.classList.toggle("is-hidden", folder);
+    folderBox.classList.toggle("is-hidden", !folder);
+    folderSummary.classList.toggle("is-hidden", !folder);
+    clipNameInput.readOnly = folder;
+    if (folder && state.folderName) clipNameInput.value = state.folderName;
+    clipNote.textContent = folder
+      ? "The folder becomes one Clip. Each SVG becomes an editable, named frame in natural filename order."
+      : "Vector Clip mode converts supported SVG geometry to editable Luke Animate vector paths, then places those paths inside one real Clip. It does not create an image object.";
+    importButton.textContent = folder ? "Import SVG Folder" : "Import SVG";
+    importButton.disabled = state.busy || (folder ? !state.folderFiles.length : !state.sourceText);
   }
 
   function setBusy(value) {
     state.busy = !!value;
     fileInput.disabled = state.busy;
+    folderInput.disabled = state.busy;
     curvesRadio.disabled = state.busy;
     clipRadio.disabled = state.busy;
+    folderRadio.disabled = state.busy;
     separateInput.disabled = state.busy;
     clipNameInput.disabled = state.busy;
     widthInput.disabled = state.busy;
     keepDefsInput.disabled = state.busy;
     removeImagesInput.disabled = state.busy;
     stripStylesInput.disabled = state.busy;
-    importButton.disabled = state.busy || !state.sourceText;
+    importButton.disabled = state.busy || (folderRadio.checked ? !state.folderFiles.length : !state.sourceText);
     closeButton.disabled = state.busy;
   }
 
@@ -365,6 +402,31 @@
         state.fileName +
         ".\nBoth modes create editable Luke Animate vectors. Curves imports directly to the timeline; Vector Clip puts those vectors inside one real Clip."
     );
+  }
+
+  function loadSvgFolder(fileList) {
+    var files = Array.prototype.slice.call(fileList || []).filter(function (file) {
+      return /\.svg$/i.test(String(file && file.name || ""));
+    });
+    files.sort(function (a, b) {
+      return String(a.webkitRelativePath || a.name).localeCompare(
+        String(b.webkitRelativePath || b.name),
+        undefined,
+        { numeric: true, sensitivity: "base" }
+      );
+    });
+    state.folderFiles = files;
+    var relativePath = files.length ? String(files[0].webkitRelativePath || "") : "";
+    state.folderName = safeName(relativePath.split(/[\\/]/)[0], "SVG_Clip");
+    if (!files.length) {
+      folderSummary.textContent = "No SVG files found in that folder.";
+      importButton.disabled = true;
+      return;
+    }
+    clipNameInput.value = state.folderName;
+    folderSummary.textContent = state.folderName + "  ·  " + files.length + " SVG frame" + (files.length === 1 ? "" : "s");
+    importButton.disabled = false;
+    setLog("Loaded folder “" + state.folderName + "”.\n" + files.length + " SVG file" + (files.length === 1 ? "" : "s") + " will become frames 1–" + files.length + ".");
   }
 
   function parseSvg(svgText) {
@@ -580,6 +642,10 @@
 
   async function importSvg() {
     if (state.busy) return;
+    if (folderRadio.checked) {
+      await importFolderClipMode();
+      return;
+    }
     if (!state.sourceText) throw new Error("Load an SVG first.");
 
     setBusy(true);
@@ -594,6 +660,70 @@
     }
 
     setBusy(false);
+  }
+
+  async function importFolderClipMode() {
+    if (!state.folderFiles.length) throw new Error("Load an SVG folder first.");
+    setBusy(true);
+    try {
+      var prepared = [];
+      var options = cleanupOptions();
+      var targetWidth = requestedTargetWidth();
+      for (var i = 0; i < state.folderFiles.length; i += 1) {
+        var file = state.folderFiles[i];
+        setLog("Preparing " + (i + 1) + " of " + state.folderFiles.length + ": " + file.name + " …");
+        var source = await readFileAsText(file);
+        var result = svgToLukeAnimateVectors(sanitizeSvg(source, options));
+        if (!result.objects.length) throw new Error("No editable vector geometry was found in “" + file.name + "”.");
+        var scale = targetWidth && result.bounds.width > 0 ? targetWidth / result.bounds.width : 1;
+        centreVectors(result.objects, result.bounds, scale, { x: 0, y: 0 });
+        prepared.push({ name: safeName(baseName(file.name), "Frame " + (i + 1)), objects: result.objects, warnings: result.warnings });
+      }
+      createFolderClip(prepared);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function createFolderClip(frames) {
+    var fps = Math.max(1, Number(API.fps) || 30);
+    var clipName = state.folderName || "SVG_Clip";
+    var originalFrame = Math.max(1, Math.round(Number(API.getCurrentFrame()) || 1));
+    var originalEditingClipId = typeof API.getEditingClipId === "function" ? API.getEditingClipId() : null;
+    var centre = currentSceneCentre();
+    API.pushUndo();
+    var clip = API.createImageClip({ src: TRANSPARENT_PIXEL, name: clipName, width: 1, height: 1 }, {
+      name: clipName, imageName: "__temporary_svg_folder_factory__", width: 1, height: 1,
+      durationSeconds: frames.length / fps, pushUndo: false, refresh: false
+    });
+    if (!clip || !clip.id) throw new Error("Luke Animate could not create the SVG folder Clip.");
+    clip.drawObjects = []; clip.sceneFrames = []; clip.drawingLayers = []; clip.layers = [];
+    clip.points = []; clip.targetPoints = []; clip.pivotX = 0; clip.pivotY = 0;
+    clip.timelineDuration = frames.length / fps;
+    clip.loopTimeline = true;
+    clip.frameLabels = frames.map(function (frame, index) {
+      return { name: frame.name, frame: index + 1, time: index / fps };
+    });
+    if (!API.enterClip(clip.id)) throw new Error("Luke Animate could not enter the SVG folder Clip.");
+    try {
+      API.ensureTimelineFrameCount(frames.length, { pushUndo: false, refresh: false });
+      var layer = API.createDrawingLayer(clipName, { pushUndo: false, refresh: false });
+      frames.forEach(function (frame, index) {
+        API.setDrawingLayerFrameObject(layer.id, index + 1, {
+          type: "group", name: frame.name, children: frame.objects,
+          tx: 0, ty: 0, tscale: 1, tscaleX: 1, tscaleY: 1, trotation: 0, opacity: 1, keyframes: []
+        }, { pushUndo: false, refresh: false });
+      });
+    } finally {
+      API.exitClip();
+    }
+    var restoredEditingClipId = typeof API.getEditingClipId === "function" ? API.getEditingClipId() : null;
+    if (String(restoredEditingClipId || "") !== String(originalEditingClipId || "")) throw new Error("Luke Animate did not restore the original timeline after building the SVG folder Clip.");
+    var instance = API.createClipInstance(clip.id, { name: clipName, x: Number(centre.x) || 0, y: Number(centre.y) || 0, scale: 1, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1 });
+    var stageLayer = API.createDrawingLayer(clipName, { pushUndo: false, refresh: false });
+    API.setDrawingLayerFrameObject(stageLayer.id, originalFrame, instance, { pushUndo: false, refresh: false });
+    API.refreshUI(); API.selectDrawObject(instance); API.refreshUI();
+    log("Complete.\nCreated Clip “" + clipName + "” with " + frames.length + " named SVG frame" + (frames.length === 1 ? "" : "s") + ".");
   }
 
   async function importClipMode(sanitized) {
@@ -2081,3 +2211,4 @@
     handle.addEventListener("pointercancel", stopDrag);
   }
 }());
+
