@@ -98,7 +98,7 @@
     '    <legend>Import as</legend>',
     '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-curves" value="curves" checked> <span><b>Curves</b><small>Editable Luke Animate vector paths</small></span></label>',
     '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-clip" value="clip"> <span><b>Vector Clip</b><small>Editable Luke Animate vector paths inside one real Clip</small></span></label>',
-    '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-folder" value="folder"> <span><b>SVG Folder Clip</b><small>One named Clip frame per SVG file</small></span></label>',
+    '    <label><input type="radio" name="la-svg-mode" id="la-svg-mode-folder" value="folder"> <span><b>Gizmo Clip</b><small>One named Clip frame per SVG file</small></span></label>',
     '  </fieldset>',
     '',
     '  <div id="la-svg-curves-options" class="la-svg-options">',
@@ -696,7 +696,7 @@
       name: clipName, imageName: "__temporary_svg_folder_factory__", width: 1, height: 1,
       durationSeconds: frames.length / fps, pushUndo: false, refresh: false
     });
-    if (!clip || !clip.id) throw new Error("Luke Animate could not create the SVG folder Clip.");
+    if (!clip || !clip.id) throw new Error("Luke Animate could not create the Gizmo Clip.");
     clip.drawObjects = []; clip.sceneFrames = []; clip.drawingLayers = []; clip.layers = [];
     clip.points = []; clip.targetPoints = []; clip.pivotX = 0; clip.pivotY = 0;
     clip.timelineDuration = frames.length / fps;
@@ -704,7 +704,7 @@
     clip.frameLabels = frames.map(function (frame, index) {
       return { name: frame.name, frame: index + 1, time: index / fps };
     });
-    if (!API.enterClip(clip.id)) throw new Error("Luke Animate could not enter the SVG folder Clip.");
+    if (!API.enterClip(clip.id)) throw new Error("Luke Animate could not enter the Gizmo Clip.");
     try {
       API.ensureTimelineFrameCount(frames.length, { pushUndo: false, refresh: false });
       var layer = API.createDrawingLayer(clipName, { pushUndo: false, refresh: false });
@@ -718,7 +718,7 @@
       API.exitClip();
     }
     var restoredEditingClipId = typeof API.getEditingClipId === "function" ? API.getEditingClipId() : null;
-    if (String(restoredEditingClipId || "") !== String(originalEditingClipId || "")) throw new Error("Luke Animate did not restore the original timeline after building the SVG folder Clip.");
+    if (String(restoredEditingClipId || "") !== String(originalEditingClipId || "")) throw new Error("Luke Animate did not restore the original timeline after building the Gizmo Clip.");
     var instance = API.createClipInstance(clip.id, { name: clipName, x: Number(centre.x) || 0, y: Number(centre.y) || 0, scale: 1, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1 });
     var stageLayer = API.createDrawingLayer(clipName, { pushUndo: false, refresh: false });
     API.setDrawingLayerFrameObject(stageLayer.id, originalFrame, instance, { pushUndo: false, refresh: false });
