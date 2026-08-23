@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v212: clicking or double-clicking existing text while the Text tool is active edits that exact object in place instead of creating an extra stage item. -->
 <!-- LukeAnimate GPT v211: Boolean actions collapse under an Intersection-icon dropdown, while Align and Distribute collapse under an Align-Top-icon dropdown with icon-labelled choices. -->
 <!-- LukeAnimate GPT v210: Align and Distribute use the eight dedicated repository SVG icons as individual top-bar action buttons. -->
 <!-- LukeAnimate GPT v209: adds top-bar Align and Distribute tools for arranging selected stage objects by edges, centres, or even horizontal/vertical spacing. -->
@@ -31,7 +32,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v211</title>
+<title>Luke Animate v212</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -7841,7 +7842,19 @@ ctx.fill();</textarea>
     const style = drawStyle();
 
     if(stageTool === 'text'){
-      beginStageTextEntry(c, null);
+      let existingTextIndex=-1;
+      for(let index=drawObjects.length-1;index>=0;index--){
+        const object=drawObjects[index];
+        if(!object||object.type!=='text'||object.enabled===false||(typeof nativeObjectLayerLocked==='function'&&nativeObjectLayerLocked(object)))continue;
+        if(pointInBounds(c.x,c.y,getEffectiveBounds(object),6)){existingTextIndex=index;break;}
+      }
+      if(existingTextIndex>=0){
+        selectDrawObject(existingTextIndex,false,false);
+        openTextSettingsPanel();
+        beginStageTextEntry({x:drawObjects[existingTextIndex].x,y:drawObjects[existingTextIndex].y},existingTextIndex);
+      }else{
+        beginStageTextEntry(c,null);
+      }
       return;
     }
     if(stageTool === 'pen'){ handlePenMouseDown(e,c); return; }
@@ -8086,6 +8099,11 @@ ctx.fill();</textarea>
   }
 
   function beginStageTextEntry(canvasPos, existingIndex){
+    if(stageTextEdit&&Number.isInteger(existingIndex)&&stageTextEdit.existingIndex===existingIndex){
+      const activeEditor=stageTextEditorElement();
+      activeEditor.focus();
+      return;
+    }
     finishStageTextEntry(true);
     const editor = stageTextEditorElement();
     const existing = Number.isInteger(existingIndex) ? drawObjects[existingIndex] : null;
