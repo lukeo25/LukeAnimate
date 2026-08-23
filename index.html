@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v199: adds top-bar Boolean Union/Subtract/Intersection beside the existing Fill tool. New artwork drawn while a blank drawing frame is selected now occupies that exact frame instead of creating another drawing layer. -->
 <!-- LukeAnimate GPT v198: loads Lattice Warp v1.5 with persistent per-linked-object mesh density. -->
 <!-- LukeAnimate GPT v197: loads Lattice Warp v1.4 with smooth dense-cage raster deformation. -->
 <!-- LukeAnimate GPT v196: loads draggable, full-size Lattice Warp v1.3. -->
@@ -19,7 +20,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v183</title>
+<title>Luke Animate v199</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -2296,6 +2297,10 @@
         <span class="draw-tool-fallback" aria-hidden="true">T</span><span class="sr-only">Text</span>
       </button>
       <span class="toolbar-sep"></span>
+      <button class="draw-tool icon-only" id="tool-boolean-union" type="button" title="Boolean Union — combine selected shapes" aria-label="Boolean Union"><span aria-hidden="true">∪</span><span class="sr-only">Boolean Union</span></button>
+      <button class="draw-tool icon-only" id="tool-boolean-subtract" type="button" title="Boolean Subtract — subtract upper selected shapes from the lowest selected shape" aria-label="Boolean Subtract"><span aria-hidden="true">−</span><span class="sr-only">Boolean Subtract</span></button>
+      <button class="draw-tool icon-only" id="tool-boolean-intersection" type="button" title="Boolean Intersection — keep overlap of selected shapes" aria-label="Boolean Intersection"><span aria-hidden="true">∩</span><span class="sr-only">Boolean Intersection</span></button>
+      <span class="toolbar-sep"></span>
       <label class="toolbar-field">Fill<input type="color" id="draw-fillcolor" value="#4fe0c4" title="Fill colour"></label>
       <label class="toolbar-field">Border<input type="color" id="draw-strokecolor" value="#1b1f24" title="Border colour"></label>
       <label class="toolbar-field">Border Width<input type="range" id="draw-strokewidth" min="1" max="30" value="4"><span class="val" id="val-draw-strokewidth">4</span></label>
@@ -3288,6 +3293,7 @@ ctx.fill();</textarea>
   let penJustFinishedAt = 0;
   let penSettings = { width:32, nibAspect:0.89, nibAngle:-25, taperLength:0.95, widthPosition:0.47, taperStart:true, taperEnd:true };
   let fillGapTolerance = 8;
+  let suppressCommitDrawUndo = false;
   let inkPanelHistoryPushed = false;
   let stageTextEdit = null; // active in-place text entry {x,y,existingIndex}
   const loadedGoogleFonts = new Set();
@@ -7214,7 +7220,7 @@ ctx.fill();</textarea>
   }
 
   function commitDrawObject(obj){
-    pushUndo();
+    if(!suppressCommitDrawUndo)pushUndo();
     ensureFrameOwnedDrawingForMutation();
     // transform + appearance fields every shape gets, so the Animate
     // inspector and keyframing work uniformly regardless of shape type
@@ -7602,6 +7608,65 @@ ctx.fill();</textarea>
     drawObjects.unshift(obj);selectDrawObject(0,false,true);renderLayerList();renderTimeline();
     logToSandbox('Closed area filled with an editable vector behind the line work.');return true;
   }
+
+  function drawBooleanMaskObject(context,obj){
+    if(!obj||obj.enabled===false||['clipinstance','text','image','video'].includes(String(obj.type||'').toLowerCase()))return false;
+    const eff=getEffectiveObj(obj,t);context.save();applyDrawObjectTransformToContext(context,obj,eff);context.fillStyle='#000';context.strokeStyle='#000';context.lineJoin='round';context.lineCap='round';
+    let path=null;
+    if(obj.type==='freehand'){
+      const points=Array.isArray(eff.points)?eff.points:obj.points,handles=Array.isArray(eff.bezierHandles)?eff.bezierHandles:obj.bezierHandles;
+      path=path2DFromVectorPoints(points,handles,!!obj.closedPath);
+    }else if(obj.type==='rect'){
+      const x1=eff.x1!==undefined?eff.x1:obj.x1,y1=eff.y1!==undefined?eff.y1:obj.y1,x2=eff.x2!==undefined?eff.x2:obj.x2,y2=eff.y2!==undefined?eff.y2:obj.y2;
+      path=path2DRoundedRect(Math.min(x1,x2),Math.min(y1,y2),Math.abs(x2-x1),Math.abs(y2-y1),eff.cornerRadius!==undefined?eff.cornerRadius:obj.cornerRadius);
+    }else if(obj.type==='ellipse'){
+      const x1=eff.x1!==undefined?eff.x1:obj.x1,y1=eff.y1!==undefined?eff.y1:obj.y1,x2=eff.x2!==undefined?eff.x2:obj.x2,y2=eff.y2!==undefined?eff.y2:obj.y2;
+      path=new Path2D();path.ellipse((x1+x2)/2,(y1+y2)/2,Math.abs(x2-x1)/2,Math.abs(y2-y1)/2,0,0,Math.PI*2);
+    }else if(obj.type==='line'){
+      path=new Path2D();path.moveTo(eff.x1!==undefined?eff.x1:obj.x1,eff.y1!==undefined?eff.y1:obj.y1);path.lineTo(eff.x2!==undefined?eff.x2:obj.x2,eff.y2!==undefined?eff.y2:obj.y2);
+    }
+    if(!path){context.restore();return false;}
+    const fillEnabled=(eff.fillEnabled!==undefined?eff.fillEnabled:obj.fillEnabled)!==false;
+    const strokeEnabled=(eff.strokeEnabled!==undefined?eff.strokeEnabled:obj.strokeEnabled)!==false;
+    if(fillEnabled&&(obj.closedPath||obj.type==='rect'||obj.type==='ellipse'))context.fill(path);
+    if(strokeEnabled){context.lineWidth=Math.max(1,Number(eff.strokeWidth!==undefined?eff.strokeWidth:obj.strokeWidth)||1);context.stroke(path);}
+    context.restore();return true;
+  }
+
+  function booleanSelectedShapes(operation){
+    const indices=Array.from(selectedDrawIndices).filter(index=>index>=0&&index<drawObjects.length).sort((a,b)=>a-b);
+    if(indices.length<2){logToSandbox('Select at least two vector shapes for a Boolean operation.',true);return false;}
+    const objects=indices.map(index=>drawObjects[index]).filter(Boolean);
+    if(objects.length<2)return false;
+    const maxRaster=1400,scale=Math.min(1,maxRaster/Math.max(W,H)),rw=Math.max(2,Math.ceil(W*scale)),rh=Math.max(2,Math.ceil(H*scale));
+    const resultCanvas=document.createElement('canvas');resultCanvas.width=rw;resultCanvas.height=rh;const resultContext=resultCanvas.getContext('2d',{alpha:true});resultContext.scale(scale,scale);
+    if(!drawBooleanMaskObject(resultContext,objects[0])){logToSandbox('The lowest selected object is not a supported vector shape.',true);return false;}
+    for(let index=1;index<objects.length;index++){
+      const mask=document.createElement('canvas');mask.width=rw;mask.height=rh;const maskContext=mask.getContext('2d',{alpha:true});maskContext.scale(scale,scale);
+      if(!drawBooleanMaskObject(maskContext,objects[index]))continue;
+      resultContext.save();resultContext.setTransform(1,0,0,1,0,0);
+      resultContext.globalCompositeOperation=operation==='union'?'source-over':(operation==='subtract'?'destination-out':'destination-in');
+      resultContext.drawImage(mask,0,0);resultContext.restore();
+    }
+    const pixels=resultContext.getImageData(0,0,rw,rh).data,region=new Uint8Array(rw*rh);let count=0;
+    for(let index=0;index<region.length;index++){if(pixels[index*4+3]>20){region[index]=1;count++;}}
+    if(!count){logToSandbox('The Boolean '+operation+' produced no visible area.',true);return false;}
+    let contour=traceFloodRegionBoundary(region,rw,rh);
+    if(contour.length<3){logToSandbox('Could not trace the Boolean result.',true);return false;}
+    contour=simplifyPolylineRdp(contour.concat([contour[0]]),1).slice(0,-1);
+    if(contour.length>900){const step=Math.ceil(contour.length/900);contour=contour.filter((_,index)=>index%step===0);}
+    const style=drawStyle(),base=objects[0],result=ensureDrawObjectMetadata({type:'freehand',name:'Boolean '+operation,points:contour.map(point=>({x:point.x/scale,y:point.y/scale})),closedPath:true,fillEnabled:true,strokeEnabled:false,fillColor:base.fillColor||style.fillColor,strokeColor:base.strokeColor||style.strokeColor,strokeWidth:0,opacity:1,tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,keyframes:[]});
+    pushUndo();
+    const replacedLayerIds=objects.map(object=>object&&object.timelineLayerId).filter(Boolean);
+    for(let index=indices.length-1;index>=0;index--)drawObjects.splice(indices[index],1);
+    if(replacedLayerIds.length&&typeof wickRemoveLayersByIds==='function')wickRemoveLayersByIds(replacedLayerIds);
+    selectedDrawIndices.clear();suppressCommitDrawUndo=true;try{commitDrawObject(result);}finally{suppressCommitDrawUndo=false;}
+    logToSandbox('Boolean '+operation+' created an editable vector result.');return true;
+  }
+
+  document.getElementById('tool-boolean-union').addEventListener('click',()=>booleanSelectedShapes('union'));
+  document.getElementById('tool-boolean-subtract').addEventListener('click',()=>booleanSelectedShapes('subtract'));
+  document.getElementById('tool-boolean-intersection').addEventListener('click',()=>booleanSelectedShapes('intersection'));
 
   function handleDrawMouseDown(e){
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
@@ -18949,6 +19014,20 @@ ctx.fill();</textarea>
     return null;
   }
 
+  function wickClaimSelectedBlankFrameForObject(object,frameIndex){
+    if(!object||!wickSelectedDrawingFrameId)return null;
+    const owner=wickFrameOwnerById(wickSelectedDrawingFrameId);
+    if(!owner||!owner.frame||owner.frame.blank!==true||owner.frame.object)return null;
+    frameIndex=Math.max(0,Math.round(Number(frameIndex)||0));
+    if(frameIndex<owner.frame.startFrame||frameIndex>owner.frame.endFrame)return null;
+    ensureDrawObjectMetadata(object);
+    owner.frame.blank=false;owner.frame.object=object;
+    object.timelineLayerId=owner.layer.id;object.timelineLayerOrder=owner.layer.order;
+    object.frameLinkId=owner.frame.id;object.frameLinkStart=owner.frame.startFrame;object.frameLinkEnd=owner.frame.endFrame;
+    wickActiveDrawingLayerId=owner.layer.id;
+    return owner.frame;
+  }
+
   function wickResolveDeletionTargets(){
     wickEnsureCurrentDrawingLayers();
     const currentFrame=wickCurrentFrameIndex();
@@ -19095,8 +19174,9 @@ ctx.fill();</textarea>
 
   const wickCommitDrawObjectBase = commitDrawObject;
   commitDrawObject = function(object){
-    wickCommitDrawObjectBase(object);
     const currentFrame=wickCurrentFrameIndex();
+    wickClaimSelectedBlankFrameForObject(object,currentFrame);
+    wickCommitDrawObjectBase(object);
     let layer=object&&object.timelineLayerId?wickLayerById(object.timelineLayerId):null;
     let active=layer?wickFrameAt(layer,currentFrame):null;
     if(!active || active.object!==object){
@@ -19125,7 +19205,7 @@ ctx.fill();</textarea>
         ensureDrawObjectMetadata(object);
         let layer=object.timelineLayerId ? wickLayerById(object.timelineLayerId) : null;
         if(!layer){
-          wickRegisterObjectLayer(object,frameIndex,wickTotalFrameIndex(timelineDuration));
+          if(!wickClaimSelectedBlankFrameForObject(object,frameIndex))wickRegisterObjectLayer(object,frameIndex,wickTotalFrameIndex(timelineDuration));
           changed=true;
           return;
         }
@@ -23636,3 +23716,4 @@ ctx.fill();</textarea>
 </script>
 </body>
 </html>
+
