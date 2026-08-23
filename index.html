@@ -1,6 +1,7 @@
-Warning: truncated output (original token count: 256780)
-Total output lines: 24118
+Warning: truncated output (original token count: 257260)
+Total output lines: 24160
 
+<!-- LukeAnimate GPT v218: Gizmo keys can be selected, dragged to another frame and removed directly with Delete or Backspace. -->
 <!-- LukeAnimate GPT v217: zooming while editing a Clip keeps the Clip origin fixed in the viewport instead of zooming toward the workspace corner. -->
 <!-- LukeAnimate GPT v216: inline text editing temporarily hides the original canvas rendering of that same text object, removing the apparent duplicate beneath the live editor. -->
 <!-- LukeAnimate GPT v215: Convert Selected to Clip is a fully circular action button while retaining its centred three-line label and existing behavior. -->
@@ -40,7 +41,7 @@ Total output lines: 24118
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v217</title>
+<title>Luke Animate v218</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -1144,6 +1145,10 @@ Total output lines: 24118
     box-shadow:0 0 0 1px #5c1639,0 1px 3px rgba(0,0,0,.28);
   }
   .timeline-key-dot.frame-gizmo-key:hover{filter:brightness(1.18);}
+  .timeline-key-dot.frame-gizmo-key.selected{
+    background:#d82d7b; outline:2px solid #1b1f24; outline-offset:2px;
+    filter:brightness(1.12);
+  }
   .timeline-track.has-frame-gizmo-keys .timeline-key-dot:not(.frame-gizmo-key){
     top:10px; width:8px; height:8px; margin-left:-4px; z-index:5;
   }
@@ -8611,38 +8616,7 @@ ctx.fill();</textarea>
     beforeHandle.style.left = beforePct + '%';
     afterHandle.style.left = afterPct + '%';
 
-    beforeHandle.title = 'Previous onion range: ' + onionSkinBeforeFrames + ' frame' + (onionSkinBeforeFrames === 1 ? '' : 's') + ' — drag to adjust';
-    afterHandle.title = 'Following onion range: ' + onionSkinAfterFrames + ' frame' + (onionSkinAfterFrames === 1 ? '' : 's') + ' — d…56780 tokens truncated…stage settings ----------------
-  const stageSettingsPanel = document.getElementById('stage-settings-panel');
-  const stageWidthInput = document.getElementById('inp-stage-width');
-  const stageHeightInput = document.getElementById('inp-stage-height');
-  const stagePresetSelect = document.getElementById('sel-stage-preset');
-  const stageFPSInput = document.getElementById('inp-fps');
-  const stageColorInput = document.getElementById('inp-stage-bg-color');
-  const stageColorValue = document.getElementById('stage-bg-color-value');
-  const btnBgT = document.getElementById('btn-bg-transparent');
-  const btnBgC = document.getElementById('btn-bg-color');
-
-  function clampStageWidth(value){
-    return Math.max(160, Math.min(7680, Math.round(Number(value) || W || 960)));
-  }
-  function clampStageHeight(value){
-    return Math.max(90, Math.min(4320, Math.round(Number(value) || H || 540)));
-  }
-  function getStagePresetValue(width, height){
-    const key = Math.round(width) + 'x' + Math.round(height);
-    return ['960x540','1280x720','1920x1080','1080x1080','1080x1920'].includes(key) ? key : 'custom';
-  }
-  function syncStageSettingsUI(){
-    if(stageWidthInput) stageWidthInput.value = W;
-    if(stageHeightInput) stageHeightInput.value = H;
-    if(stagePresetSelect) stagePresetSelect.value = getStagePresetValue(W, H);
-    if(stageFPSInput){
-      const fps = Math.max(1, Math.min(120, Math.round(Number(stageFPSInput.value) || 30)));
-      stageFPSInput.value = fps;
-    }
-    if(stageColorInput) stageColorInput.value = stageColor;
-    if(stageColorValue) stageColorValue.textContent = stageColor.toUpperCase();
+    befor…57260 tokens truncated…erCase();
     if(btnBgT) btnBgT.classList.toggle('active', bgMode === 'transparent');
     if(btnBgC) btnBgC.classList.toggle('active', bgMode === 'color');
     if(stageColorInput) stageColorInput.disabled = bgMode === 'transparent';
@@ -9872,6 +9846,7 @@ ctx.fill();</textarea>
   }
 
   const FRAME_GIZMO_TIMELINE_DATA_KEY = '_lukeAnimateFrameGizmo';
+  let selectedFrameGizmoTimelineKey = null;
 
   function frameGizmoTimelineData(obj){
     if(!obj || obj.type !== 'clipinstance') return null;
@@ -9912,7 +9887,22 @@ ctx.fill();</textarea>
     if(!data || !key) return false;
     const before = data.keys.length;
     data.keys = data.keys.filter(entry=>entry !== key);
+    if(selectedFrameGizmoTimelineKey && selectedFrameGizmoTimelineKey.obj === obj && selectedFrameGizmoTimelineKey.key === key){
+      selectedFrameGizmoTimelineKey = null;
+    }
     return data.keys.length !== before;
+  }
+
+  function selectFrameGizmoTimelineKey(obj,key,dot){
+    selectedFrameGizmoTimelineKey={obj,key};
+    document.querySelectorAll('.timeline-key-dot.frame-gizmo-key.selected').forEach(element=>element.classList.remove('selected'));
+    if(dot)dot.classList.add('selected');
+    const objectIndex=drawObjects.indexOf(obj);
+    if(objectIndex>=0){
+      selectDrawObject(objectIndex,false,true);
+      updateInspector();
+      renderTransformHandles();
+    }
   }
 
   function dedupeFrameGizmoTimelineKeys(data, preferredKey){
@@ -9941,14 +9931,20 @@ ctx.fill();</textarea>
       const clipFrame = Math.max(1,Math.round(Number(key.frame)||1));
       const clipFrameName = frameGizmoTimelineKeyName(obj,clipFrame);
       dot.className = 'timeline-key-dot frame-gizmo-key';
+      if(selectedFrameGizmoTimelineKey && selectedFrameGizmoTimelineKey.obj === obj && selectedFrameGizmoTimelineKey.key === key){
+        dot.classList.add('selected');
+      }
       dot.dataset.easing = 'hold';
       dot.dataset.clipFrame = String(clipFrame);
       dot.style.left = timelinePercentForTime(Number(key.time)||0) + '%';
       dot.title = `Frame Gizmo key · Parent Frame ${parentFrame} → ${clipFrameName} · held until the next Gizmo key — drag to retime or right-click to delete`;
-      dot.addEventListener('contextmenu',event=>openKeyframeContextMenu(event,{
-        deleteKey:()=>removeFrameGizmoTimelineKey(obj,key),
-        deleteKeyHint:`Delete the Frame Gizmo choice for ${clipFrameName}`
-      }));
+      dot.addEventListener('contextmenu',event=>{
+        selectFrameGizmoTimelineKey(obj,key,dot);
+        openKeyframeContextMenu(event,{
+          deleteKey:()=>removeFrameGizmoTimelineKey(obj,key),
+          deleteKeyHint:`Delete the Frame Gizmo choice for ${clipFrameName}`
+        });
+      });
       let moved = false;
       let startX = 0;
       let startTime = Number(key.time) || 0;
@@ -9957,13 +9953,15 @@ ctx.fill();</textarea>
         event.preventDefault();
         event.stopPropagation();
         closeKeyframeContextMenu();
-        pushUndo();
+        selectFrameGizmoTimelineKey(obj,key,dot);
         startX = event.clientX;
         startTime = Number(key.time) || 0;
         const trackWidth = track.getBoundingClientRect().width || 1;
+        let historyPushed=false;
         function onMove(moveEvent){
           if(!moved && Math.abs(moveEvent.clientX-startX) < 2) return;
           moved = true;
+          if(!historyPushed){pushUndo();historyPushed=true;}
           const dt = ((moveEvent.clientX-startX)/trackWidth) * timelineDuration;
           key.time = snapTimeToFrame(startTime + dt);
           dedupeFrameGizmoTimelineKeys(data,key);
@@ -9985,6 +9983,19 @@ ctx.fill();</textarea>
       track.appendChild(dot);
     });
   }
+
+  document.addEventListener('keydown',event=>{
+    if(event.key!=='Delete'&&event.key!=='Backspace')return;
+    const active=document.activeElement;
+    if(active && (active.matches('input,textarea,select') || active.isContentEditable))return;
+    const selected=selectedFrameGizmoTimelineKey;
+    if(!selected || !frameGizmoTimelineData(selected.obj) || frameGizmoTimelineData(selected.obj).keys.indexOf(selected.key)<0)return;
+    event.preventDefault();
+    event.stopPropagation();
+    pushUndo();
+    removeFrameGizmoTimelineKey(selected.obj,selected.key);
+    refreshFrameGizmoTimelineUI();
+  },true);
 
   function demBonesTimelineObjectsForClip(clip){
     const objects = [];
