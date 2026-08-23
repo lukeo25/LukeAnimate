@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v222: Gizmo keys drag by absolute destination frame without rebuilding the timeline under the pointer, preventing keys from jumping away. -->
 <!-- LukeAnimate GPT v221: Clip Gizmos inherit their parent bone pose directly, using the Gizmo Bone only as the local pin offset. -->
 <!-- LukeAnimate GPT v220: Gizmo key identity survives timeline refreshes so move/delete work, and choosing a Gizmo mouth with Auto-Keyframe off cannot overwrite the keyed sequence. -->
 <!-- LukeAnimate GPT v219: Clip Gizmos automatically load and display FrameGizmo whenever selected from Animate, attached, or reached through a Gizmo Bone. -->
@@ -41,7 +42,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v221</title>
+<title>Luke Animate v222</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -15153,7 +15154,6 @@ ctx.fill();</textarea>
       });
       let moved = false;
       let startX = 0;
-      let startTime = Number(key.time) || 0;
       dot.addEventListener('mousedown',event=>{
         if(event.button !== 0) return;
         event.preventDefault();
@@ -15161,23 +15161,24 @@ ctx.fill();</textarea>
         closeKeyframeContextMenu();
         selectFrameGizmoTimelineKey(obj,key,dot);
         startX = event.clientX;
-        startTime = Number(key.time) || 0;
-        const trackWidth = track.getBoundingClientRect().width || 1;
+        const trackRect = track.getBoundingClientRect();
+        const dragFrameInfo = getTimelineFrameInfo();
         let historyPushed=false;
         function onMove(moveEvent){
           if(!moved && Math.abs(moveEvent.clientX-startX) < 2) return;
           moved = true;
           if(!historyPushed){pushUndo();historyPushed=true;}
-          const dt = ((moveEvent.clientX-startX)/trackWidth) * timelineDuration;
-          key.time = snapTimeToFrame(startTime + dt);
-          dedupeFrameGizmoTimelineKeys(data,key);
-          renderTimeline();
-          updateInspector();
+          const fraction=Math.max(0,Math.min(0.999999,(moveEvent.clientX-trackRect.left)/Math.max(1,trackRect.width)));
+          const destinationFrame=Math.max(0,Math.min(dragFrameInfo.totalFrames,Math.floor(fraction*dragFrameInfo.totalCells)));
+          key.time=destinationFrame/dragFrameInfo.fps;
+          dot.style.left=timelineFrameCenterPercent(destinationFrame,dragFrameInfo)+'%';
         }
         function onUp(){
           window.removeEventListener('mousemove',onMove);
           window.removeEventListener('mouseup',onUp);
-          if(!moved){
+          if(moved){
+            dedupeFrameGizmoTimelineKeys(data,key);
+          }else{
             t = Math.max(0,Math.min(timelineDuration,Number(key.time)||0));
             syncActiveSceneFrameForTime(t,false);
           }
