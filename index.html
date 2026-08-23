@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v226: returning from a Clip restores the complete main stage at 100% instead of carrying the Clip zoom and scroll position outward. -->
 <!-- LukeAnimate GPT v225: Clip editing zooms to 600% with a vector-sharp adaptive workspace, while the main stage remains capped at 300%. -->
 <!-- LukeAnimate GPT v224: Clip editing redraws native vector artwork at the displayed zoom resolution instead of CSS-enlarging the canvas bitmap. -->
 <!-- LukeAnimate GPT v222: Gizmo keys drag by absolute destination frame without rebuilding the timeline under the pointer, preventing keys from jumping away. -->
@@ -44,7 +45,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v225</title>
+<title>Luke Animate v226</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -7197,13 +7198,21 @@ ctx.fill();</textarea>
     const prev = contextStack.pop();
     editingClipId = prev.clipId;
     clipEditViewOffset = prev.viewOffset || { x:0, y:0 };
+    const returningToMainStage=!editingClipId;
+    if(returningToMainStage)stageZoom=1;
     syncClipEditCanvasExtent(false);
     applyContext(prev.data);
     updateClipBreadcrumb();
     renderClipLibrary();
     renderTimeline();
     renderClipFrameNameList();
-    requestAnimationFrame(updateRulersAndGuides);
+    requestAnimationFrame(()=>{
+      if(returningToMainStage){
+        const wrap=document.getElementById('stage-wrap');
+        if(wrap){wrap.scrollLeft=0;wrap.scrollTop=0;}
+      }
+      updateRulersAndGuides();
+    });
     return true;
   }
 
