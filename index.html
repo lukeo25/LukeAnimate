@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v223: Gizmo key dragging uses a frozen starting frame and frame-cell pixel delta, preserving the grab offset across selection/layout changes. -->
+<!-- LukeAnimate GPT v224: Clip editing redraws native vector artwork at the displayed zoom resolution instead of CSS-enlarging the canvas bitmap. -->
 <!-- LukeAnimate GPT v222: Gizmo keys drag by absolute destination frame without rebuilding the timeline under the pointer, preventing keys from jumping away. -->
 <!-- LukeAnimate GPT v221: Clip Gizmos inherit their parent bone pose directly, using the Gizmo Bone only as the local pin offset. -->
 <!-- LukeAnimate GPT v220: Gizmo key identity survives timeline refreshes so move/delete work, and choosing a Gizmo mouth with Auto-Keyframe off cannot overwrite the keyed sequence. -->
@@ -43,7 +43,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v223</title>
+<title>Luke Animate v224</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3325,6 +3325,8 @@ ctx.fill();</textarea>
   let bgMode = 'transparent'; // 'transparent' or 'color'
   let stageColor = '#ffffff';
   let stageZoom = 1;
+  let clipEditLogicalWidth = W;
+  let clipEditLogicalHeight = H;
   const MIN_ZOOM = 0.25, MAX_ZOOM = 3;
   let stageGuides = { vertical:[], horizontal:[] };
   let snapToGuides = true;
@@ -3787,11 +3789,44 @@ ctx.fill();</textarea>
   // the export-stage crop. Keep logical project dimensions W/H unchanged and
   // use the actual edit canvas extent only for screen-space mapping.
   function editCanvasLogicalWidth(){
-    return editingClipId ? Math.max(1, Number(canvas.width)||W) : W;
+    return editingClipId ? Math.max(1, Number(clipEditLogicalWidth)||W) : W;
   }
 
   function editCanvasLogicalHeight(){
-    return editingClipId ? Math.max(1, Number(canvas.height)||H) : H;
+    return editingClipId ? Math.max(1, Number(clipEditLogicalHeight)||H) : H;
+  }
+
+  // A Clip is still made from native vector objects while it is being edited.
+  // Keep its logical workspace separate from the canvas backing-store size so
+  // zoom can allocate one real canvas pixel per displayed pixel and redraw the
+  // paths cleanly. Previously only the CSS width/height changed, which enlarged
+  // an already-rendered bitmap and made vector SVG frames look rasterized.
+  function applyClipEditCanvasResolution(size){
+    const logicalWidth=Math.max(1,Math.round(Number(size&&size.width)||clipEditLogicalWidth||W));
+    const logicalHeight=Math.max(1,Math.round(Number(size&&size.height)||clipEditLogicalHeight||H));
+    const zoom=Math.max(.05,Number(stageZoom)||1);
+    const renderScale=Math.max(1,zoom);
+    const backingWidth=Math.max(1,Math.round(logicalWidth*renderScale));
+    const backingHeight=Math.max(1,Math.round(logicalHeight*renderScale));
+    clipEditLogicalWidth=logicalWidth;
+    clipEditLogicalHeight=logicalHeight;
+    if(canvas.width!==backingWidth)canvas.width=backingWidth;
+    if(canvas.height!==backingHeight)canvas.height=backingHeight;
+    ctx.setTransform(renderScale,0,0,renderScale,0,0);
+
+    const cssWidth=Math.round(logicalWidth*zoom);
+    const cssHeight=Math.round(logicalHeight*zoom);
+    const shell=document.getElementById('canvas-shell');
+    canvas.style.maxWidth='none';
+    canvas.style.maxHeight='none';
+    canvas.style.width=cssWidth+'px';
+    canvas.style.height=cssHeight+'px';
+    if(shell){
+      shell.style.maxWidth='none';
+      shell.style.maxHeight='none';
+      shell.style.width=cssWidth+'px';
+      shell.style.height=cssHeight+'px';
+    }
   }
 
   function desiredClipEditCanvasExtent(){
@@ -3825,31 +3860,18 @@ ctx.fill();</textarea>
 
   function syncClipEditCanvasExtent(recentre){
     if(!editingClipId){
+      clipEditLogicalWidth=W;
+      clipEditLogicalHeight=H;
       if(canvas.width!==W)canvas.width=W;
       if(canvas.height!==H)canvas.height=H;
+      ctx.setTransform(1,0,0,1,0,0);
       applyZoom();
       return;
     }
 
     const size=desiredClipEditCanvasExtent();
-    const changed=canvas.width!==size.width||canvas.height!==size.height;
-    if(canvas.width!==size.width)canvas.width=size.width;
-    if(canvas.height!==size.height)canvas.height=size.height;
-
-    const shell=document.getElementById('canvas-shell');
-    const zoom=Math.max(.05,Number(stageZoom)||1);
-    const cssW=Math.round(size.width*zoom);
-    const cssH=Math.round(size.height*zoom);
-    canvas.style.maxWidth='none';
-    canvas.style.maxHeight='none';
-    canvas.style.width=cssW+'px';
-    canvas.style.height=cssH+'px';
-    if(shell){
-      shell.style.maxWidth='none';
-      shell.style.maxHeight='none';
-      shell.style.width=cssW+'px';
-      shell.style.height=cssH+'px';
-    }
+    const changed=clipEditLogicalWidth!==size.width||clipEditLogicalHeight!==size.height;
+    applyClipEditCanvasResolution(size);
 
     if((changed||recentre)&&clips[editingClipId])centreClipEditView(clips[editingClipId]);
     if(changed||recentre)centreClipWorkspaceScroll();
@@ -13952,15 +13974,7 @@ ctx.fill();</textarea>
     if(editingClipId){
       const logicalW=editCanvasLogicalWidth();
       const logicalH=editCanvasLogicalHeight();
-      const w=Math.round(logicalW*stageZoom),h=Math.round(logicalH*stageZoom);
-      canvasEl.style.maxWidth='none';
-      canvasEl.style.maxHeight='none';
-      canvasEl.style.width=w+'px';
-      canvasEl.style.height=h+'px';
-      shell.style.maxWidth='none';
-      shell.style.maxHeight='none';
-      shell.style.width=w+'px';
-      shell.style.height=h+'px';
+      applyClipEditCanvasResolution({width:logicalW,height:logicalH});
     }else if(Math.abs(stageZoom - 1) < 0.001){
       // back to responsive "fit whatever space is available" mode
       canvasEl.style.width = '';
