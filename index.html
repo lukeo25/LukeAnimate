@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v229: Image / Video can fit a resource to the stage or resize the stage to the resource's native dimensions. -->
 <!-- LukeAnimate GPT v228: the Audio timeline row has the same direct red delete control as other timeline layers. -->
 <!-- LukeAnimate GPT v227: timeline, playhead and waveform dragging provide audible audio scrubbing and stop cleanly on the chosen frame. -->
 <!-- LukeAnimate GPT v226: returning from a Clip restores the complete main stage at 100% instead of carrying the Clip zoom and scroll position outward. -->
@@ -47,7 +48,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v228</title>
+<title>Luke Animate v229</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3041,6 +3042,7 @@
             <option value="contain">Fit inside stage</option>
             <option value="cover">Fill stage</option>
             <option value="original">Original size</option>
+            <option value="stage-resource">Rescale stage to resource</option>
           </select>
         </div>
         <label class="toggle-line"><input type="checkbox" id="chk-media-no-render" checked> <b>No Render</b> — omit this layer from exported WebM</label>
@@ -3057,7 +3059,10 @@
           <label class="toggle-line"><input type="checkbox" id="chk-selected-media-no-render"> <b>No Render</b> — editor only</label>
           <label class="toggle-line" id="selected-media-loop-row"><input type="checkbox" id="chk-selected-media-loop"> Loop video/GIF</label>
           <div class="btn-row" style="margin-top:6px;">
-            <button class="btn small" id="btn-media-fit-stage">Fit Stage</button>
+            <button class="btn small" id="btn-media-fit-stage" style="flex:1;">Fit to Stage</button>
+            <button class="btn small" id="btn-stage-fit-media" style="flex:2;">Rescale Stage to Resource</button>
+          </div>
+          <div class="btn-row" style="margin-top:6px;">
             <button class="btn small" id="btn-media-send-back">Send Back</button>
             <button class="btn small" id="btn-media-bring-front">Bring Front</button>
           </div>
@@ -4403,6 +4408,35 @@ ctx.fill();</textarea>
     return true;
   }
 
+  function rescaleStageToMediaResource(obj){
+    if(!isMediaObject(obj)) return false;
+    const resourceWidth=Math.max(1,Math.round(Number(obj.naturalWidth||obj.width)||1));
+    const resourceHeight=Math.max(1,Math.round(Number(obj.naturalHeight||obj.height)||1));
+    pushUndo();
+    applyStageDimensions(resourceWidth,resourceHeight,false);
+    // Cover the resulting stage exactly. The normal stage limits still apply
+    // for exceptionally large resources.
+    obj.x=0;
+    obj.y=0;
+    obj.width=W;
+    obj.height=H;
+    obj.tx=0;
+    obj.ty=0;
+    obj.tscale=1;
+    obj.tscaleX=1;
+    obj.tscaleY=1;
+    obj.trotation=0;
+    updateInspector();
+    updateMediaPanelSelection();
+    renderLayerList();
+    renderTimeline();
+    renderTransformHandles();
+    renderOffstageObjectProxies();
+    const status=document.getElementById('media-import-status');
+    if(status) status.textContent='Stage resized to '+W+' × '+H+' for '+objectLayerName(obj)+'.';
+    return true;
+  }
+
   function updateMediaPanelSelection(){
     const controls = document.getElementById('selected-media-controls');
     if(!controls) return;
@@ -4487,9 +4521,12 @@ ctx.fill();</textarea>
     const noRender = !!document.getElementById('chk-media-no-render').checked;
     const loop = !!document.getElementById('chk-media-loop').checked;
     const startAtCurrent = !!document.getElementById('chk-media-start-current').checked;
-    const fitted = mediaFitRect(metadata.width, metadata.height, fitMode);
 
     pushUndo();
+    if(fitMode === 'stage-resource') applyStageDimensions(metadata.width,metadata.height,false);
+    const fitted = fitMode === 'stage-resource'
+      ? {x:0,y:0,width:W,height:H}
+      : mediaFitRect(metadata.width, metadata.height, fitMode);
     ensureFrameOwnedDrawingForMutation();
     const object = ensureDrawObjectMetadata({
       type:isVideo ? 'video' : 'image',
@@ -4650,6 +4687,10 @@ ctx.fill();</textarea>
       fitMediaObjectToStage(obj, obj.mediaRole === 'background' ? 'cover' : 'contain');
       updateInspector();
       renderTransformHandles();
+    });
+    document.getElementById('btn-stage-fit-media').addEventListener('click',()=>{
+      const obj=selectedMediaObject();
+      if(obj) rescaleStageToMediaResource(obj);
     });
     document.getElementById('btn-media-send-back').addEventListener('click',()=>moveSelectedMediaToEdge(false));
     document.getElementById('btn-media-bring-front').addEventListener('click',()=>moveSelectedMediaToEdge(true));
