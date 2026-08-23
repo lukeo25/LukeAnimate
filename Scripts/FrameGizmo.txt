@@ -1,5 +1,5 @@
 /*
-  Luke Animate Frame Gizmo GPT v3.2
+  Luke Animate Frame Gizmo GPT v3.3
   Stage-side named-frame controller for selected Clip instances.
 
   The controller is shown only while exactly one Clip instance is selected.
@@ -13,7 +13,7 @@
   const STYLE_ID = "lukeanimate-frame-gizmo-v3-style";
   const DOCK_ID = "lukeanimate-frame-gizmo-v3-dock";
   const DATA_KEY = "_lukeAnimateFrameGizmo";
-  const VERSION = "3.2";
+  const VERSION = "3.3";
   const TOOL_GROUP_ID = String(group && group.id ? group.id : "animate");
   const TOOL_ITEM_ID = String(item && (item.id || item.label) ? (item.id || item.label) : "FrameGizmo");
   const TOOL_ICON_URL = String(item && item.iconUrl ? item.iconUrl : "https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.svg");
@@ -158,13 +158,12 @@
       ? null
       : (Number.isFinite(Number(manualValue)) ? Math.max(1,Math.round(Number(manualValue))) : null);
     if(!Array.isArray(data.keys)) data.keys = [];
-    data.keys = data.keys
-      .filter(key=>key && Number.isFinite(Number(key.time)) && Number.isFinite(Number(key.frame)))
-      .map(key=>({
-        time:Math.max(0,number(key.time,0)),
-        frame:Math.max(1,Math.round(number(key.frame,1)))
-      }))
-      .sort((a,b)=>a.time-b.time);
+    data.keys = data.keys.filter(key=>key && Number.isFinite(Number(key.time)) && Number.isFinite(Number(key.frame)));
+    data.keys.forEach(key=>{
+      key.time = Math.max(0,number(key.time,0));
+      key.frame = Math.max(1,Math.round(number(key.frame,1)));
+    });
+    data.keys.sort((a,b)=>a.time-b.time);
     return data;
   }
 
@@ -204,22 +203,21 @@
 
   function setStop(instance, stop){
     if(!instance || !stop) return;
-    LukeAnimate.pushUndo();
     const data = ensureControllerData(instance);
-    data.enabled = true;
     const auto = !!LukeAnimate.getAutoKeyframe();
-    if(auto){
-      data.manualFrame = null;
-      const currentTime = Math.max(0,number(LukeAnimate.time,0));
-      if(data.keys.length === 0 && currentTime > 0.0001){
-        data.keys.push({time:0,frame:data.baseFrame || stop.frame});
-      }
-      upsertHoldKey(data,currentTime,stop.frame);
-      if(currentTime <= 0.0001) data.baseFrame = stop.frame;
-    }else{
-      data.baseFrame = stop.frame;
-      data.manualFrame = stop.frame;
+    if(!auto){
+      renderDock(true);
+      return;
     }
+    LukeAnimate.pushUndo();
+    data.enabled = true;
+    data.manualFrame = null;
+    const currentTime = Math.max(0,number(LukeAnimate.time,0));
+    if(data.keys.length === 0 && currentTime > 0.0001){
+      data.keys.push({time:0,frame:data.baseFrame || stop.frame});
+    }
+    upsertHoldKey(data,currentTime,stop.frame);
+    if(currentTime <= 0.0001) data.baseFrame = stop.frame;
     LukeAnimate.refreshUI();
     renderDock(true);
   }
@@ -602,3 +600,4 @@
   state.pollTimer = setInterval(poll,140);
   poll();
 })();
+
