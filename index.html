@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v220: Gizmo key identity survives timeline refreshes so move/delete work, and choosing a Gizmo mouth with Auto-Keyframe off cannot overwrite the keyed sequence. -->
 <!-- LukeAnimate GPT v219: Clip Gizmos automatically load and display FrameGizmo whenever selected from Animate, attached, or reached through a Gizmo Bone. -->
 <!-- LukeAnimate GPT v218: Gizmo keys can be selected, dragged to another frame and removed directly with Delete or Backspace. -->
 <!-- LukeAnimate GPT v217: zooming while editing a Clip keeps the Clip origin fixed in the viewport instead of zooming toward the workspace corner. -->
@@ -39,7 +40,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v219</title>
+<title>Luke Animate v220</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -15058,14 +15059,12 @@ ctx.fill();</textarea>
     if(!obj || obj.type !== 'clipinstance') return null;
     const data = obj[FRAME_GIZMO_TIMELINE_DATA_KEY];
     if(!data || typeof data !== 'object' || !Array.isArray(data.keys)) return null;
-    data.keys = data.keys
-      .filter(key=>key && Number.isFinite(Number(key.time)) && Number.isFinite(Number(key.frame)))
-      .map(key=>{
-        key.time = Math.max(0, Math.min(timelineDuration, Number(key.time) || 0));
-        key.frame = Math.max(1, Math.round(Number(key.frame) || 1));
-        return key;
-      })
-      .sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
+    data.keys = data.keys.filter(key=>key && Number.isFinite(Number(key.time)) && Number.isFinite(Number(key.frame)));
+    data.keys.forEach(key=>{
+      key.time = Math.max(0, Math.min(timelineDuration, Number(key.time) || 0));
+      key.frame = Math.max(1, Math.round(Number(key.frame) || 1));
+    });
+    data.keys.sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
     return data;
   }
 
