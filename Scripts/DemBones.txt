@@ -1,4 +1,8 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.54
+/* Luke Animate Dem Bones + MyCharacter GPT v16.56
+   v16.56 keeps an immutable Tube bind cage and previews Tube deformation live
+   while Dem Bones is open in Bones, Edit Bone, Animate, or Curves.
+   v16.55 makes Tube sections flexible: dragging any section bends its nearest
+   internal handle in Bones, Edit Bone or Animate instead of rotating rigidly.
    v16.54 makes every Tube handle directly accessible in Animate with priority
    stage hit-testing and numbered X/Y handle controls in the sidebar.
    v16.53 adds Tube Bones: curved mesh cages with animatable internal handles,
@@ -164,7 +168,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.54";
+  var TOOL_VERSION = "16.56";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1382,7 +1386,8 @@
         y:n(p.y,0)
       };
     });
-    var bindMap=restTransformMap(rig);
+    var bindMap=restTransformMap(rig),tubeBindMap=skinBindTransformMap(rig);
+    (rig.bones||[]).forEach(function(bone){if(isTubeBone(bone)&&tubeBindMap[bone.id])bindMap[bone.id]=tubeBindMap[bone.id];});
 
     d.version=6;
     d.restPoints=points;
@@ -1435,7 +1440,8 @@
     if(!o||!o.demBones)return;
     var d=o.demBones;
     if(!Array.isArray(d.restPoints)||!d.restPoints.length){rebuildObjectSkinData(o,rig);return;}
-    var bindMap=restTransformMap(rig);
+    var bindMap=restTransformMap(rig),tubeBindMap=skinBindTransformMap(rig);
+    (rig.bones||[]).forEach(function(bone){if(isTubeBone(bone)&&tubeBindMap[bone.id])bindMap[bone.id]=tubeBindMap[bone.id];});
     d.weights=d.restPoints.map(function(p){return buildPointWeights(p,rig,bindMap);});
     if(!d.raster&&Array.isArray(d.restBezierHandles)&&d.restBezierHandles.length===d.restPoints.length){
       d.handleWeights=d.restBezierHandles.map(function(handle,index){
@@ -1455,7 +1461,10 @@
     normaliseRigBones(rig);
     /* The current rest skeleton IS the setup/bind skeleton. Keep the legacy
        skinBindBones snapshot synchronized for saved-file compatibility. */
+    var preservedTubeBind={};
+    if(rig.skinBindBones)(rig.bones||[]).forEach(function(bone){if(isTubeBone(bone)&&rig.skinBindBones[bone.id])preservedTubeBind[bone.id]=clone(rig.skinBindBones[bone.id]);});
     captureRigSkinBind(rig);
+    Object.keys(preservedTubeBind).forEach(function(id){rig.skinBindBones[id]=preservedTubeBind[id];});
     rigObjects(rig).forEach(function(o){reweightObjectSkinData(o,rig);});
     syncRigRefs(rig);
   }
@@ -1530,6 +1539,16 @@
       return boneHitHandlePriority(candidate.handle)<boneHitHandlePriority(current.handle);
     }
     return false;
+  }
+
+  function nearestTubeHandleIndex(point,controls){
+    if(!Array.isArray(controls)||controls.length<3)return 0;
+    var bestIndex=0,bestDistance=Infinity;
+    controls.slice(1,-1).forEach(function(control,index){
+      var distance=Math.hypot(n(point&&point.x,0)-control.x,n(point&&point.y,0)-control.y);
+      if(distance<bestDistance){bestDistance=distance;bestIndex=index;}
+    });
+    return bestIndex;
   }
 
   function nearestBoneEndpoint(point,ignoreId,includeDummies){
@@ -1844,7 +1863,9 @@
         tail:clone(b.restTail),
         angle:angleOf(b.restHead,b.restTail),
         length:Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y)),
-        scale:1
+        scale:1,
+        tubeHandleCount:isTubeBone(b)?b.tubeHandleCount:undefined,
+        tubeRestOffsets:isTubeBone(b)?clone(b.tubeRestOffsets):undefined
       };
     });
     rig.skinBindBones=bind;
@@ -1863,7 +1884,9 @@
         tail:clone(b.restTail),
         angle:angleOf(b.restHead,b.restTail),
         length:Math.max(.001,Math.hypot(b.restTail.x-b.restHead.x,b.restTail.y-b.restHead.y)),
-        scale:1
+        scale:1,
+        tubeHandleCount:isTubeBone(b)?b.tubeHandleCount:undefined,
+        tubeRestOffsets:isTubeBone(b)?clone(b.tubeRestOffsets):undefined
       };
     });
     rig.skinBindBones=stored;
@@ -1876,12 +1899,17 @@
       var q=stored[b.id];
       if(!q)return;
       var head=clone(q.head),tail=clone(q.tail);
-      out[b.id]={
+      var transform={
         head:head,tail:tail,
         angle:isFinite(Number(q.angle))?Number(q.angle):angleOf(head,tail),
         length:Math.max(.001,n(q.length,Math.hypot(tail.x-head.x,tail.y-head.y))),
         scale:1
       };
+      if(isTubeBone(b)){
+        var bindBone=Object.assign({},b,{restHead:head,restTail:tail,restLength:transform.length,tubeHandleCount:clamp(Math.round(n(q.tubeHandleCount,b.tubeHandleCount||3)),1,7),tubeRestOffsets:normaliseTubeOffsets(q.tubeRestOffsets,q.tubeHandleCount||b.tubeHandleCount||3)});
+        applyTubeGeometry(bindBone,transform,null,false);
+      }
+      out[b.id]=transform;
     });
     return out;
   }
@@ -1894,7 +1922,9 @@
       tail:clone(bone.restTail),
       angle:angleOf(bone.restHead,bone.restTail),
       length:Math.max(.001,Math.hypot(bone.restTail.x-bone.restHead.x,bone.restTail.y-bone.restHead.y)),
-      scale:1
+      scale:1,
+      tubeHandleCount:isTubeBone(bone)?bone.tubeHandleCount:undefined,
+      tubeRestOffsets:isTubeBone(bone)?clone(bone.tubeRestOffsets):undefined
     };
     rig.skinBindBones=bind;
   }
@@ -1918,8 +1948,12 @@
 
     /* Edit Bone is setup mode. The current restHead/restTail skeleton is the
        source skeleton for future animation. Never derive it from a posed frame. */
+    var preservedTubeBind={};
+    if(rig.skinBindBones) (rig.bones||[]).forEach(function(bone){if(isTubeBone(bone)&&rig.skinBindBones[bone.id])preservedTubeBind[bone.id]=clone(rig.skinBindBones[bone.id]);});
     captureRigSkinBind(rig);
-    var bindMap=restTransformMap(rig);
+    Object.keys(preservedTubeBind).forEach(function(id){rig.skinBindBones[id]=preservedTubeBind[id];});
+    var bindMap=restTransformMap(rig),tubeBindMap=skinBindTransformMap(rig);
+    (rig.bones||[]).forEach(function(bone){if(isTubeBone(bone)&&tubeBindMap[bone.id])bindMap[bone.id]=tubeBindMap[bone.id];});
     var changed=false;
 
     rigObjects(rig).forEach(function(object){
@@ -3246,8 +3280,9 @@
         });
         (record.tubePoints||[]).slice(0,-1).forEach(function(control,index){
           var a=stagePointFromScene(control),z=stagePointFromScene(record.tubePoints[index+1]),distance=distancePointToSegment(point,a,z);
-          var tubeLineCandidate={part:record.part,bone:record.bone,handle:'line',head:record.head,tail:record.tail,distance:distance};
-          if(distance<=lineThreshold&&betterBoneHit(tubeLineCandidate,best))best=tubeLineCandidate;
+          var stageTubeControls=record.tubeControls.map(stagePointFromScene);
+          var tubeLineCandidate={part:record.part,bone:record.bone,handle:'tube-'+nearestTubeHandleIndex(point,stageTubeControls),head:record.head,tail:record.tail,distance:distance};
+          if(distance<=lineThreshold&&Math.min(Math.hypot(point.x-head.x,point.y-head.y),Math.hypot(point.x-tail.x,point.y-tail.y))>nodeThreshold&&betterBoneHit(tubeLineCandidate,best))best=tubeLineCandidate;
         });
       }
       var headDistance=Math.hypot(point.x-head.x,point.y-head.y);
@@ -3534,8 +3569,8 @@
           if(distance<=scenePixels(20)&&betterBoneHit(tubeCandidate,best))best=tubeCandidate;
         });
         (record.tubePoints||[]).slice(0,-1).forEach(function(control,index){
-          var distance=distancePointToSegment(point,control,record.tubePoints[index+1]),tubeLineCandidate={part:record.part,bone:record.bone,handle:'line',head:record.head,tail:record.tail,distance:distance};
-          if(distance<=lineThreshold&&betterBoneHit(tubeLineCandidate,best))best=tubeLineCandidate;
+          var distance=distancePointToSegment(point,control,record.tubePoints[index+1]),tubeLineCandidate={part:record.part,bone:record.bone,handle:'tube-'+nearestTubeHandleIndex(point,record.tubeControls),head:record.head,tail:record.tail,distance:distance};
+          if(distance<=lineThreshold&&Math.min(Math.hypot(point.x-record.head.x,point.y-record.head.y),Math.hypot(point.x-record.tail.x,point.y-record.tail.y))>nodeThreshold&&betterBoneHit(tubeLineCandidate,best))best=tubeLineCandidate;
         });
       }
       var headDistance=Math.hypot(point.x-record.head.x,point.y-record.head.y);
@@ -3770,19 +3805,25 @@
     /*
       v16.29 CONTRACT
       --------------
-      REST/SETUP MODE (Bones, Edit Bone, Curves): source and destination are
-      both the current rest skeleton, therefore ordinary bones NEVER deform
-      the artwork while they are being positioned.
+      REST/SETUP MODE (Bones, Edit Bone, Curves): ordinary bones use the current
+      rest skeleton for both source and destination. Tube Bones are the deliberate
+      exception: their immutable bind cage maps live to the edited Tube curve.
 
       ANIMATION/PLAYBACK: deform from the current rest skeleton to the keyed
       posed skeleton. This is the only place ordinary skeletal deformation is
       evaluated.
     */
-    var rest=restTransformMap(rig);
+    var currentRest=restTransformMap(rig);
     var setupMode=!!(state.open&&(state.tab==="bones"||state.tab==="editbone"||state.tab==="curves"));
+    var rest=currentRest;
     var posed=setupMode
-      ?rest
+      ?currentRest
       :posedTransformMap(rig,time,{ignoreRigControl:true});
+    if((rig.bones||[]).some(isTubeBone)){
+      var bindRest=skinBindTransformMap(rig);
+      rest=Object.assign({},currentRest);
+      (rig.bones||[]).forEach(function(bone){if(isTubeBone(bone)&&bindRest[bone.id])rest[bone.id]=bindRest[bone.id];});
+    }
     var base=setupMode
       ?data.restPoints
       :interpolatePointKey(rig,object.id,time,data.restPoints);
@@ -6649,7 +6690,8 @@
         });
         (q.tubePoints||[]).slice(0,-1).forEach(function(control,index){
           var next=q.tubePoints[index+1],td=distancePointToSegment(p,control,next);
-          if(td<lineD&&(!best||td<best.distance-scenePixels(2)))best={bone:b,handle:'line',point:p,distance:td};
+          var tubeSectionCandidate={bone:b,handle:'tube-'+nearestTubeHandleIndex(p,q.tubeControls),point:p,distance:td};
+          if(td<lineD&&Math.min(Math.hypot(p.x-q.head.x,p.y-q.head.y),Math.hypot(p.x-q.tail.x,p.y-q.tail.y))>scenePixels(14)&&betterBoneHit(tubeSectionCandidate,best))best=tubeSectionCandidate;
         });
       }
       [["tail",q.tail],["head",q.head]].forEach(function(pair){var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y),candidate={bone:b,handle:pair[0],point:p,distance:d};if(d<bestD&&betterBoneHit(candidate,best))best=candidate;});
@@ -6923,6 +6965,11 @@
           API.pushUndo();
           var dummyPoint=currentScenePointToPartLocal(allHit.part,selectedScenePoint(event),currentTime());
           state.drag={kind:"character-edit-rest",pointerId:event.pointerId,part:allHit.part,bone:allHit.bone,parent:null,handle:allHit.handle,startPointer:dummyPoint,startHead:clone(allHit.bone.restHead),startTail:clone(allHit.bone.restTail),startParentTail:null};
+        }else if(isTubeBone(allHit.bone)&&String(allHit.handle||'').indexOf('tube-')===0){
+          state.mode="select";API.pushUndo();
+          var tubeSetupPoint=currentScenePointToPartLocal(allHit.part,selectedScenePoint(event),currentTime());
+          var tubeSetupControl=rigControlDummyTransform(allHit.part.rig,currentTime());if(tubeSetupControl)tubeSetupPoint=inverseRigControlPoint(tubeSetupPoint,tubeSetupControl);
+          state.drag={kind:"character-edit-rest",pointerId:event.pointerId,part:allHit.part,bone:allHit.bone,parent:null,handle:allHit.handle,startPointer:tubeSetupPoint,startHead:clone(allHit.bone.restHead),startTail:clone(allHit.bone.restTail),startParentTail:null,startTubeOffsets:clone(allHit.bone.tubeRestOffsets)};
         }else{
           state.mode="select";
         }
@@ -6932,7 +6979,7 @@
       if(stopLockedRigPointer(event,allHit.part.rig))return;
       event.preventDefault();event.stopImmediatePropagation();
       focusCharacterPartCard(allHit.part);state.activeRig=allHit.part.rig;syncCharacterPartRigRefs(allHit.part);syncRigRefs(state.activeRig);state.selectedBoneId=allHit.bone.id;
-      prepareRigSkinForEditing(allHit.part.rig);
+      if(!(isTubeBone(allHit.bone)&&String(allHit.handle||'').indexOf('tube-')===0))prepareRigSkinForEditing(allHit.part.rig);
       API.pushUndo();
       var allPoint=currentScenePointToPartLocal(allHit.part,selectedScenePoint(event),currentTime());
       if(isDummyBone(allHit.bone)){
@@ -7002,6 +7049,10 @@
         state.mode="dummy-adjust";
         API.pushUndo();
         state.drag={kind:"edit-rest",pointerId:event.pointerId,bone:hit.bone,parent:null,handle:hit.handle,startPointer:point,startHead:clone(hit.bone.restHead),startTail:clone(hit.bone.restTail),startParentTail:null};
+      }else if(isTubeBone(hit.bone)&&String(hit.handle||'').indexOf('tube-')===0){
+        state.mode="select";API.pushUndo();
+        var tubeSetupScenePoint=point,tubeSetupRigControl=rigControlDummyTransform(state.activeRig,currentTime());if(tubeSetupRigControl)tubeSetupScenePoint=inverseRigControlPoint(tubeSetupScenePoint,tubeSetupRigControl);
+        state.drag={kind:"edit-rest",pointerId:event.pointerId,bone:hit.bone,parent:null,handle:hit.handle,startPointer:tubeSetupScenePoint,startHead:clone(hit.bone.restHead),startTail:clone(hit.bone.restTail),startParentTail:null,startTubeOffsets:clone(hit.bone.tubeRestOffsets)};
       }else{
         state.mode="select";
       }
@@ -7011,7 +7062,7 @@
     if(stopLockedRigPointer(event,state.activeRig))return;
     event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;
     if(state.tab==="editbone"){
-      prepareRigSkinForEditing(state.activeRig);
+      if(!(isTubeBone(hit.bone)&&String(hit.handle||'').indexOf('tube-')===0))prepareRigSkinForEditing(state.activeRig);
       API.pushUndo();
       if(isDummyBone(hit.bone)){
         var editDummyMap=posedTransformMap(state.activeRig,currentTime());
@@ -7212,9 +7263,9 @@
         syncCharacterPartRigRefs(characterAddPart);
       }
     }
-    else if(finished.kind==="character-edit-rest"){state.activeRig=finished.part.rig;commitRigRestSetup(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());syncCharacterPartRigRefs(finished.part);notify("Bone setup updated for "+finished.part.name+". Artwork remains undeformed until Animate.",false);}
+    else if(finished.kind==="character-edit-rest"){state.activeRig=finished.part.rig;if(isTubeBone(finished.bone)&&String(finished.handle||'').indexOf('tube-')===0){syncRigDisplayGeometry(state.activeRig,currentTime());syncCharacterPartRigRefs(finished.part);notify("Tube cage deformed for "+finished.part.name+".",false);}else{commitRigRestSetup(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());syncCharacterPartRigRefs(finished.part);notify("Bone setup updated for "+finished.part.name+". Artwork remains undeformed until Animate.",false);}}
     else if(finished.kind==="character-resize-envelope"){state.activeRig=finished.part.rig;commitRigRestSetup(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());syncCharacterPartRigRefs(finished.part);notify("Envelope resized for "+finished.part.name+".",false);}
-    else if(finished.kind==="edit-rest"){commitRigRestSetup(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());notify("Bone setup updated. Artwork remains undeformed until Animate.",false);}
+    else if(finished.kind==="edit-rest"){if(isTubeBone(finished.bone)&&String(finished.handle||'').indexOf('tube-')===0){syncRigDisplayGeometry(state.activeRig,currentTime());notify("Tube cage deformed.",false);}else{commitRigRestSetup(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());notify("Bone setup updated. Artwork remains undeformed until Animate.",false);}}
     else if(finished.kind==="resize-envelope"){commitRigRestSetup(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());notify("Envelope resized.",false);}
     else if(finished.kind==="animate-bone"){syncRigDisplayGeometry(state.activeRig,currentTime());API.refreshUI();notify("Bone pose keyed on frame "+currentFrame()+".",false);}
     else if(finished.kind==="character-animate-bone"){syncCharacterPartRigRefs(finished.part);syncRigDisplayGeometry(finished.part.rig,currentTime());API.refreshUI();notify("Bone pose keyed on frame "+currentFrame()+" for "+finished.part.name+".",false);}
