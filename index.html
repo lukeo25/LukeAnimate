@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v238: adds native, project-safe Type Tool data and the Directions eight-way Clip movement tool. -->
 <!-- LukeAnimate GPT v237: Export Animation always uses and displays the complete current timeline length instead of retaining an editable default duration. -->
 <!-- LukeAnimate GPT v236: adds deterministic MP4 export with H.264 video, optional AAC project audio, and an MPEG-4 codec fallback. -->
 <!-- LukeAnimate GPT v235: loads Dem Bones v16.64 with seam-free overlapping raster-mesh triangle clips. -->
@@ -56,7 +57,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v237</title>
+<title>Luke Animate v238</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4203,6 +4204,177 @@ ctx.fill();</textarea>
   const stageOverlayRenderers = new Map();
   const clipPivotCompensators = new Map();
   const selectionInspectorSuppressors = new Set();
+
+  // ---------------- native Type Tools ----------------
+  // Type Tools are optional behaviours stored on individual Clip instances.
+  // Their authored settings are ordinary project data; their live movement is
+  // deliberately non-enumerable runtime state, so previewing a Type Tool can
+  // never rewrite the Clip's authored transform or leak into project JSON.
+  const TYPE_TOOLS_DATA_KEY = '_lukeAnimateTypeTools';
+  const TYPE_TOOLS_RUNTIME_KEY = '_lukeAnimateTypeToolsRuntime';
+  const typeToolPressedKeys = new Set();
+
+  function normaliseDirectionsTypeTool(settings){
+    const source=settings&&typeof settings==='object'?settings:{};
+    return {
+      type:'directions',
+      version:1,
+      enabled:source.enabled!==false,
+      speed:Math.max(.5,Math.min(20,Number(source.speed)||5)),
+      useWASD:source.useWASD!==false,
+      useArrows:source.useArrows!==false,
+      diagonal:source.diagonal!==false,
+      normalize:source.normalize!==false,
+      // Retained now so Solid can add collision resolution without migrating
+      // existing Directions settings later.
+      solidCollision:!!source.solidCollision
+    };
+  }
+
+  function normaliseTypeToolSettings(toolId,settings){
+    const id=String(toolId||'').trim().toLowerCase();
+    if(id==='directions')return normaliseDirectionsTypeTool(settings);
+    const clone=JSON.parse(JSON.stringify(settings&&typeof settings==='object'?settings:{}));
+    clone.type=id;
+    if(clone.enabled===undefined)clone.enabled=true;
+    return clone;
+  }
+
+  function typeToolsForObject(object,create){
+    if(!object||object.type!=='clipinstance')return null;
+    let tools=object[TYPE_TOOLS_DATA_KEY];
+    if((!tools||typeof tools!=='object'||Array.isArray(tools))&&create){
+      tools={};
+      object[TYPE_TOOLS_DATA_KEY]=tools;
+    }
+    return tools&&typeof tools==='object'&&!Array.isArray(tools)?tools:null;
+  }
+
+  function typeToolRuntimeForObject(object,create){
+    if(!object)return null;
+    let runtime=object[TYPE_TOOLS_RUNTIME_KEY];
+    if(!runtime&&create){
+      runtime={offsetX:0,offsetY:0};
+      try{
+        Object.defineProperty(object,TYPE_TOOLS_RUNTIME_KEY,{value:runtime,writable:true,configurable:true,enumerable:false});
+      }catch(_error){
+        object[TYPE_TOOLS_RUNTIME_KEY]=runtime;
+      }
+    }
+    return runtime||null;
+  }
+
+  function visitAllTypeToolObjects(callback){
+    const seenObjects=new Set();
+    const visitObject=object=>{
+      if(!object||typeof object!=='object'||seenObjects.has(object))return;
+      seenObjects.add(object);
+      callback(object);
+      if(object.type==='group'&&Array.isArray(object.children))object.children.forEach(visitObject);
+    };
+    allSceneFrameObjectArrays(sceneFrames,drawObjects).forEach(list=>(list||[]).forEach(visitObject));
+    Object.values(clips).forEach(clip=>{
+      if(!clip)return;
+      ensureClipSceneFrames(clip);
+      allSceneFrameObjectArrays(clip.sceneFrames,clip.drawObjects||[]).forEach(list=>(list||[]).forEach(visitObject));
+    });
+  }
+
+  function resetTypeToolRuntime(){
+    visitAllTypeToolObjects(object=>{
+      const runtime=typeToolRuntimeForObject(object,false);
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;}
+    });
+    typeToolPressedKeys.clear();
+  }
+
+  function activeTypeToolObjectsAtTime(){
+    const result=[];
+    const seenObjects=new Set();
+    const clipStack=new Set();
+    function visit(list,timeValue,depth){
+      if(depth>12)return;
+      (list||[]).forEach(object=>{
+        if(!object||object.enabled===false||seenObjects.has(object))return;
+        seenObjects.add(object);
+        if(object.type==='clipinstance'){
+          result.push(object);
+          const clip=clips[object.clipId];
+          if(!clip||clipStack.has(clip))return;
+          clipStack.add(clip);
+          const effective=getEffectiveObj(object,timeValue);
+          const localTime=clipInstanceLocalTime(object,effective,timeValue);
+          const children=sceneFrameObjectsAtTime(ensureClipSceneFrames(clip),localTime,clip.timelineDuration,clip.drawObjects||[]);
+          visit(children,localTime,depth+1);
+          clipStack.delete(clip);
+        }else if(object.type==='group'&&Array.isArray(object.children)){
+          visit(object.children,timeValue,depth+1);
+        }
+      });
+    }
+    visit(drawObjects,t,0);
+    return result;
+  }
+
+  function directionInputVector(config){
+    let dx=0,dy=0;
+    const down=key=>typeToolPressedKeys.has(key);
+    if(config.useArrows){
+      if(down('arrowleft'))dx=-1;else if(down('arrowright'))dx=1;
+      if(down('arrowup'))dy=-1;else if(down('arrowdown'))dy=1;
+    }
+    if(config.useWASD){
+      if(down('a'))dx=-1;else if(down('d'))dx=1;
+      if(down('w'))dy=-1;else if(down('s'))dy=1;
+    }
+    if(!config.diagonal&&dx&&dy)dy=0;
+    if(config.normalize&&dx&&dy){const length=Math.hypot(dx,dy)||1;dx/=length;dy/=length;}
+    return {x:dx,y:dy};
+  }
+
+  function tickTypeToolRuntime(deltaSeconds){
+    if(!playing||exportPlayback.active)return;
+    // Avoid a large jump after a suspended/background browser tab resumes.
+    const step=Math.max(0,Math.min(.05,Number(deltaSeconds)||0));
+    if(!step)return;
+    activeTypeToolObjectsAtTime().forEach(object=>{
+      const tools=typeToolsForObject(object,false);
+      if(!tools||!tools.directions)return;
+      const config=normaliseDirectionsTypeTool(tools.directions);
+      if(!config.enabled)return;
+      const vector=directionInputVector(config);
+      if(!vector.x&&!vector.y)return;
+      const runtime=typeToolRuntimeForObject(object,true);
+      // Wick's original speed is pixels per update at roughly 60 updates/s.
+      const distance=config.speed*60*step;
+      runtime.offsetX+=vector.x*distance;
+      runtime.offsetY+=vector.y*distance;
+    });
+  }
+
+  function currentSceneHasDirectionsTypeTool(){
+    return activeTypeToolObjectsAtTime().some(object=>{
+      const tools=typeToolsForObject(object,false);
+      return !!(tools&&tools.directions&&normaliseDirectionsTypeTool(tools.directions).enabled);
+    });
+  }
+
+  function typeToolKeyboardTargetIsTyping(target){
+    return !!(target&&(/INPUT|TEXTAREA|SELECT/.test(target.tagName)||target.isContentEditable));
+  }
+
+  window.addEventListener('keydown',event=>{
+    if(typeToolKeyboardTargetIsTyping(event.target))return;
+    const key=String(event.key||'').toLowerCase();
+    if(!['arrowleft','arrowright','arrowup','arrowdown','w','a','s','d'].includes(key))return;
+    if(!playing||!currentSceneHasDirectionsTypeTool())return;
+    typeToolPressedKeys.add(key);
+    event.preventDefault();
+  });
+  window.addEventListener('keyup',event=>{
+    typeToolPressedKeys.delete(String(event.key||'').toLowerCase());
+  });
+  window.addEventListener('blur',()=>typeToolPressedKeys.clear());
   function registerObjectPanelOwner(type, panelId){
     if(type && panelId) objectPanelOwners[type] = panelId;
   }
@@ -11651,7 +11823,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=41';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=42';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -12059,7 +12231,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 116,
+    version: 117,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -12079,6 +12251,7 @@ ctx.fill();</textarea>
     get fps(){
       return Math.max(1, Math.min(120, parseInt(document.getElementById('inp-fps').value, 10) || 30));
     },
+    get isPlaying(){ return !!playing; },
     get onionSkinEnabled(){ return onionSkinEnabled; },
     get isExporting(){ return exportPlayback.active; },
     get onionSkinBeforeFrames(){ return onionSkinBeforeFrames; },
@@ -12177,6 +12350,39 @@ ctx.fill();</textarea>
       if(isolated) return [isolated.child];
       return Array.from(selectedDrawIndices).map(index=> drawObjects[index]).filter(Boolean);
     },
+    getTypeTool(object,toolId){
+      const tools=typeToolsForObject(object,false);
+      const id=String(toolId||'').trim().toLowerCase();
+      return tools&&tools[id] ? JSON.parse(JSON.stringify(tools[id])) : null;
+    },
+    getTypeTools(object){
+      const tools=typeToolsForObject(object,false);
+      return tools ? JSON.parse(JSON.stringify(tools)) : {};
+    },
+    setTypeTool(object,toolId,settings){
+      if(!object||object.type!=='clipinstance')throw new Error('Type Tools can only be attached to a Clip instance.');
+      const id=String(toolId||'').trim().toLowerCase();
+      if(!id)throw new Error('A Type Tool id is required.');
+      pushUndo();
+      const tools=typeToolsForObject(object,true);
+      tools[id]=normaliseTypeToolSettings(id,settings);
+      const runtime=typeToolRuntimeForObject(object,false);
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;}
+      this.refreshUI();
+      return JSON.parse(JSON.stringify(tools[id]));
+    },
+    removeTypeTool(object,toolId){
+      const tools=typeToolsForObject(object,false);
+      const id=String(toolId||'').trim().toLowerCase();
+      if(!tools||!Object.prototype.hasOwnProperty.call(tools,id))return false;
+      pushUndo();
+      delete tools[id];
+      const runtime=typeToolRuntimeForObject(object,false);
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;}
+      this.refreshUI();
+      return true;
+    },
+    resetTypeToolRuntime(){ resetTypeToolRuntime(); this.refreshUI(); return true; },
     getTimelineDuration(){ return timelineDuration; },
     getCurrentFrame(){ return Math.round(t * this.fps) + 1; },
     frameToTime(frame){ return Math.max(0, (Math.max(1, Math.round(Number(frame) || 1)) - 1) / this.fps); },
@@ -12780,7 +12986,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 147;
+    project.projectVersion = 148;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -16736,11 +16942,13 @@ ctx.fill();</textarea>
   });
   document.getElementById('btn-transport-pause').addEventListener('click', ()=>{
     playing = false;
+    typeToolPressedKeys.clear();
     pauseAudioIfLoaded();
   });
   document.getElementById('btn-transport-stop').addEventListener('click', ()=>{
     playing = false;
     t = 0;
+    resetTypeToolRuntime();
     stopAudioIfLoaded();
   });
 
@@ -17217,6 +17425,18 @@ ctx.fill();</textarea>
           console.warn('Luke Animate object evaluator failed:', evaluatorId, err);
         }
       });
+    }
+
+    // Apply live Type Tool movement after authored animation. This object is a
+    // render-time copy whenever an offset exists, leaving the saved Clip and
+    // every transform key untouched.
+    if(obj&&obj.type==='clipinstance'){
+      const runtime=typeToolRuntimeForObject(obj,false);
+      if(runtime&&(runtime.offsetX||runtime.offsetY)){
+        if(effective===obj)effective=Object.assign({},obj);
+        effective.x=(Number(effective.x)||0)+(Number(runtime.offsetX)||0);
+        effective.y=(Number(effective.y)||0)+(Number(runtime.offsetY)||0);
+      }
     }
 
     /*
@@ -18249,6 +18469,7 @@ ctx.fill();</textarea>
     }
 
     syncActiveSceneFrameForTime(t, false);
+    tickTypeToolRuntime(dt);
 
     const playhead = document.getElementById('timeline-playhead');
     const frameInfo = getTimelineFrameInfo();

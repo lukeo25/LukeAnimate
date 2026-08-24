@@ -1,0 +1,203 @@
+/*
+  Luke Animate Directions Type Tool v1.0
+  Native, opt-in eight-direction movement for selected Clip instances.
+*/
+(function(){
+  "use strict";
+
+  const PANEL_ID="lukeanimate-directions-panel";
+  const STYLE_ID="lukeanimate-directions-style";
+  const TOOL_ID="directions";
+  const TOOL_GROUP_ID=String(group&&group.id?group.id:"type");
+  const TOOL_ITEM_ID=String(item&&(item.id||item.label)?(item.id||item.label):"Directions");
+  const TOOL_ICON_URL=String(item&&item.iconUrl?item.iconUrl:"https://lukeo25.github.io/LukeAnimate/SVGs/Directions.svg");
+
+  if(!LukeAnimate||Number(LukeAnimate.version||0)<117||typeof LukeAnimate.setTypeTool!=="function"){
+    throw new Error("Directions requires Luke Animate v117 or later.");
+  }
+
+  function setToolSelected(active){
+    if(typeof LukeAnimate.setConfiguredToolActive==="function"){
+      LukeAnimate.setConfiguredToolActive(TOOL_GROUP_ID,TOOL_ITEM_ID,!!active);
+    }
+  }
+
+  const existing=document.getElementById(PANEL_ID);
+  if(existing){
+    existing.style.display="flex";
+    existing.classList.add("open");
+    setToolSelected(true);
+    LukeAnimate.bringFloatingPanelToFront(existing);
+    LukeAnimate.clampFloatingPanelToViewport(existing);
+    return;
+  }
+
+  if(!document.getElementById(STYLE_ID)){
+    const style=document.createElement("style");
+    style.id=STYLE_ID;
+    style.textContent=`
+      #${PANEL_ID}{position:fixed;z-index:2500;top:82px;right:22px;width:330px;max-height:calc(100vh - 105px);display:flex;flex-direction:column;background:#f8fafc;border:1px solid #aeb8c4;border-radius:10px;box-shadow:0 12px 32px rgba(15,23,42,.28);color:#263442;font:13px Arial,sans-serif;overflow:hidden}
+      #${PANEL_ID} *{box-sizing:border-box}
+      #${PANEL_ID} .dt-head{display:flex;align-items:center;gap:9px;padding:10px 12px;background:#e8edf2;border-bottom:1px solid #c6ced7;cursor:move;font-weight:700}
+      #${PANEL_ID} .dt-head img{width:25px;height:25px;object-fit:contain}
+      #${PANEL_ID} .dt-head-title{flex:1}
+      #${PANEL_ID} .dt-close{width:27px;height:27px;border:0;border-radius:6px;background:#65717e;color:#fff;cursor:pointer;font-size:18px;line-height:25px}
+      #${PANEL_ID} .dt-body{padding:12px;overflow:auto}
+      #${PANEL_ID} .dt-selected{padding:8px 9px;margin-bottom:10px;border:1px solid #cad2db;border-radius:7px;background:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      #${PANEL_ID} .dt-selected strong{color:#0e8f7c}
+      #${PANEL_ID} .dt-section{margin-top:10px;padding-top:10px;border-top:1px solid #d9dfe6}
+      #${PANEL_ID} .dt-label{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-weight:700}
+      #${PANEL_ID} .dt-speed-row{display:grid;grid-template-columns:1fr 62px;gap:8px;align-items:center}
+      #${PANEL_ID} input[type=range]{width:100%;accent-color:#0e9c86}
+      #${PANEL_ID} input[type=number]{width:100%;padding:6px;border:1px solid #b9c3ce;border-radius:6px;background:#fff;color:#263442}
+      #${PANEL_ID} .dt-check{display:flex;align-items:center;gap:7px;margin:8px 0}
+      #${PANEL_ID} .dt-check input{accent-color:#0e9c86}
+      #${PANEL_ID} .dt-muted{color:#74808d;font-size:11px;line-height:1.35}
+      #${PANEL_ID} .dt-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+      #${PANEL_ID} .dt-btn{padding:9px;border:1px solid #aeb8c4;border-radius:7px;background:#eef2f5;color:#263442;font-weight:700;cursor:pointer}
+      #${PANEL_ID} .dt-btn.primary{border-color:#078674;background:#0e9c86;color:#fff}
+      #${PANEL_ID} .dt-btn:disabled{opacity:.45;cursor:not-allowed}
+      #${PANEL_ID} .dt-status{min-height:17px;margin-top:9px;font-size:12px;color:#65717e}
+      #${PANEL_ID} .dt-status.good{color:#087b68}
+      #${PANEL_ID} .dt-status.bad{color:#b42318}
+    `;
+    document.head.appendChild(style);
+  }
+
+  const panel=document.createElement("section");
+  panel.id=PANEL_ID;
+  panel.innerHTML=`
+    <div class="dt-head">
+      <img src="${TOOL_ICON_URL.replace(/"/g,"&quot;")}" alt="">
+      <span class="dt-head-title">Directions</span>
+      <button class="dt-close" type="button" title="Close">×</button>
+    </div>
+    <div class="dt-body">
+      <div class="dt-selected"><strong>Selected:</strong> <span data-dt-selected>No Clip selected</span></div>
+      <div class="dt-label"><span>Movement speed</span><span data-dt-speed-label>5</span></div>
+      <div class="dt-speed-row">
+        <input data-dt-speed type="range" min="0.5" max="20" step="0.5" value="5">
+        <input data-dt-speed-number type="number" min="0.5" max="20" step="0.5" value="5">
+      </div>
+      <div class="dt-section">
+        <label class="dt-check"><input data-dt-wasd type="checkbox" checked> WASD keys</label>
+        <label class="dt-check"><input data-dt-arrows type="checkbox" checked> Arrow keys</label>
+        <label class="dt-check"><input data-dt-diagonal type="checkbox" checked> Allow diagonal movement</label>
+        <label class="dt-check"><input data-dt-normalize type="checkbox" checked> Keep diagonal speed even</label>
+        <label class="dt-check dt-muted" title="This option becomes active when the Solid Type Tool is added"><input data-dt-solid type="checkbox" disabled> Collide with Solids (coming with Solid)</label>
+      </div>
+      <p class="dt-muted">Apply Directions, press Play, then use the chosen keys. Pause holds the live position; Stop returns the Clip to its authored position.</p>
+      <div class="dt-actions">
+        <button class="dt-btn" data-dt-remove type="button">Remove</button>
+        <button class="dt-btn primary" data-dt-apply type="button">Apply</button>
+      </div>
+      <div class="dt-status" data-dt-status></div>
+    </div>
+  `;
+  document.body.appendChild(panel);
+  LukeAnimate.registerFloatingPanel(panel);
+  LukeAnimate.bringFloatingPanelToFront(panel);
+  LukeAnimate.clampFloatingPanelToViewport(panel);
+  setToolSelected(true);
+
+  const get=selector=>panel.querySelector(selector);
+  const speed=get("[data-dt-speed]");
+  const speedNumber=get("[data-dt-speed-number]");
+  const speedLabel=get("[data-dt-speed-label]");
+  const applyButton=get("[data-dt-apply]");
+  const removeButton=get("[data-dt-remove]");
+  const selectedLabel=get("[data-dt-selected]");
+  const status=get("[data-dt-status]");
+  let selectedObject=null;
+  let selectedKey="";
+
+  function selectedClip(){
+    const selected=LukeAnimate.getSelectedDrawObjects()||[];
+    if(selected.length!==1||!selected[0]||selected[0].type!=="clipinstance")return null;
+    const clips=LukeAnimate.getClips?LukeAnimate.getClips():{};
+    return clips&&clips[selected[0].clipId]?selected[0]:null;
+  }
+
+  function objectName(object){
+    if(!object)return "No Clip selected";
+    const clips=LukeAnimate.getClips?LukeAnimate.getClips():{};
+    return String(object.name||(clips[object.clipId]&&clips[object.clipId].name)||"Clip");
+  }
+
+  function setStatus(message,kind){
+    status.textContent=String(message||"");
+    status.className="dt-status"+(kind?" "+kind:"");
+  }
+
+  function setSpeed(value){
+    const number=Math.max(.5,Math.min(20,Number(value)||5));
+    speed.value=String(number);
+    speedNumber.value=String(number);
+    speedLabel.textContent=String(number);
+  }
+
+  function loadSettings(settings){
+    const config=settings||{};
+    setSpeed(config.speed===undefined?5:config.speed);
+    get("[data-dt-wasd]").checked=config.useWASD!==false;
+    get("[data-dt-arrows]").checked=config.useArrows!==false;
+    get("[data-dt-diagonal]").checked=config.diagonal!==false;
+    get("[data-dt-normalize]").checked=config.normalize!==false;
+    get("[data-dt-solid]").checked=!!config.solidCollision;
+  }
+
+  function refreshSelection(force){
+    const next=selectedClip();
+    const nextKey=next?String(next.id||next.clipId):"";
+    if(!force&&nextKey===selectedKey)return;
+    selectedObject=next;
+    selectedKey=nextKey;
+    selectedLabel.textContent=objectName(next);
+    applyButton.disabled=!next;
+    const settings=next?LukeAnimate.getTypeTool(next,TOOL_ID):null;
+    removeButton.disabled=!settings;
+    loadSettings(settings);
+    setStatus(next?(settings?"Directions is attached to this Clip.":"Ready to attach Directions."):"Select one Clip instance on the stage.",next?"good":"");
+  }
+
+  function currentSettings(){
+    return {
+      enabled:true,
+      speed:Number(speedNumber.value)||5,
+      useWASD:get("[data-dt-wasd]").checked,
+      useArrows:get("[data-dt-arrows]").checked,
+      diagonal:get("[data-dt-diagonal]").checked,
+      normalize:get("[data-dt-normalize]").checked,
+      solidCollision:get("[data-dt-solid]").checked
+    };
+  }
+
+  speed.addEventListener("input",()=>setSpeed(speed.value));
+  speedNumber.addEventListener("input",()=>setSpeed(speedNumber.value));
+  applyButton.addEventListener("click",()=>{
+    refreshSelection(false);
+    if(!selectedObject){setStatus("Select one Clip instance first.","bad");return;}
+    LukeAnimate.setTypeTool(selectedObject,TOOL_ID,currentSettings());
+    removeButton.disabled=false;
+    setStatus("Directions applied. Press Play to test it.","good");
+  });
+  removeButton.addEventListener("click",()=>{
+    refreshSelection(false);
+    if(!selectedObject||!LukeAnimate.removeTypeTool(selectedObject,TOOL_ID)){
+      setStatus("This Clip does not have Directions attached.","bad");
+      return;
+    }
+    removeButton.disabled=true;
+    loadSettings(null);
+    setStatus("Directions removed from the Clip.","good");
+  });
+
+  const pollTimer=setInterval(()=>refreshSelection(false),250);
+  get(".dt-close").addEventListener("click",()=>{
+    clearInterval(pollTimer);
+    panel.remove();
+    setToolSelected(false);
+  });
+
+  refreshSelection(true);
+})();
