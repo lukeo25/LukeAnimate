@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.53
+/* Luke Animate Dem Bones + MyCharacter GPT v16.54
+   v16.54 makes every Tube handle directly accessible in Animate with priority
+   stage hit-testing and numbered X/Y handle controls in the sidebar.
    v16.53 adds Tube Bones: curved mesh cages with animatable internal handles,
    positional or artwork-locked influence, and keyed wave/tentacle controls.
    v16.52 adds persistent lockable, collapsible Bones timeline layers. Locked
@@ -162,7 +164,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.53";
+  var TOOL_VERSION = "16.54";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -199,6 +201,7 @@
     mode:"select",
     activeRig:null,
     selectedBoneId:"",
+    selectedTubeHandleIndex:0,
     selectedCurveId:"",
     selectedPointIndex:0,
     curvePointAddMode:false,
@@ -1508,6 +1511,7 @@
   }
 
   function boneHitHandlePriority(handle){
+    if(String(handle||'').indexOf('tube-')===0)return -1;
     if(handle==="tail")return 0;
     if(handle==="head")return 1;
     return 2;
@@ -1516,6 +1520,10 @@
   function betterBoneHit(candidate,current){
     if(!candidate)return false;
     if(!current)return true;
+    var candidateTube=String(candidate.handle||'').indexOf('tube-')===0;
+    var currentTube=String(current.handle||'').indexOf('tube-')===0;
+    if(candidateTube&&!currentTube)return true;
+    if(currentTube&&!candidateTube)return false;
     var epsilon=scenePixels(.75);
     if(candidate.distance<current.distance-epsilon)return true;
     if(Math.abs(candidate.distance-current.distance)<=epsilon){
@@ -3234,7 +3242,7 @@
         record.tubeControls.slice(1,-1).forEach(function(control,index){
           var stageControl=stagePointFromScene(control),distance=Math.hypot(point.x-stageControl.x,point.y-stageControl.y);
           var tubeCandidate={part:record.part,bone:record.bone,handle:'tube-'+index,head:record.head,tail:record.tail,distance:distance};
-          if(distance<=nodeThreshold&&betterBoneHit(tubeCandidate,best))best=tubeCandidate;
+          if(distance<=stagePixelsFromClient(20)&&betterBoneHit(tubeCandidate,best))best=tubeCandidate;
         });
         (record.tubePoints||[]).slice(0,-1).forEach(function(control,index){
           var a=stagePointFromScene(control),z=stagePointFromScene(record.tubePoints[index+1]),distance=distancePointToSegment(point,a,z);
@@ -3523,7 +3531,7 @@
       if(isTubeBone(record.bone)&&Array.isArray(record.tubeControls)){
         record.tubeControls.slice(1,-1).forEach(function(control,index){
           var distance=Math.hypot(point.x-control.x,point.y-control.y),tubeCandidate={part:record.part,bone:record.bone,handle:'tube-'+index,head:record.head,tail:record.tail,distance:distance};
-          if(distance<=nodeThreshold&&betterBoneHit(tubeCandidate,best))best=tubeCandidate;
+          if(distance<=scenePixels(20)&&betterBoneHit(tubeCandidate,best))best=tubeCandidate;
         });
         (record.tubePoints||[]).slice(0,-1).forEach(function(control,index){
           var distance=distancePointToSegment(point,control,record.tubePoints[index+1]),tubeLineCandidate={part:record.part,bone:record.bone,handle:'line',head:record.head,tail:record.tail,distance:distance};
@@ -6090,6 +6098,16 @@
     syncRigDisplayGeometry(state.activeRig,time);
     API.refreshUI();
   }
+  function previewTubeHandleInputs(){
+    var bone=selectedBone();
+    if(!isTubeBone(bone)||!state.panel||rigTimelineLocked(state.activeRig))return;
+    var time=currentTime(),key=exactBoneKey(bone,time);
+    if(!key){API.pushUndo();key=ensureBoneKeyForDrag(bone,time);}
+    var count=clamp(Math.round(n(bone.tubeHandleCount,3)),1,7),index=clamp(Math.round(n(state.selectedTubeHandleIndex,0)),0,count-1);
+    var offsets=normaliseTubeOffsets(key.tubeOffsets,count),xInput=state.panel.querySelector('[data-db-tube-handle-x]'),yInput=state.panel.querySelector('[data-db-tube-handle-y]');
+    offsets[index]={x:round3(n(xInput&&xInput.value,offsets[index].x)),y:round3(n(yInput&&yInput.value,offsets[index].y))};
+    key.tubeOffsets=offsets;syncRigDisplayGeometry(state.activeRig,time);API.refreshUI();
+  }
   function previewSelectedBoneEnvelope(){
     var b=selectedBone();
     if(!b||!state.panel)return;
@@ -6627,7 +6645,7 @@
       if(isTubeBone(b)&&Array.isArray(q.tubeControls)){
         q.tubeControls.slice(1,-1).forEach(function(control,index){
           var td=Math.hypot(p.x-control.x,p.y-control.y),candidate={bone:b,handle:'tube-'+index,point:p,distance:td};
-          if(td<bestD&&betterBoneHit(candidate,best))best=candidate;
+          if(td<scenePixels(20)&&betterBoneHit(candidate,best))best=candidate;
         });
         (q.tubePoints||[]).slice(0,-1).forEach(function(control,index){
           var next=q.tubePoints[index+1],td=distancePointToSegment(p,control,next);
@@ -6681,6 +6699,7 @@
     var isDummy=isDummyBone(bone);
     if(isTubeBone(bone)&&String(drag.handle||'').indexOf('tube-')===0){
       var tubeIndex=Math.max(0,Math.round(n(String(drag.handle).split('-')[1],0)));
+      state.selectedTubeHandleIndex=tubeIndex;
       var tubeDelta=inverseRotateVector(pointer.x-drag.startPointer.x,pointer.y-drag.startPointer.y,startTransform.angle);
       var tubeOffsets=normaliseTubeOffsets(startPose.tubeOffsets,bone.tubeHandleCount||3);
       tubeOffsets[tubeIndex]={x:round3(n(tubeOffsets[tubeIndex]&&tubeOffsets[tubeIndex].x,0)+tubeDelta.x),y:round3(n(tubeOffsets[tubeIndex]&&tubeOffsets[tubeIndex].y,0)+tubeDelta.y)};
@@ -7705,7 +7724,13 @@
 
   function tubeAnimateControlsHtml(bone,pose){
     if(!isTubeBone(bone))return '';
-    return '<div class="db-part-summary" style="margin:8px 0">Drag the green handles on the tube to key its curve. Use Wave for automatic tentacle and ripple motion.</div>'+
+    var count=clamp(Math.round(n(bone.tubeHandleCount,3)),1,7);
+    state.selectedTubeHandleIndex=clamp(Math.round(n(state.selectedTubeHandleIndex,0)),0,count-1);
+    var offsets=normaliseTubeOffsets(pose.tubeOffsets,count),selectedOffset=offsets[state.selectedTubeHandleIndex]||{x:0,y:0};
+    var handleButtons=offsets.map(function(offset,index){return '<button type="button" class="db-mini'+(index===state.selectedTubeHandleIndex?' active':'')+'" data-db-tube-handle-select="'+index+'">Handle '+(index+1)+'</button>';}).join('');
+    return '<div class="db-part-summary" style="margin:8px 0">Drag the green handles on the tube to key its curve. Use the numbered controls when a handle is covered by artwork.</div><div class="db-grid3" style="margin-bottom:7px">'+handleButtons+'</div>'+
+      '<div class="db-row three"><label>Handle X</label><span>Along</span><input type="number" step="1" value="'+round3(selectedOffset.x)+'" data-db-tube-handle-x></div>'+
+      '<div class="db-row three"><label>Handle Y</label><span>Side</span><input type="number" step="1" value="'+round3(selectedOffset.y)+'" data-db-tube-handle-y></div>'+
       '<div class="db-row three"><label>Wave</label><input type="range" min="-300" max="300" step="1" value="'+round3(n(pose.tubeWaveAmplitude,0))+'" data-db-tube-wave><input type="number" step="1" value="'+round3(n(pose.tubeWaveAmplitude,0))+'" data-db-tube-wave-num></div>'+
       '<div class="db-row three"><label>Waves</label><input type="range" min="0.1" max="8" step="0.1" value="'+round3(n(pose.tubeWaveFrequency,1))+'" data-db-tube-frequency><input type="number" min="0.1" step="0.1" value="'+round3(n(pose.tubeWaveFrequency,1))+'" data-db-tube-frequency-num></div>'+
       '<div class="db-row three"><label>Phase</label><input type="range" min="-720" max="720" step="1" value="'+round3(n(pose.tubeWavePhase,0))+'" data-db-tube-phase><input type="number" step="1" value="'+round3(n(pose.tubeWavePhase,0))+'" data-db-tube-phase-num></div>';
@@ -7803,6 +7828,8 @@
     var tubeHandleCount=p.querySelector('[data-db-tube-handle-count]');if(tubeHandleCount)tubeHandleCount.onchange=function(){var b=selectedBone();if(!isTubeBone(b))return;API.pushUndo();b.tubeHandleCount=clamp(Math.round(n(tubeHandleCount.value,b.tubeHandleCount||3)),1,7);b.tubeRestOffsets=normaliseTubeOffsets(b.tubeRestOffsets,b.tubeHandleCount);b.basePose.tubeOffsets=normaliseTubeOffsets(b.basePose&&b.basePose.tubeOffsets,b.tubeHandleCount);(b.keys||[]).forEach(function(key){key.tubeOffsets=normaliseTubeOffsets(key.tubeOffsets,b.tubeHandleCount);});reweightRigSkinData(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());renderAll();API.refreshUI();};
     var tubeLockArtwork=p.querySelector('[data-db-tube-lock-artwork]');if(tubeLockArtwork)tubeLockArtwork.onchange=function(){var b=selectedBone();if(!isTubeBone(b))return;API.pushUndo();b.tubeLockedToArtwork=!!tubeLockArtwork.checked;reweightRigSkinData(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());renderAll();API.refreshUI();notify(b.tubeLockedToArtwork?'Tube influence locked to the artwork.':'Tube is positional; move artwork into it to deform.',false);};
     p.querySelectorAll('[data-db-show-envelopes]').forEach(function(input){input.onchange=function(){state.showEnvelopes=!!input.checked;API.refreshUI();};});
+    p.querySelectorAll('[data-db-tube-handle-select]').forEach(function(button){button.onclick=function(){state.selectedTubeHandleIndex=clamp(Math.round(n(button.getAttribute('data-db-tube-handle-select'),0)),0,6);renderAll();API.refreshUI();};});
+    p.querySelectorAll('[data-db-tube-handle-x],[data-db-tube-handle-y]').forEach(function(input){input.oninput=previewTubeHandleInputs;input.onchange=previewTubeHandleInputs;});
     bindPair('[data-db-pose-dx]','[data-db-pose-dx-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-dy]','[data-db-pose-dy-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-rotation]','[data-db-pose-rotation-num]',previewBonePoseFromInputs);bindPair('[data-db-pose-scale]','[data-db-pose-scale-num]',previewBonePoseFromInputs);bindPair('[data-db-tube-wave]','[data-db-tube-wave-num]',previewBonePoseFromInputs);bindPair('[data-db-tube-frequency]','[data-db-tube-frequency-num]',previewBonePoseFromInputs);bindPair('[data-db-tube-phase]','[data-db-tube-phase-num]',previewBonePoseFromInputs);p.querySelectorAll('[data-db-set-bone-key]').forEach(function(b){b.onclick=setBoneKey;});p.querySelectorAll('[data-db-delete-bone-key]').forEach(function(b){b.onclick=deleteBoneKey;});
     p.querySelectorAll('[data-db-animate-gizmo-id]').forEach(function(button){button.onclick=function(){var boneId=button.getAttribute('data-db-animate-gizmo-id'),bone=boneById(boneId);if(!bone||!isGizmoBone(bone))return;state.selectedBoneId=bone.id;var gizmo=clipGizmoForBone(bone);renderAll();if(gizmo)showClipGizmo(gizmo);else API.refreshUI();};});
     var animateGizmoParent=p.querySelector('[data-db-animate-gizmo-parent]');if(animateGizmoParent)animateGizmoParent.onchange=function(){var b=selectedBone();if(!b||!isGizmoBone(b))return;API.pushUndo();setGizmoBoneParent(b,animateGizmoParent.value||'');normaliseRigBones(state.activeRig);syncRigDisplayGeometry(state.activeRig,currentTime());renderAll();API.refreshUI();};
