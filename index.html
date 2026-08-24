@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v232: Tube Bones expose independently movable handle-key subrows in the timeline. -->
 <!-- LukeAnimate GPT v231: Bones concertina arrows remain visible after nested Clip timeline decoration. -->
 <!-- LukeAnimate GPT v230: Dem Bones rigs are lockable concertina timeline layers with collapsible individual-bone child rows. -->
 <!-- LukeAnimate GPT v229: Image / Video can fit a resource to the stage or resize the stage to the resource's native dimensions. -->
@@ -50,7 +51,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v231</title>
+<title>Luke Animate v232</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -1327,6 +1328,12 @@
   }
   .timeline-track-row.dembones-bone-timeline-row .timeline-track-name{
     padding-left:23px;color:#687382;
+  }
+  .timeline-track-row.dembones-tube-handle-timeline-row .timeline-track-name{
+    padding-left:38px;color:#28724d;font-size:9px;
+  }
+  .timeline-track-row.dembones-tube-handle-timeline-row .timeline-object-span{
+    background:rgba(34,197,94,.14);border-color:rgba(22,163,74,.48);
   }
   .timeline-track-row.dembones-rig-timeline-row .timeline-object-span{
     background:rgba(143,214,255,.34);border-color:rgba(48,117,184,.68);
@@ -15509,6 +15516,92 @@ ctx.fill();</textarea>
         row.appendChild(name);
         row.appendChild(track);
         tracksEl.appendChild(row);
+
+        if(String(bone.type || '').toLowerCase() === 'tube'){
+          const handleCount = Math.max(1, Math.min(7, Math.round(Number(bone.tubeHandleCount) || 3)));
+          if(!Array.isArray(bone.tubeHandleKeys)) bone.tubeHandleKeys = [];
+          for(let handleIndex = 0; handleIndex < handleCount; handleIndex++){
+            const handleKeys = Array.isArray(bone.tubeHandleKeys[handleIndex]) ? bone.tubeHandleKeys[handleIndex] : (bone.tubeHandleKeys[handleIndex] = []);
+            const handleRow = document.createElement('div');
+            handleRow.className = 'timeline-track-row dembones-tube-handle-timeline-row' + (locked ? ' native-layer-locked' : '');
+            handleRow.dataset.demBonesRigId = String(rig.id || '');
+            handleRow.dataset.demBonesBoneId = String(bone.id || boneIndex);
+            handleRow.dataset.demBonesTubeHandle = String(handleIndex);
+
+            const handleName = document.createElement('div');
+            handleName.className = 'timeline-track-name';
+            handleName.textContent = `↳ Handle ${handleIndex + 1}`;
+            handleName.title = `${boneLabel} · independently animated Tube handle ${handleIndex + 1}`;
+            const focusTubeHandle = refresh=>{
+              const plugin = window.__LukeAnimateDemBonesFull;
+              if(!plugin || !plugin.state) return;
+              plugin.state.activeRig = rig;
+              plugin.state.selectedBoneId = bone.id;
+              plugin.state.selectedTubeHandleIndex = handleIndex;
+              if(refresh && typeof plugin.refresh === 'function') plugin.refresh();
+            };
+            handleName.addEventListener('click', ()=>focusTubeHandle(true));
+
+            const handleTrack = document.createElement('div');
+            handleTrack.className = 'timeline-track';
+            const handleSpan = document.createElement('div');
+            handleSpan.className = 'timeline-object-span';
+            handleSpan.style.opacity = '.46';
+            handleSpan.title = locked ? 'Bones layer locked' : `Tube Handle ${handleIndex + 1} keys · drag a key to retime it`;
+            handleTrack.appendChild(handleSpan);
+
+            if(!locked) handleTrack.addEventListener('contextmenu', event=>{
+              if(event.target && event.target.classList && event.target.classList.contains('timeline-key-dot')) return;
+              const keyTime = timelineTimeFromTrackClientX(handleTrack, event.clientX);
+              openKeyframeContextMenu(event, {
+                addKey:()=>{
+                  pushUndo();
+                  const nearest = handleKeys.slice().sort((a,b)=>Math.abs((Number(a.time)||0)-keyTime)-Math.abs((Number(b.time)||0)-keyTime))[0] || {x:0,y:0,easing:'linear'};
+                  const existing = handleKeys.find(key=>Math.abs((Number(key.time)||0)-keyTime)<.0005);
+                  if(existing){ existing.x = Number(nearest.x)||0; existing.y = Number(nearest.y)||0; }
+                  else handleKeys.push({time:keyTime,x:Number(nearest.x)||0,y:Number(nearest.y)||0,easing:normalizeKeyframeEasing(nearest.easing)});
+                  handleKeys.sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));
+                  t = keyTime; renderTimeline(); updateInspector();
+                },
+                addKeyHint:`Add Tube Handle ${handleIndex + 1} key at ${timelineFrameLabelAtTime(keyTime)}`
+              });
+            });
+
+            handleKeys.forEach(key=>{
+              const dot = document.createElement('div');
+              const easing = normalizeKeyframeEasing(key.easing);
+              dot.className = 'timeline-key-dot';
+              dot.dataset.easing = easing;
+              dot.style.left = timelinePercentForTime(key.time) + '%';
+              dot.title = `Tube Handle ${handleIndex + 1} · ${timelineFrameLabelAtTime(key.time)} · drag to move key`;
+              if(!locked) dot.addEventListener('contextmenu', event=>openKeyframeContextMenu(event, {
+                getEasing:()=>normalizeKeyframeEasing(key.easing),
+                setEasing:value=>{ key.easing = normalizeKeyframeEasing(value); },
+                deleteKey:()=>{ pushUndo(); const index=handleKeys.indexOf(key); if(index>=0)handleKeys.splice(index,1); renderTimeline(); updateInspector(); },
+                deleteKeyHint:`Delete Tube Handle ${handleIndex + 1} key at ${timelineFrameLabelAtTime(key.time)}`
+              }));
+              if(!locked) dot.addEventListener('mousedown', event=>{
+                if(event.button !== 0)return;
+                focusTubeHandle(false);
+                event.preventDefault();event.stopPropagation();closeKeyframeContextMenu();pushUndo();
+                const startX=event.clientX,startTime=Number(key.time)||0,trackWidth=handleTrack.getBoundingClientRect().width||1;
+                let moved=false;
+                function onMove(moveEvent){
+                  if(!moved&&Math.abs(moveEvent.clientX-startX)<2)return;
+                  moved=true;key.time=snapTimeToFrame(startTime+((moveEvent.clientX-startX)/trackWidth)*timelineDuration);
+                  handleKeys.sort((a,b)=>(Number(a.time)||0)-(Number(b.time)||0));renderTimeline();updateInspector();
+                }
+                function onUp(){window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onUp);if(!moved){t=Number(key.time)||0;updateInspector();}renderTimeline();}
+                window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onUp);
+              });
+              handleTrack.appendChild(dot);
+            });
+
+            handleRow.appendChild(handleName);
+            handleRow.appendChild(handleTrack);
+            tracksEl.appendChild(handleRow);
+          }
+        }
       });
     });
   }
