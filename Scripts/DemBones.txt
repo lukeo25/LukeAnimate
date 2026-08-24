@@ -1,4 +1,8 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.58
+/* Luke Animate Dem Bones + MyCharacter GPT v16.59
+   v16.59 opens an existing rig for editing only from an explicit current
+   boned-object or bone selection; otherwise previous rigs remain untouched.
+   Bone creation also has an Auto parent On/Off choice so independent bones
+   remain exactly where drawn instead of snapping into the selected chain.
    v16.58 makes internal Tube handles draggable on standalone rigs while the
    Dem Bones panel is closed, instead of exposing only the two end controls.
    v16.57 gives every Tube handle its own interpolated key channel and upgrades
@@ -172,7 +176,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.58";
+  var TOOL_VERSION = "16.59";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -209,11 +213,14 @@
     mode:"select",
     activeRig:null,
     selectedBoneId:"",
+    pendingOpenRigId:null,
+    pendingOpenBoneId:"",
     selectedTubeHandleIndex:0,
     selectedCurveId:"",
     selectedPointIndex:0,
     curvePointAddMode:false,
     addBoneType:"bone",
+    autoParent:true,
     addPreview:null,
     drag:null,
     removeOriginals:true,
@@ -900,6 +907,55 @@
     var rig=liveRigById(data.rigId,data.rig);
     if(rig&&data.rig!==rig)data.rig=rig;
     return rig;
+  }
+
+  function markRigForNextOpen(rig,boneId){
+    state.pendingOpenRigId=rig&&rig.id!==undefined&&rig.id!==null?String(rig.id):null;
+    state.pendingOpenBoneId=boneId===undefined||boneId===null?'':String(boneId);
+  }
+
+  function explicitRigSelectionForOpen(){
+    var selected=[];
+    try{selected=API.getSelectedDrawObjects()||[];}catch(ignoreOpenSelection){}
+    var found=[],seen={};
+    function add(rig,object,boneId){
+      if(!rig||rig.id===undefined||rig.id===null)return;
+      var id=String(rig.id);if(seen[id])return;seen[id]=true;
+      found.push({rig:rig,object:object||null,boneId:boneId||''});
+    }
+    selected.forEach(function(object){
+      if(!object)return;
+      if(object.demBones)add(liveRigForDemBonesData(object.demBones)||object.demBones.rig,object,'');
+      else if(object.demBonesExpression)add(liveRigById(object.demBonesExpression.rigId,object.demBonesExpression.rig),object,object.demBonesExpression.boneId||'');
+      else if(object.__dbPartId!==undefined){var part=partById(object.__dbPartId);if(part)add(part.rig,object,'');}
+    });
+    /* A current ordinary selection overrides an older bone click. It must not
+       accidentally reopen whichever rig happened to be active last time. */
+    if(selected.length)return found.length===1?found[0]:null;
+    if(state.pendingOpenRigId!==null){
+      var wanted=String(state.pendingOpenRigId),rig=null;
+      allLiveDemBonesRigs().some(function(candidate){if(candidate&&String(candidate.id)===wanted){rig=candidate;return true;}return false;});
+      if(rig)return{rig:rig,object:null,boneId:state.pendingOpenBoneId||''};
+    }
+    return null;
+  }
+
+  function applyExplicitOpenSelection(){
+    var intent=explicitRigSelectionForOpen();
+    state.pendingOpenRigId=null;state.pendingOpenBoneId='';
+    if(!intent||!intent.rig){
+      if(state.activeRig&&!characterPartForRigId(state.activeRig.id))registerLooseBuildRig(state.activeRig,sourceObjectsForRig(state.activeRig),[]);
+      state.activeRig=null;state.selectedBoneId='';state.selectedCurveId='';state.selectedPointIndex=0;
+      state.characterAllBonesEdit=false;state.mode='select';state.tab='source';
+      return false;
+    }
+    state.activeRig=intent.rig;syncRigRefs(state.activeRig);
+    var requested=(state.activeRig.bones||[]).filter(function(bone){return String(bone.id)===String(intent.boneId||'');})[0];
+    state.selectedBoneId=requested?requested.id:((state.activeRig.bones||[])[0]&&state.activeRig.bones[0].id||'');
+    state.selectedCurveId=intent.object&&intent.object.type!=='image'?intent.object.id:'';
+    state.selectedPointIndex=0;state.mode='select';state.tab='editbone';state.showEnvelopes=true;
+    var part=characterPartForRigId(state.activeRig.id);state.characterAllBonesEdit=!!part;if(part)state.character.selectedPartId=part.id;
+    return true;
   }
 
   /*
@@ -1677,7 +1733,7 @@
     if(rigTimelineLocked(rig)){notify("Unlock this Bones layer before adding bones.",true);return;}
     if(Math.hypot(tail.x-head.x,tail.y-head.y)<4){notify("Drag a longer bone.",true);return;}
     API.pushUndo();
-    var connected=autoConnectNewBone(head,tail);
+    var connected=state.autoParent?autoConnectNewBone(head,tail):{head:clone(head),tail:clone(tail),parentId:"",connected:false};
     type=type||"bone";
     var typeName=type==="stretchy"?"Stretchy Bone":(type==="tube"?"Tube Bone":(type==="gizmo"?"Gizmo Pin Bone":(type==="bone"?"Bone":type)));
     var bone={
@@ -3694,6 +3750,7 @@
 
   function activateStandaloneRigForEdit(hit){
     if(!hit||!hit.rig)return false;
+    if(!state.open)markRigForNextOpen(hit.rig,'');
     state.activeRig=hit.rig;
     prepareRigSkinForEditing(state.activeRig);
     syncRigRefs(state.activeRig);
@@ -6872,6 +6929,9 @@
 
   function onPointerDown(event){
     if(!state.open){
+      /* Only the most recent explicit stage bone click may choose a rig when
+         the panel is opened. Any other stage click cancels that one-shot intent. */
+      markRigForNextOpen(null,'');
       if(state.characterDummyActive){
         var closedRootDummyHit=characterDummyHit(event);
         if(closedRootDummyHit){event.preventDefault();event.stopImmediatePropagation();beginCharacterDummyDirectDrag(event,closedRootDummyHit);}
@@ -6898,6 +6958,7 @@
           if(stopLockedRigPointer(event,closedHit.part.rig))return;
           event.preventDefault();event.stopImmediatePropagation();
           state.closedBonePartId=closedHit.part.id;state.closedBoneId=closedHit.bone.id;
+          markRigForNextOpen(closedHit.part.rig,closedHit.bone.id);
           API.pushUndo();
           prepareRigSkinForEditing(closedHit.part.rig);
           var closedIsDummy=isDummyBone(closedHit.bone);
@@ -6918,6 +6979,7 @@
           if(stopLockedRigPointer(event,state.activeRig))return;
           event.preventDefault();event.stopImmediatePropagation();API.pushUndo();
           state.closedBonePartId=null;state.closedBoneId=looseBoneHit.bone.id;
+          markRigForNextOpen(state.activeRig,looseBoneHit.bone.id);
           prepareRigSkinForEditing(state.activeRig);
           var closedLooseIsDummy=isDummyBone(looseBoneHit.bone);
           var closedLooseControl=rigControlDummyTransform(state.activeRig,currentTime());
@@ -7831,7 +7893,7 @@
     var rig=state.activeRig;
     var hasBones=!!(rig&&rig.bones&&rig.bones.length);
     return '<div class="db-page active">'+
-      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone"'+(state.addBoneType==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(state.addBoneType==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="tube"'+(state.addBoneType==='tube'?' selected':'')+'>Tube Bone</option><option value="gizmo"'+(state.addBoneType==='gizmo'?' selected':'')+'>Gizmo Bone</option><option value="dummy"'+(state.addBoneType==='dummy'?' selected':'')+'>Dummy Bone</option></select></div><div class="db-grid2"><button class="db-btn'+(state.mode==='add-bone'||state.mode==='dummy-adjust'||state.mode==='control-place'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-bind-rig>Bind</button></div><button class="db-btn danger" style="width:100%;margin-top:7px" data-db-clear-bones>Clear All</button><p class="db-help" style="margin-top:7px">Choose every bone type from the dropdown, then click Add Bone. Bone, Stretchy Bone and Tube Bone use drag placement. Tube handles are shaped in Edit Bone and animated in Animate. Gizmo and Dummy Bones use one click placement. Control bones never deform artwork and have no envelope.</p></div>'+
+      '<div class="db-section"><h3>Step 2 · Bones</h3><div class="db-row"><label>Bone type</label><select data-db-bone-type><option value="bone"'+(state.addBoneType==='bone'?' selected':'')+'>Bone</option><option value="stretchy"'+(state.addBoneType==='stretchy'?' selected':'')+'>Stretchy Bone</option><option value="tube"'+(state.addBoneType==='tube'?' selected':'')+'>Tube Bone</option><option value="gizmo"'+(state.addBoneType==='gizmo'?' selected':'')+'>Gizmo Bone</option><option value="dummy"'+(state.addBoneType==='dummy'?' selected':'')+'>Dummy Bone</option></select></div><div class="db-row"><label>Auto parent</label><span><label style="margin-right:12px"><input type="radio" name="db-auto-parent" value="on" data-db-auto-parent'+(state.autoParent?' checked':'')+'> On</label><label><input type="radio" name="db-auto-parent" value="off" data-db-auto-parent'+(!state.autoParent?' checked':'')+'> Off</label></span></div><div class="db-grid2"><button class="db-btn'+(state.mode==='add-bone'||state.mode==='dummy-adjust'||state.mode==='control-place'?' active':'')+'" data-db-add-bone>Add Bone</button><button class="db-btn" data-db-bind-rig>Bind</button></div><button class="db-btn danger" style="width:100%;margin-top:7px" data-db-clear-bones>Clear All</button><p class="db-help" style="margin-top:7px">Auto parent On snaps a new bone into the nearest or selected chain. Off keeps it independent exactly where drawn. Bone, Stretchy Bone and Tube Bone use drag placement. Tube handles are shaped in Edit Bone and animated in Animate. Gizmo and Dummy Bones use one click placement.</p></div>'+
       envelopeDisplayHtml()+
       '<div class="db-section"><h3>Bones</h3>'+boneListHtml()+'</div>'+
       (hasBones?'<div class="db-section"><h3>Project Files</h3><button class="db-btn" style="width:100%" data-db-save-part>Save Part</button></div>':'')+
@@ -7941,6 +8003,7 @@
     var svgQuality=p.querySelector('[data-db-svg-quality]');if(svgQuality)svgQuality.onchange=function(){state.svgQuality=svgQualityProfile(svgQuality.value).key;};
     var rem=p.querySelector('[data-db-remove-originals]');if(rem)rem.onchange=function(){state.removeOriginals=!!rem.checked;};
     var addBoneType=p.querySelector('[data-db-bone-type]');if(addBoneType)addBoneType.onchange=function(){state.addBoneType=addBoneType.value||'bone';};
+    p.querySelectorAll('[data-db-auto-parent]').forEach(function(input){input.onchange=function(){if(input.checked)state.autoParent=input.value!=='off';};});
     p.querySelectorAll('[data-db-character-add-picker]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}state.character.addPickerOpen=!state.character.addPickerOpen;if(state.character.addPickerOpen)selectedAvailableBuildPartCandidate();renderAll();};});
     p.querySelectorAll('[data-db-character-part-choice]').forEach(function(select){select.onchange=function(){state.character.addCandidateRigId=String(select.value||"");};});
     p.querySelectorAll('[data-db-character-add-selected]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var choice=p.querySelector('[data-db-character-part-choice]');var rigId=choice?String(choice.value||""):String(state.character.addCandidateRigId||"");addAvailableCandidateToCharacter(rigId);};});
@@ -8105,6 +8168,7 @@
        inspector. This mirrors LukeTools, where the selected curve is already
        known when the floating tool opens. */
     selectedObjects(false);
+    applyExplicitOpenSelection();
     if(!state.panel)createPanel();
     state.open=true;state.panel.classList.add('open');
     API.setSelectionInspectorSuppressed(TOOL_ID,true);
