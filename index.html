@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v230: Dem Bones rigs are lockable concertina timeline layers with collapsible individual-bone child rows. -->
 <!-- LukeAnimate GPT v229: Image / Video can fit a resource to the stage or resize the stage to the resource's native dimensions. -->
 <!-- LukeAnimate GPT v228: the Audio timeline row has the same direct red delete control as other timeline layers. -->
 <!-- LukeAnimate GPT v227: timeline, playhead and waveform dragging provide audible audio scrubbing and stop cleanly on the chosen frame. -->
@@ -48,7 +49,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v229</title>
+<title>Luke Animate v230</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -1320,6 +1321,15 @@
   .layer-row.native-layer-locked .layer-name,
   .timeline-track-row.native-layer-locked .timeline-track-name{color:#7a838e;}
   .timeline-track-row.native-layer-locked .timeline-track{opacity:.62;}
+  .timeline-track-row.dembones-rig-timeline-row .timeline-track-name{
+    display:flex;align-items:center;gap:3px;font-weight:700;color:#45515f;
+  }
+  .timeline-track-row.dembones-bone-timeline-row .timeline-track-name{
+    padding-left:23px;color:#687382;
+  }
+  .timeline-track-row.dembones-rig-timeline-row .timeline-object-span{
+    background:rgba(143,214,255,.34);border-color:rgba(48,117,184,.68);
+  }
   /* ---------- native drawing-layer follow links v188 ---------- */
   .native-layer-follow-select{
     width:88px;min-width:72px;max-width:110px;height:25px;padding:2px 4px;
@@ -15353,10 +15363,62 @@ ctx.fill();</textarea>
     entries.forEach(entry=>{
       const rig = entry.rig;
       const partLabel = entry.label;
+      if(rig.timelineExpanded === undefined) rig.timelineExpanded = true;
+      if(rig.timelineLocked === undefined) rig.timelineLocked = false;
+      const expanded = rig.timelineExpanded !== false;
+      const locked = rig.timelineLocked === true;
+
+      const rigRow = document.createElement('div');
+      rigRow.className = 'timeline-track-row dembones-rig-timeline-row' + (locked ? ' native-layer-locked' : '');
+      rigRow.dataset.demBonesRigId = String(rig.id || '');
+
+      const rigName = document.createElement('div');
+      rigName.className = 'timeline-track-name';
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'native-clip-timeline-toggle';
+      toggle.textContent = expanded ? '−' : '+';
+      toggle.title = expanded ? 'Hide individual bones' : 'Show individual bones';
+      toggle.setAttribute('aria-label', toggle.title);
+      toggle.addEventListener('click', event=>{
+        event.preventDefault();
+        event.stopPropagation();
+        pushUndo();
+        rig.timelineExpanded = !expanded;
+        renderTimeline();
+      });
+      rigName.appendChild(toggle);
+      rigName.appendChild(nativeMakeLockButton(locked, ()=>{
+        pushUndo();
+        rig.timelineLocked = !locked;
+        closeKeyframeContextMenu();
+        renderTimeline();
+        updateInspector();
+      }));
+      const rigLabel = document.createElement('span');
+      rigLabel.className = 'wick-layer-name-text';
+      rigLabel.textContent = (partLabel || String(rig.name || 'Rig')) + ' Bones';
+      rigLabel.title = locked
+        ? 'Bones layer locked · unlock to edit bones or their keys'
+        : 'Bones layer · use the disclosure control to show or hide individual bones';
+      rigName.appendChild(rigLabel);
+
+      const rigTrack = document.createElement('div');
+      rigTrack.className = 'timeline-track';
+      const rigSpan = document.createElement('div');
+      rigSpan.className = 'timeline-object-span';
+      rigSpan.style.opacity = '.52';
+      rigSpan.title = locked ? 'Bones layer locked' : 'Bones layer';
+      rigTrack.appendChild(rigSpan);
+      rigRow.appendChild(rigName);
+      rigRow.appendChild(rigTrack);
+      tracksEl.appendChild(rigRow);
+      if(!expanded) return;
+
       rig.bones.forEach((bone,boneIndex)=>{
         if(!Array.isArray(bone.keys)) bone.keys = [];
         const row = document.createElement('div');
-        row.className = 'timeline-track-row dembones-bone-timeline-row';
+        row.className = 'timeline-track-row dembones-bone-timeline-row' + (locked ? ' native-layer-locked' : '');
         row.dataset.demBonesRigId = String(rig.id || '');
         row.dataset.demBonesBoneId = String(bone.id || boneIndex);
 
@@ -15376,17 +15438,19 @@ ctx.fill();</textarea>
           : 'No Dem Bones keys · right-click anywhere on this row to add a key';
         track.appendChild(span);
 
-        track.addEventListener('contextmenu', event=>{
-          if(event.target && event.target.classList && event.target.classList.contains('timeline-key-dot')) return;
-          const keyTime = timelineTimeFromTrackClientX(track, event.clientX);
-          openKeyframeContextMenu(event, {
-            addKey:()=>{
-              t = keyTime;
-              addDemBonesKeyAtTime(bone, null, keyTime);
-            },
-            addKeyHint:`Add a Dem Bones key at ${timelineFrameLabelAtTime(keyTime)}`
+        if(!locked){
+          track.addEventListener('contextmenu', event=>{
+            if(event.target && event.target.classList && event.target.classList.contains('timeline-key-dot')) return;
+            const keyTime = timelineTimeFromTrackClientX(track, event.clientX);
+            openKeyframeContextMenu(event, {
+              addKey:()=>{
+                t = keyTime;
+                addDemBonesKeyAtTime(bone, null, keyTime);
+              },
+              addKeyHint:`Add a Dem Bones key at ${timelineFrameLabelAtTime(keyTime)}`
+            });
           });
-        });
+        }
 
         bone.keys.forEach(key=>{
           const dot = document.createElement('div');
@@ -15395,18 +15459,18 @@ ctx.fill();</textarea>
           dot.dataset.easing = easing;
           dot.style.left = timelinePercentForTime(key.time) + '%';
           dot.title = `Frame ${frameIndexForTime(key.time,timelineDuration)+1} · ${Number(key.time).toFixed(3)}s · ${keyframeEasingLabel(easing)} — drag to move key · right-click to delete or change interpolation type`;
-          dot.addEventListener('contextmenu', event=> openKeyframeContextMenu(event, {
-            getEasing:()=>normalizeKeyframeEasing(key.easing),
-            setEasing:value=>{ key.easing = normalizeKeyframeEasing(value); },
-            addKey:()=>addDemBonesKeyAtPlayhead(bone,key),
-            deleteKey:()=>deleteDemBonesKey(bone,key),
-            deleteKeyHint:`Delete ${partLabel ? partLabel + ' · ' : ''}${boneLabel} key at ${timelineFrameLabelAtTime(key.time)}`
-          }));
+          if(!locked) dot.addEventListener('contextmenu', event=> openKeyframeContextMenu(event, {
+              getEasing:()=>normalizeKeyframeEasing(key.easing),
+              setEasing:value=>{ key.easing = normalizeKeyframeEasing(value); },
+              addKey:()=>addDemBonesKeyAtPlayhead(bone,key),
+              deleteKey:()=>deleteDemBonesKey(bone,key),
+              deleteKeyHint:`Delete ${partLabel ? partLabel + ' · ' : ''}${boneLabel} key at ${timelineFrameLabelAtTime(key.time)}`
+            }));
 
           let moved = false;
           let startX = 0;
           let startTime = Number(key.time) || 0;
-          dot.addEventListener('mousedown', event=>{
+          if(!locked) dot.addEventListener('mousedown', event=>{
             if(event.button !== 0) return;
             event.preventDefault();
             event.stopPropagation();
