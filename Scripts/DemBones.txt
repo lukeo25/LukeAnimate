@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.59
+/* Luke Animate Dem Bones + MyCharacter GPT v16.60
+   v16.60 restores one canonical live rig per ID after project load, limits
+   setup/overlays to the selected item, and leaves every other rig animating.
    v16.59 opens an existing rig for editing only from an explicit current
    boned-object or bone selection; otherwise previous rigs remain untouched.
    Bone creation also has an Auto parent On/Off choice so independent bones
@@ -176,7 +178,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.59";
+  var TOOL_VERSION = "16.60";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -212,6 +214,7 @@
     tab:"source",
     mode:"select",
     activeRig:null,
+    activeRigFromBoneSelection:false,
     selectedBoneId:"",
     pendingOpenRigId:null,
     pendingOpenBoneId:"",
@@ -945,17 +948,36 @@
     state.pendingOpenRigId=null;state.pendingOpenBoneId='';
     if(!intent||!intent.rig){
       if(state.activeRig&&!characterPartForRigId(state.activeRig.id))registerLooseBuildRig(state.activeRig,sourceObjectsForRig(state.activeRig),[]);
-      state.activeRig=null;state.selectedBoneId='';state.selectedCurveId='';state.selectedPointIndex=0;
+      state.activeRig=null;state.activeRigFromBoneSelection=false;state.selectedBoneId='';state.selectedCurveId='';state.selectedPointIndex=0;
       state.characterAllBonesEdit=false;state.mode='select';state.tab='source';
       return false;
     }
-    state.activeRig=intent.rig;syncRigRefs(state.activeRig);
+    state.activeRig=intent.rig;state.activeRigFromBoneSelection=!!(intent.boneId&&!intent.object);syncRigRefs(state.activeRig);
     var requested=(state.activeRig.bones||[]).filter(function(bone){return String(bone.id)===String(intent.boneId||'');})[0];
     state.selectedBoneId=requested?requested.id:((state.activeRig.bones||[])[0]&&state.activeRig.bones[0].id||'');
     state.selectedCurveId=intent.object&&intent.object.type!=='image'?intent.object.id:'';
     state.selectedPointIndex=0;state.mode='select';state.tab='editbone';state.showEnvelopes=true;
     var part=characterPartForRigId(state.activeRig.id);state.characterAllBonesEdit=!!part;if(part)state.character.selectedPartId=part.id;
     return true;
+  }
+
+  function syncOpenRigToCurrentSelection(){
+    if(!state.open||state.drag)return false;
+    if(state.activeRigFromBoneSelection){
+      var direct=[];try{direct=API.getSelectedDrawObjects()||[];}catch(ignoreBoneSelectionPoll){}
+      if(!direct.length)return false;
+      state.activeRigFromBoneSelection=false;
+    }
+    var intent=explicitRigSelectionForOpen(),next=intent&&intent.rig||null;
+    if(next===state.activeRig)return false;
+    state.activeRig=next;state.activeRigFromBoneSelection=false;state.selectedCurveId='';state.selectedPointIndex=0;
+    if(!next){state.selectedBoneId='';state.characterAllBonesEdit=false;API.refreshUI();return true;}
+    syncRigRefs(next);
+    state.selectedBoneId=(next.bones&&next.bones[0]&&next.bones[0].id)||'';
+    if(intent.object&&intent.object.type!=='image')state.selectedCurveId=intent.object.id||'';
+    var part=characterPartForRigId(next.id);state.characterAllBonesEdit=!!(part&&['bones','editbone','animate'].indexOf(state.tab)>=0);
+    if(part)state.character.selectedPartId=part.id;
+    API.refreshUI();return true;
   }
 
   /*
@@ -3389,6 +3411,7 @@
     var lineThreshold=stagePixelsFromClient(9);
     var best=null;
     characterRestBoneDisplayRecords(currentTime()).forEach(function(record){
+      if(!state.activeRig||record.part.rig!==state.activeRig)return;
       var head=stagePointFromScene(record.head);
       var tail=stagePointFromScene(record.tail);
       var selected=!!(state.activeRig===record.part.rig&&String(state.selectedBoneId)===String(record.bone.id));
@@ -3552,7 +3575,7 @@
   }
 
   function drawCharacterAllEditBones(ctx){
-    var records=characterRestBoneDisplayRecords(currentTime());
+    var records=characterRestBoneDisplayRecords(currentTime()).filter(function(record){return !!state.activeRig&&record.part.rig===state.activeRig;});
     if(!records.length)return;
     drawCharacterAllEditEnvelope(ctx);
     ctx.save();
@@ -3575,9 +3598,8 @@
 
   function openCharacterAllBonesEdit(part,bone){
     if(!state.character.parts.length)return false;
-    (state.character.parts||[]).forEach(function(characterPart){
-      if(characterPart&&characterPart.rig)prepareRigSkinForEditing(characterPart.rig);
-    });
+    part=part||state.character.parts[0]||null;
+    if(part&&part.rig)prepareRigSkinForEditing(part.rig);
     if(state.characterDummyActive)finishCharacterDummyControl();
     if(state.adjustingPartId)finishPartPlacementAdjust(true);
     if(!returnToCharacterRoot())return false;
@@ -3587,7 +3609,6 @@
     state.tab="editbone";
     state.mode="select";
     state.showEnvelopes=true;
-    part=part||state.character.parts[0]||null;
     if(part){
       state.character.selectedPartId=part.id;
       state.activeRig=part.rig;
@@ -3599,7 +3620,7 @@
       var instance=partInstance(part);if(instance)try{API.selectDrawObject(instance);}catch(ignoreAllEditSelect){}
     }
     renderAll();API.refreshUI();
-    notify("Character edit: all parts and all bones are visible. Click any bone to edit that part.",false);
+    notify("Character edit: only the selected part's bones are visible and editable.",false);
     return true;
   }
 
@@ -3609,6 +3630,7 @@
     var records=characterBoneDisplayRecords(
       currentTime()
     );
+    if(state.open)records=records.filter(function(record){return !!state.activeRig&&record.part.rig===state.activeRig;});
 
     if(!records.length)return;
 
@@ -3682,6 +3704,7 @@
     var point=selectedScenePoint(event);
     var nodeThreshold=scenePixels(14),lineThreshold=scenePixels(9),best=null;
     characterBoneDisplayRecords(currentTime()).forEach(function(record){
+      if(state.open&&(!state.activeRig||record.part.rig!==state.activeRig))return;
       var selected=!!((state.open&&state.activeRig===record.part.rig&&String(state.selectedBoneId)===String(record.bone.id))||(!state.open&&Number(state.closedBonePartId)===Number(record.part.id)&&String(state.closedBoneId)===String(record.bone.id)));
       if(isDummyBone(record.bone)){
         var dh=dummyBoxHit(point,record.bone,{head:record.head,tail:record.tail},selected,scenePixels);
@@ -3951,7 +3974,7 @@
       evaluated.
     */
     var currentRest=restTransformMap(rig);
-    var setupMode=!!(state.open&&(state.tab==="bones"||state.tab==="editbone"||state.tab==="curves"));
+    var setupMode=!!(state.open&&state.activeRig===rig&&(state.tab==="bones"||state.tab==="editbone"||state.tab==="curves"));
     var rest=currentRest;
     var posed=setupMode
       ?currentRest
@@ -8094,6 +8117,13 @@
     /* Capture at window level as well so Luke Animate's native Clip double-click
        cannot consume the gesture before DemBones sees the assembled Character. */
     window.addEventListener('dblclick',function(e){handleStageDoubleClick(e);},true);
+    window.addEventListener('lukeanimateprojectloaded',function(){
+      state.drag=null;state.addPreview=null;state.pendingOpenRigId=null;state.pendingOpenBoneId='';
+      state.activeRig=null;state.activeRigFromBoneSelection=false;state.selectedBoneId='';state.selectedCurveId='';state.selectedPointIndex=0;
+      state.characterAllBonesEdit=false;state.mode='select';state.tab='source';state.looseBuildParts={};
+      syncDemBonesRuntimePlayback(currentTime());
+      if(state.open)renderAll();
+    });
     window.addEventListener('keydown',function(e){
       var target=e.target,typing=!!(target&&(target.tagName==='INPUT'||target.tagName==='TEXTAREA'||target.tagName==='SELECT'||target.isContentEditable));
       if(!typing&&(e.key==='b'||e.key==='B'))state.bKeyDown=true;
@@ -8124,6 +8154,7 @@
          else touch object geometry or the DOM while a WebM is capturing. */
       if(API.isExporting)return;
       if(state.open){
+        syncOpenRigToCurrentSelection();
         if(state.activeRig)syncRigDisplayGeometry(state.activeRig,currentTime());
       }else{
         syncDemBonesRuntimePlayback(currentTime());
