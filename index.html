@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v231: Bones concertina arrows remain visible after nested Clip timeline decoration. -->
 <!-- LukeAnimate GPT v230: Dem Bones rigs are lockable concertina timeline layers with collapsible individual-bone child rows. -->
 <!-- LukeAnimate GPT v229: Image / Video can fit a resource to the stage or resize the stage to the resource's native dimensions. -->
 <!-- LukeAnimate GPT v228: the Audio timeline row has the same direct red delete control as other timeline layers. -->
@@ -49,7 +50,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v230</title>
+<title>Luke Animate v231</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -1911,7 +1912,8 @@
     outline:2px solid rgba(14,156,134,.38);
     outline-offset:2px;
   }
-  .native-clip-timeline-toggle{
+  .native-clip-timeline-toggle,
+  .dembones-timeline-toggle{
     flex:0 0 15px;
     width:15px;
     height:15px;
@@ -1927,7 +1929,8 @@
     font:800 10px/1 var(--mono);
     cursor:pointer;
   }
-  .native-clip-timeline-toggle:hover{
+  .native-clip-timeline-toggle:hover,
+  .dembones-timeline-toggle:hover{
     border-color:var(--accent);
     color:var(--accent);
   }
@@ -15376,7 +15379,7 @@ ctx.fill();</textarea>
       rigName.className = 'timeline-track-name';
       const toggle = document.createElement('button');
       toggle.type = 'button';
-      toggle.className = 'native-clip-timeline-toggle';
+      toggle.className = 'dembones-timeline-toggle';
       toggle.textContent = expanded ? '−' : '+';
       toggle.title = expanded ? 'Hide individual bones' : 'Show individual bones';
       toggle.setAttribute('aria-label', toggle.title);
