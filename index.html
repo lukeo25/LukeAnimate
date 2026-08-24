@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v233: project reload reconnects shared Dem Bones rigs, selected rigs alone expose bone rows, and the playhead stays on the sticky ruler. -->
 <!-- LukeAnimate GPT v232: Tube Bones expose independently movable handle-key subrows in the timeline. -->
 <!-- LukeAnimate GPT v231: Bones concertina arrows remain visible after nested Clip timeline decoration. -->
 <!-- LukeAnimate GPT v230: Dem Bones rigs are lockable concertina timeline layers with collapsible individual-bone child rows. -->
@@ -51,7 +52,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v232</title>
+<title>Luke Animate v233</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -995,13 +996,13 @@
     --timeline-content-width:900px;
   }
   .timeline-playhead{
-    position:absolute; top:0; bottom:0; width:2px;
+    position:absolute; top:0; width:2px; height:16px;
     pointer-events:none; z-index:8;
     left:82px; /* fallback until JS aligns it exactly with the frame ruler */
   }
   .timeline-playhead::after{
     content:'';
-    position:absolute; left:0; top:18px; bottom:0; width:2px;
+    position:absolute; left:0; top:18px; width:2px; height:100vh;
     background:var(--accent); box-shadow:0 0 6px var(--accent);
   }
   .timeline-playhead-handle{
@@ -1025,6 +1026,7 @@
     background:var(--panel);
   }
   .timeline-ruler-col{
+    position:relative;
     flex:0 0 var(--timeline-content-width);
     width:var(--timeline-content-width);
     min-width:var(--timeline-content-width);
@@ -3274,12 +3276,12 @@ ctx.fill();</textarea>
     <button class="btn small danger" id="btn-audio-remove" style="flex:0 0 auto;display:none;">Remove Audio</button>
   </div>
   <div class="timeline-wrap" id="timeline-wrap">
-    <div class="timeline-playhead" id="timeline-playhead">
-      <div class="timeline-playhead-handle" id="timeline-playhead-handle" title="Drag to scrub frame by frame"></div>
-    </div>
     <div class="timeline-ruler-row">
       <div class="timeline-track-name">Frames</div>
       <div class="timeline-ruler-col">
+        <div class="timeline-playhead" id="timeline-playhead">
+          <div class="timeline-playhead-handle" id="timeline-playhead-handle" title="Drag to scrub frame by frame"></div>
+        </div>
         <div class="onion-range-overlay" id="onion-range-overlay" aria-hidden="true">
           <div class="onion-range-band" id="onion-range-before"></div>
           <div class="onion-range-band" id="onion-range-after"></div>
@@ -5050,6 +5052,42 @@ ctx.fill();</textarea>
     };
   }
 
+  function rehydrateDemBonesRigReferences(){
+    const objects=[];
+    const visited=new Set();
+    const addObject=object=>{
+      if(!object || typeof object!=='object' || visited.has(object)) return;
+      visited.add(object);objects.push(object);
+      if(object.type==='group' && Array.isArray(object.children)) object.children.forEach(addObject);
+    };
+    const addFrameObjects=frames=>(frames||[]).forEach(frame=>(frame&&frame.objects||[]).forEach(addObject));
+    (drawObjects||[]).forEach(addObject);
+    addFrameObjects(sceneFrames);
+    Object.values(clips||{}).forEach(clip=>{
+      (clip&&clip.drawObjects||[]).forEach(addObject);
+      addFrameObjects(clip&&clip.sceneFrames);
+      (clip&&clip.drawingLayers||[]).forEach(layer=>(layer&&layer.frames||[]).forEach(frame=>addObject(frame&&frame.object)));
+    });
+    const rigs=new Map();
+    const score=rig=>rig&&Array.isArray(rig.bones)
+      ? rig.bones.length+(rig.bones.reduce((sum,bone)=>sum+(Array.isArray(bone&&bone.keys)?bone.keys.length:0),0)*10)
+      : -1;
+    objects.forEach(object=>[object.demBones,object.demBonesExpression].forEach(data=>{
+      if(!data)return;
+      const id=String(data.rigId!==undefined&&data.rigId!==null?data.rigId:(data.rig&&data.rig.id)||'');
+      if(!id)return;
+      if(data.rigId===undefined||data.rigId===null||data.rigId==='')data.rigId=data.rig&&data.rig.id!==undefined?data.rig.id:id;
+      const current=rigs.get(id),candidate=data.rig;
+      if(candidate&&(!current||score(candidate)>score(current)))rigs.set(id,candidate);
+    }));
+    objects.forEach(object=>[object.demBones,object.demBonesExpression].forEach(data=>{
+      if(!data)return;
+      const rig=rigs.get(String(data.rigId||''));
+      if(rig)data.rig=rig;
+    }));
+    return rigs;
+  }
+
   function restoreState(snap){
     const restoredWidth = snap.stageWidth !== undefined ? snap.stageWidth : W;
     const restoredHeight = snap.stageHeight !== undefined ? snap.stageHeight : H;
@@ -5093,6 +5131,7 @@ ctx.fill();</textarea>
       });
       clipCounter = Math.max(Number(snap.clipCounter)||0, ...Object.keys(clips).map(id=>{ const m=String(id).match(/clip-(\d+)/); return m?Number(m[1])||0:0; }));
     }
+    rehydrateDemBonesRigReferences();
     selectedDrawIndices.clear();
     isolatedGroupEdit = null;
     bezierCurveObjectId = null;
@@ -12790,6 +12829,7 @@ ctx.fill();</textarea>
     if(zoomControl) zoomControl.value=timelineFramePixelWidth;
     t = Math.max(0,Math.min(timelineDuration,Number(project.currentTime)||0));
     syncActiveSceneFrameForTime(t,true);
+    window.dispatchEvent(new CustomEvent('lukeanimateprojectloaded',{detail:{projectVersion:Number(project.projectVersion)||0}}));
     await restoreProjectAudio(project.audio);
     includeAudioInExport = !!(project.audio && project.audio.includeInExport);
     document.getElementById('chk-audioinclude').checked = includeAudioInExport && !document.getElementById('chk-audioinclude').disabled;
@@ -15369,7 +15409,14 @@ ctx.fill();</textarea>
   }
 
   function addDemBonesTimelineRows(tracksEl){
-    const entries = collectDemBonesTimelineRigEntries();
+    let entries = collectDemBonesTimelineRigEntries();
+    const demBonesPlugin=window.__LukeAnimateDemBonesFull;
+    if(demBonesPlugin&&demBonesPlugin.state&&demBonesPlugin.state.open){
+      const activeRig=demBonesPlugin.state.activeRig;
+      entries=activeRig
+        ? entries.filter(entry=>entry.rig===activeRig||String(entry.rig&&entry.rig.id||'')===String(activeRig.id||''))
+        : [];
+    }
     entries.forEach(entry=>{
       const rig = entry.rig;
       const partLabel = entry.label;
@@ -18172,13 +18219,10 @@ ctx.fill();</textarea>
     const frameInfo = getTimelineFrameInfo();
     const currentFrame = frameIndexForTime(t,timelineDuration);
     if(playhead){
-      const wrapEl=document.getElementById('timeline-wrap');
       const colEl=document.querySelector('.timeline-ruler-col');
-      if(wrapEl&&colEl){
+      if(colEl){
         const colWidth=colEl.offsetWidth||colEl.getBoundingClientRect().width;
-        const wrapPaddingLeft=parseFloat(getComputedStyle(wrapEl).paddingLeft)||0;
-        const offsetLeft=wrapPaddingLeft+colEl.offsetLeft;
-        playhead.style.left=(offsetLeft+((currentFrame+0.5)/frameInfo.totalCells)*colWidth)+'px';
+        playhead.style.left=(((currentFrame+0.5)/frameInfo.totalCells)*colWidth)+'px';
       }else{
         playhead.style.left=timelineFrameCenterPercent(currentFrame,frameInfo)+'%';
       }
