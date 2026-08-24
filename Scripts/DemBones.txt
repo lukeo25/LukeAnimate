@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.61
+/* Luke Animate Dem Bones + MyCharacter GPT v16.62
+   v16.62 makes locked Bones layers pointer-transparent so unlocked particle
+   path nodes and other stage controls remain selectable and draggable.
    v16.61 keeps PNG artwork visible while its deforming renderer becomes ready,
    restores its native timeline layer, and hides every unselected rig overlay.
    v16.60 restores one canonical live rig per ID after project load, limits
@@ -180,7 +182,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.61";
+  var TOOL_VERSION = "16.62";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1398,8 +1400,8 @@
   function rigTimelineLocked(rig){return !!(rig&&rig.timelineLocked===true);}
   function stopLockedRigPointer(event,rig){
     if(!rigTimelineLocked(rig))return false;
-    if(event){event.preventDefault();event.stopImmediatePropagation();}
-    notify("This Bones layer is locked.",true);
+    /* A lock removes bone editability; it must not create an invisible shield
+       over unlocked particle paths or artwork underneath the skeleton. */
     return true;
   }
 
@@ -6725,7 +6727,7 @@
       if(!rig)return;
       var isActive=state.open&&state.activeRig===rig;
       var map=isActive&&state.tab==='editbone'?editBoneDisplayTransformMap(rig,currentTime()):(isActive&&state.tab==='bones'?restTransformMap(rig):posedTransformMap(rig,currentTime()));
-      (rig.bones||[]).forEach(function(bone){var q=map[bone.id];if(q)records.push({part:null,bone:bone,head:q.head,tail:q.tail});});
+      (rig.bones||[]).forEach(function(bone){var q=map[bone.id];if(q)records.push({part:null,rig:rig,bone:bone,head:q.head,tail:q.tail});});
     });
     return records;
   }
@@ -6824,7 +6826,9 @@
         var key=Math.round(clientX)+'|'+Math.round(clientY);
         if(seen[key])return;seen[key]=true;
         var selected=(state.open&&String(state.selectedBoneId)===String(record.bone.id))||(!state.open&&String(state.closedBoneId)===String(record.bone.id));
-        html.push('<span class="db-offstage-bone-node" title="'+esc(record.bone.name||'Bone')+' '+entry[0]+' — drag to animate" style="pointer-events:auto;position:absolute;left:'+(clientX-wrapRect.left-8)+'px;top:'+(clientY-wrapRect.top-8)+'px;width:16px;height:16px;border-radius:50%;box-sizing:border-box;background:'+(selected?'#0e9c86':'#fff')+';border:3px solid #0e9c86;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:grab"></span>');
+        var recordRig=record.part&&record.part.rig?record.part.rig:record.rig;
+        var interactive=!rigTimelineLocked(recordRig);
+        html.push('<span class="db-offstage-bone-node" title="'+esc(record.bone.name||'Bone')+' '+entry[0]+(interactive?' — drag to animate':' — locked')+'" style="pointer-events:'+(interactive?'auto':'none')+';position:absolute;left:'+(clientX-wrapRect.left-8)+'px;top:'+(clientY-wrapRect.top-8)+'px;width:16px;height:16px;border-radius:50%;box-sizing:border-box;background:'+(selected?'#0e9c86':'#fff')+';border:3px solid #0e9c86;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:'+(interactive?'grab':'default')+'"></span>');
       });
     });
     var hasGhostObjects=offstageGhostObjects().length>0;
@@ -7083,7 +7087,7 @@
 
     if(state.characterAllBonesEdit&&state.tab==="animate"){
       var characterAnimateHit=characterAnimationBoneHit(event);
-      if(!characterAnimateHit){event.preventDefault();event.stopImmediatePropagation();return;}
+      if(!characterAnimateHit)return;
       if(stopLockedRigPointer(event,characterAnimateHit.part.rig))return;
       event.preventDefault();event.stopImmediatePropagation();
       focusCharacterPartCard(characterAnimateHit.part);
@@ -7243,7 +7247,7 @@
       }
       renderAll();return;
     }
-    if(!hit){if(state.tab==="editbone"||state.tab==="animate"){event.preventDefault();event.stopImmediatePropagation();}return;}
+    if(!hit){if(state.tab==="editbone"){event.preventDefault();event.stopImmediatePropagation();}return;}
     if(stopLockedRigPointer(event,state.activeRig))return;
     event.preventDefault();event.stopImmediatePropagation();state.selectedBoneId=hit.bone.id;
     if(state.tab==="editbone"){
