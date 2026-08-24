@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.57
+/* Luke Animate Dem Bones + MyCharacter GPT v16.58
+   v16.58 makes internal Tube handles draggable on standalone rigs while the
+   Dem Bones panel is closed, instead of exposing only the two end controls.
    v16.57 gives every Tube handle its own interpolated key channel and upgrades
    Tube-controlled vector/raster artwork to a dense smooth deformation mesh.
    v16.56 keeps an immutable Tube bind cage and previews Tube deformation live
@@ -170,7 +172,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.57";
+  var TOOL_VERSION = "16.58";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -3724,8 +3726,19 @@
         if(dh&&(!best||dh.distance<best.distance))best=dh;
         return;
       }
+      if(isTubeBone(b)&&Array.isArray(q.tubeControls)){
+        q.tubeControls.slice(1,-1).forEach(function(control,index){
+          var td=Math.hypot(p.x-control.x,p.y-control.y),candidate={bone:b,handle:'tube-'+index,point:p,distance:td};
+          if(td<scenePixels(20)&&betterBoneHit(candidate,best))best=candidate;
+        });
+        (q.tubePoints||[]).slice(0,-1).forEach(function(control,index){
+          var next=q.tubePoints[index+1],td=distancePointToSegment(p,control,next);
+          var tubeSectionCandidate={bone:b,handle:'tube-'+nearestTubeHandleIndex(p,q.tubeControls),point:p,distance:td};
+          if(td<lineD&&Math.min(Math.hypot(p.x-q.head.x,p.y-q.head.y),Math.hypot(p.x-q.tail.x,p.y-q.tail.y))>scenePixels(14)&&betterBoneHit(tubeSectionCandidate,best))best=tubeSectionCandidate;
+        });
+      }
       [["tail",q.tail],["head",q.head]].forEach(function(pair){var d=Math.hypot(p.x-pair[1].x,p.y-pair[1].y),candidate={bone:b,handle:pair[0],point:p,distance:d};if(d<bestD&&betterBoneHit(candidate,best))best=candidate;});
-      var ld=distancePointToSegment(p,q.head,q.tail);if(ld<lineD&&(!best||ld<best.distance-scenePixels(2)))best={bone:b,handle:"line",point:p,distance:ld};
+      if(!isTubeBone(b)){var ld=distancePointToSegment(p,q.head,q.tail);if(ld<lineD&&(!best||ld<best.distance-scenePixels(2)))best={bone:b,handle:"line",point:p,distance:ld};}
     });
     return best;
   }
