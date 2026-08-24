@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v240: adds Wick-style Publish Game export as standalone HTML or an itch.io-ready ZIP with a clean embedded player. -->
 <!-- LukeAnimate GPT v239: adds the Life Type Tool and per-Clip editable Type Tool code, saved with the project. -->
 <!-- LukeAnimate GPT v238: adds native, project-safe Type Tool data and the Directions eight-way Clip movement tool. -->
 <!-- LukeAnimate GPT v237: Export Animation always uses and displays the complete current timeline length instead of retaining an editable default duration. -->
@@ -58,7 +59,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v239</title>
+<title>Luke Animate v240</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -86,6 +87,59 @@
     flex-direction:column;
     height:100vh;
     overflow:hidden;
+  }
+  body.published-game-mode{
+    display:block;
+    background:#000;
+    overflow:hidden;
+    user-select:none;
+  }
+  body.published-game-mode #topbar,
+  body.published-game-mode #sidebar-column,
+  body.published-game-mode #timeline-dock,
+  body.published-game-mode #zoom-controls,
+  body.published-game-mode #clip-breadcrumb,
+  body.published-game-mode #offstage-proxy-layer,
+  body.published-game-mode #horizontal-ruler,
+  body.published-game-mode #vertical-ruler,
+  body.published-game-mode #ruler-corner,
+  body.published-game-mode #edit-overlay,
+  body.published-game-mode #stage-text-editor,
+  body.published-game-mode .floating-panel{
+    display:none!important;
+  }
+  body.published-game-mode #main-row,
+  body.published-game-mode #stage-wrap{
+    width:100vw;
+    height:100vh;
+    min-width:0;
+    min-height:0;
+    padding:0;
+    margin:0;
+    overflow:hidden;
+    background:#000;
+  }
+  body.published-game-mode #stage-workspace,
+  body.published-game-mode #stage-workspace.rulers-hidden{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    width:100%;
+    height:100%;
+    max-width:none;
+    max-height:none;
+    margin:0;
+  }
+  body.published-game-mode #canvas-shell{
+    flex:0 0 auto;
+    max-width:none;
+    max-height:none;
+    box-shadow:none;
+    overflow:hidden;
+  }
+  body.published-game-mode #fx-canvas{
+    max-width:none;
+    max-height:none;
   }
   #main-row{
     flex:1;
@@ -3160,6 +3214,17 @@
 
   <div class="devpanel" id="devpanel-import" style="display:none;">
     <div style="padding:12px 14px 0;">
+      <div class="group" id="publish-game-group" style="padding:0 0 14px;margin:0 0 12px;border-bottom:1px solid var(--line);">
+        <h2 style="margin-top:0;">Publish Game</h2>
+        <div class="row"><label>Title</label><input type="text" id="inp-publish-game-title" value="Luke Animate Game" style="flex:1;"></div>
+        <div class="row"><label>Package</label><select id="sel-publish-game-format" style="flex:1;"><option value="html">Standalone HTML</option><option value="zip">Web ZIP / itch.io</option></select></div>
+        <div class="row"><label>Stage scaling</label><select id="sel-publish-game-scale" style="flex:1;"><option value="contain">Fit entire stage</option><option value="cover">Fill browser window</option><option value="original">Original size</option></select></div>
+        <label class="toggle-line"><input type="checkbox" id="chk-publish-game-autoplay" checked> Start playing automatically</label>
+        <label class="toggle-line"><input type="checkbox" id="chk-publish-game-loop" checked> Loop the timeline</label>
+        <div class="hint" style="padding:6px 0 8px;">Creates a clean playable game with the project, images, audio, Behaviours and edited Type Tool code embedded. The editor interface is not shown.</div>
+        <div class="btn-row"><button class="btn primary" id="btn-publish-game" style="flex:1;">Publish Game</button></div>
+        <div id="publish-game-progress" class="audio-filename" style="max-width:none;margin-top:8px;">Ready.</div>
+      </div>
       <div class="group" id="unified-export-group" style="padding:0 0 14px;margin:0 0 12px;border-bottom:1px solid var(--line);">
         <h2 style="margin-top:0;">Export Animation</h2>
         <div class="row">
@@ -3320,6 +3385,9 @@ ctx.fill();</textarea>
 
 <script>
 (function(){
+  const publishedProjectElement = document.getElementById('luke-animate-published-project');
+  const publishedGameMode = !!publishedProjectElement;
+  if(publishedGameMode) document.body.classList.add('published-game-mode');
   const canvas = document.getElementById('fx-canvas');
   const ctx = canvas.getContext('2d', { alpha: true });
   let W = canvas.width, H = canvas.height;
@@ -12349,7 +12417,8 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 118,
+    version: 119,
+    playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -13110,7 +13179,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 149;
+    project.projectVersion = 150;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -13172,14 +13241,10 @@ ctx.fill();</textarea>
     return project;
   }
 
-  async function loadCompleteProjectFile(file){
-    if(!file) return;
-    const textContent = await file.text();
-    let project;
-    try{ project = normaliseLoadedProject(JSON.parse(textContent)); }
-    catch(error){ throw new Error(error && error.message ? error.message : 'Invalid project JSON.'); }
-
-    pushUndo();
+  async function loadCompleteProjectData(project,sourceLabel,options){
+    project=normaliseLoadedProject(project);
+    options=options||{};
+    if(!options.skipUndo)pushUndo();
     restoreState(project);
     updateProjectCountersAfterLoad();
     timelineFramePixelWidth = Math.max(TIMELINE_MIN_FRAME_PX, Math.min(TIMELINE_MAX_FRAME_PX, Number(project.timelineFramePixelWidth)||timelineFramePixelWidth));
@@ -13193,11 +13258,11 @@ ctx.fill();</textarea>
     includeAudioInExport = !!(project.audio && project.audio.includeInExport);
     document.getElementById('chk-audioinclude').checked = includeAudioInExport && !document.getElementById('chk-audioinclude').disabled;
 
-    if(project.activePanel === 'particles'){
+    if(!options.playerMode&&project.activePanel === 'particles'){
       showParticlesPanel();
       if(project.particlesTab === 'points') document.getElementById('tab-btn-points').click();
       else document.getElementById('tab-btn-paths').click();
-    }else{
+    }else if(!options.playerMode){
       openDevPanel(panelTitles[project.activePanel] ? project.activePanel : 'animate');
     }
     renderBehaviourList();
@@ -13208,9 +13273,20 @@ ctx.fill();</textarea>
     updateMediaPanelSelection();
     updateInspector();
     renderTransformHandles();
-    logToSandbox('Complete project loaded: ' + file.name);
+    logToSandbox('Complete project loaded: ' + String(sourceLabel||'project'));
+    return project;
   }
 
+  async function loadCompleteProjectFile(file){
+    if(!file) return;
+    const textContent = await file.text();
+    let project;
+    try{ project = JSON.parse(textContent); }
+    catch(error){ throw new Error(error && error.message ? error.message : 'Invalid project JSON.'); }
+    return loadCompleteProjectData(project,file.name,{skipUndo:false,playerMode:false});
+  }
+
+  document.getElementById('btn-publish-game').addEventListener('click',publishGame);
   document.getElementById('btn-project-save').addEventListener('click', saveCompleteProject);
   document.getElementById('btn-project-save-top').addEventListener('click', saveCompleteProject);
   document.getElementById('btn-project-load-top').addEventListener('click', ()=>document.getElementById('inp-project-load').click());
@@ -14507,6 +14583,134 @@ ctx.fill();</textarea>
       wrap.scrollLeft+=nextClientX-clipOriginClientPoint.x;
       wrap.scrollTop+=nextClientY-clipOriginClientPoint.y;
     }
+  }
+
+  function publishedGameFileBase(title){
+    const clean=String(title||'Luke Animate Game').trim().replace(/[\\/:*?"<>|]+/g,'-').replace(/\s+/g,' ').slice(0,80);
+    return clean||'Luke Animate Game';
+  }
+
+  function downloadGeneratedBlob(blob,fileName){
+    const url=URL.createObjectURL(blob);
+    const anchor=document.createElement('a');
+    anchor.href=url;anchor.download=fileName;document.body.appendChild(anchor);anchor.click();anchor.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),5000);
+  }
+
+  function publishedGamePayloadText(value){
+    return JSON.stringify(value).replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029');
+  }
+
+  async function currentLukeAnimateSource(){
+    if(location.protocol!=='file:'){
+      const sourceUrl=location.href.split('#')[0].split('?')[0];
+      try{
+        const response=await fetch(sourceUrl+(sourceUrl.includes('?')?'&':'?')+'publish='+Date.now(),{cache:'no-store'});
+        if(response.ok){const source=await response.text();if(source.includes('<scr'+'ipt>')&&source.includes('(function(){'))return source;}
+      }catch(_error){}
+    }
+    return '<!doctype html>\n'+document.documentElement.outerHTML;
+  }
+
+  function buildPublishedGameHTML(source,payload){
+    const priorPayloadPattern=new RegExp('\\s*<scr'+'ipt id="luke-animate-published-project"[^>]*>[\\s\\S]*?<\\/scr'+'ipt>\\s*','i');
+    const cleanSource=String(source||'').replace(priorPayloadPattern,'\n');
+    const marker=new RegExp('<scr'+'ipt>\\s*\\(function\\(\\)\\{','i').exec(cleanSource);
+    if(!marker)throw new Error('Could not find the Luke Animate player runtime in this page.');
+    const payloadTag='<scr'+'ipt id="luke-animate-published-project" type="application/json">'+publishedGamePayloadText(payload)+'</scr'+'ipt>\n';
+    let html=cleanSource.slice(0,marker.index)+payloadTag+cleanSource.slice(marker.index);
+    const title=String(payload.options&&payload.options.title||'Luke Animate Game').replace(/[&<>]/g,character=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[character]));
+    return html.replace(/<title>[\s\S]*?<\/title>/i,'<title>'+title+'</title>');
+  }
+
+  let publishedZipCrcTable=null;
+  function publishedZipCRC32(bytes){
+    if(!publishedZipCrcTable){
+      publishedZipCrcTable=new Uint32Array(256);
+      for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?(0xedb88320^(c>>>1)):(c>>>1);publishedZipCrcTable[n]=c>>>0;}
+    }
+    let crc=0xffffffff;
+    for(let index=0;index<bytes.length;index++)crc=publishedZipCrcTable[(crc^bytes[index])&255]^(crc>>>8);
+    return (crc^0xffffffff)>>>0;
+  }
+
+  function buildSingleFileZip(fileName,contentBytes){
+    const nameBytes=new TextEncoder().encode(fileName),crc=publishedZipCRC32(contentBytes),size=contentBytes.length;
+    const now=new Date(),dosTime=((now.getHours()&31)<<11)|((now.getMinutes()&63)<<5)|(Math.floor(now.getSeconds()/2)&31);
+    const dosDate=(((Math.max(1980,now.getFullYear())-1980)&127)<<9)|(((now.getMonth()+1)&15)<<5)|(now.getDate()&31);
+    const local=new Uint8Array(30+nameBytes.length),localView=new DataView(local.buffer);
+    localView.setUint32(0,0x04034b50,true);localView.setUint16(4,20,true);localView.setUint16(6,0x0800,true);localView.setUint16(8,0,true);
+    localView.setUint16(10,dosTime,true);localView.setUint16(12,dosDate,true);localView.setUint32(14,crc,true);localView.setUint32(18,size,true);localView.setUint32(22,size,true);
+    localView.setUint16(26,nameBytes.length,true);localView.setUint16(28,0,true);local.set(nameBytes,30);
+    const central=new Uint8Array(46+nameBytes.length),centralView=new DataView(central.buffer);
+    centralView.setUint32(0,0x02014b50,true);centralView.setUint16(4,20,true);centralView.setUint16(6,20,true);centralView.setUint16(8,0x0800,true);centralView.setUint16(10,0,true);
+    centralView.setUint16(12,dosTime,true);centralView.setUint16(14,dosDate,true);centralView.setUint32(16,crc,true);centralView.setUint32(20,size,true);centralView.setUint32(24,size,true);
+    centralView.setUint16(28,nameBytes.length,true);centralView.setUint16(30,0,true);centralView.setUint16(32,0,true);centralView.setUint16(34,0,true);centralView.setUint16(36,0,true);
+    centralView.setUint32(38,0,true);centralView.setUint32(42,0,true);central.set(nameBytes,46);
+    const end=new Uint8Array(22),endView=new DataView(end.buffer),centralOffset=local.length+size;
+    endView.setUint32(0,0x06054b50,true);endView.setUint16(4,0,true);endView.setUint16(6,0,true);endView.setUint16(8,1,true);endView.setUint16(10,1,true);
+    endView.setUint32(12,central.length,true);endView.setUint32(16,centralOffset,true);endView.setUint16(20,0,true);
+    return new Blob([local,contentBytes,central,end],{type:'application/zip'});
+  }
+
+  async function publishGame(){
+    const button=document.getElementById('btn-publish-game'),progress=document.getElementById('publish-game-progress');
+    const original=button.textContent;button.disabled=true;button.textContent='Publishing…';progress.textContent='Building playable game…';
+    try{
+      const title=document.getElementById('inp-publish-game-title').value.trim()||'Luke Animate Game';
+      const format=document.getElementById('sel-publish-game-format').value;
+      const options={title,autoplay:document.getElementById('chk-publish-game-autoplay').checked,loop:document.getElementById('chk-publish-game-loop').checked,scale:document.getElementById('sel-publish-game-scale').value};
+      const project=await buildCompleteProjectDocument(),source=await currentLukeAnimateSource();
+      const html=buildPublishedGameHTML(source,{format:'LukeAnimatePublishedGame',publishVersion:1,options,project});
+      const fileBase=publishedGameFileBase(title);
+      if(format==='zip'){
+        const zip=buildSingleFileZip('index.html',new TextEncoder().encode(html));
+        downloadGeneratedBlob(zip,fileBase+'.zip');progress.textContent='Published '+fileBase+'.zip · '+(zip.size/1048576).toFixed(1)+' MB';
+      }else{
+        const blob=new Blob([html],{type:'text/html;charset=utf-8'});
+        downloadGeneratedBlob(blob,fileBase+'.html');progress.textContent='Published '+fileBase+'.html · '+(blob.size/1048576).toFixed(1)+' MB';
+      }
+    }catch(error){progress.textContent='Publish failed: '+(error&&error.message?error.message:error);}
+    finally{button.disabled=false;button.textContent=original;}
+  }
+
+  function applyPublishedGameScale(mode){
+    if(!publishedGameMode)return;
+    mode=['contain','cover','original'].includes(mode)?mode:'contain';
+    const viewportWidth=Math.max(1,window.innerWidth),viewportHeight=Math.max(1,window.innerHeight);
+    const scale=mode==='original'?1:(mode==='cover'?Math.max(viewportWidth/W,viewportHeight/H):Math.min(viewportWidth/W,viewportHeight/H));
+    const width=Math.max(1,Math.round(W*scale)),height=Math.max(1,Math.round(H*scale));
+    const shell=document.getElementById('canvas-shell');
+    canvas.style.width=width+'px';canvas.style.height=height+'px';canvas.style.maxWidth='none';canvas.style.maxHeight='none';
+    shell.style.width=width+'px';shell.style.height=height+'px';shell.style.maxWidth='none';shell.style.maxHeight='none';
+  }
+
+  async function startPublishedGame(){
+    let payload;
+    try{payload=JSON.parse(publishedProjectElement.textContent||'{}');}
+    catch(error){throw new Error('The published game data is invalid: '+error.message);}
+    if(!payload||payload.format!=='LukeAnimatePublishedGame'||!payload.project)throw new Error('This file does not contain a Luke Animate published game.');
+    const options=payload.options&&typeof payload.options==='object'?payload.options:{};
+    document.title=String(options.title||'Luke Animate Game');
+    await loadLukeAnimateConfig(false);
+    await loadCompleteProjectData(payload.project,document.title,{skipUndo:true,playerMode:true});
+    editingClipId=null;
+    t=0;syncActiveSceneFrameForTime(t,true);resetTypeToolRuntime();
+    loopTimeline=options.loop!==false;
+    document.getElementById('chk-looptimeline').checked=loopTimeline;
+    rulersVisible=false;guidesVisible=false;syncGuideControls();
+    const scaleMode=String(options.scale||'contain');
+    applyPublishedGameScale(scaleMode);
+    window.addEventListener('resize',()=>applyPublishedGameScale(scaleMode));
+    playing=options.autoplay!==false;
+    lastFrame=performance.now();
+    if(playing){
+      playAudioIfLoaded();
+      const resumeAudio=()=>{if(playing)playAudioIfLoaded();};
+      window.addEventListener('pointerdown',resumeAudio,{once:true});
+      window.addEventListener('keydown',resumeAudio,{once:true});
+    }
+    window.dispatchEvent(new CustomEvent('lukeanimategameready',{detail:{title:document.title,options}}));
   }
   document.getElementById('btn-zoom-in').addEventListener('click', ()=> setZoom(stageZoom + 0.1));
   document.getElementById('btn-zoom-out').addEventListener('click', ()=> setZoom(stageZoom - 0.1));
@@ -24910,7 +25114,18 @@ ctx.fill();</textarea>
   syncStageSettingsUI();
   applyZoom();
   openDevPanel('animate');
-  loadLukeAnimateConfig(false);
+  if(publishedGameMode){
+    startPublishedGame().catch(error=>{
+      console.error(error);
+      document.body.classList.add('published-game-mode');
+      const message=document.createElement('div');
+      message.style.cssText='position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;background:#111;color:#fff;font:16px Arial,sans-serif;text-align:center;z-index:99999';
+      message.textContent='This Luke Animate game could not start: '+(error&&error.message?error.message:error);
+      document.body.appendChild(message);
+    });
+  }else{
+    loadLukeAnimateConfig(false);
+  }
 })();
 </script>
 </body>
