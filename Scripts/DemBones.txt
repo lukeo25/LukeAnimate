@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.60
+/* Luke Animate Dem Bones + MyCharacter GPT v16.61
+   v16.61 keeps PNG artwork visible while its deforming renderer becomes ready,
+   restores its native timeline layer, and hides every unselected rig overlay.
    v16.60 restores one canonical live rig per ID after project load, limits
    setup/overlays to the selected item, and leaves every other rig animating.
    v16.59 opens an existing rig for editing only from an explicit current
@@ -178,7 +180,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.60";
+  var TOOL_VERSION = "16.61";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1176,13 +1178,16 @@
     var liveRig=liveRigForDemBonesData(data);
     if(!liveRig)return false;
     var image=rasterImageForSource(effective&&effective.src!==undefined?effective.src:object.src);
-    if(!image||!image.complete||!image.naturalWidth||!image.naturalHeight)return true;
+    /* Do not suppress Luke Animate's native image while this separate cached
+       image is still decoding. The following refresh swaps it to the warped
+       renderer as soon as the source is ready. */
+    if(!image||!image.complete||!image.naturalWidth||!image.naturalHeight)return false;
     var evalTime=demBonesEvaluationTime(data,n(api&&api.time,currentTime()),api);
     var geometry=deformedObjectGeometry(object,evalTime);
-    if(!geometry||!Array.isArray(geometry.points))return true;
+    if(!geometry||!Array.isArray(geometry.points))return false;
     var cols=Math.max(1,Math.round(n(data.rasterCols,8))),rows=Math.max(1,Math.round(n(data.rasterRows,8)));
     var expected=(cols+1)*(rows+1);
-    if(geometry.points.length!==expected)return true;
+    if(geometry.points.length!==expected)return false;
     var iw=image.naturalWidth,ih=image.naturalHeight;
     function idx(row,col){return row*(cols+1)+col;}
     function src(row,col){return{x:iw*(col/cols),y:ih*(row/rows)};}
@@ -6712,9 +6717,11 @@
 
   function offstageBoneRecords(){
     var characterRecords=state.character.committed&&state.character.showBones?characterBoneDisplayRecords(currentTime()):[];
+    if(state.open)characterRecords=characterRecords.filter(function(record){return !!state.activeRig&&record.part&&record.part.rig===state.activeRig;});
     if(characterRecords.length)return characterRecords;
     var records=[];
-    allLiveDemBonesRigs().forEach(function(rig){
+    var rigs=state.open?(state.activeRig?[state.activeRig]:[]):allLiveDemBonesRigs();
+    rigs.forEach(function(rig){
       if(!rig)return;
       var isActive=state.open&&state.activeRig===rig;
       var map=isActive&&state.tab==='editbone'?editBoneDisplayTransformMap(rig,currentTime()):(isActive&&state.tab==='bones'?restTransformMap(rig):posedTransformMap(rig,currentTime()));
@@ -6726,6 +6733,10 @@
   function offstageGhostObjects(){
     var out=[],seen={};
     function add(part,object){if(!object)return;var key=String(object.id||'')||('ref-'+out.length);if(seen[key])return;seen[key]=true;out.push({part:part,object:object});}
+    if(state.open){
+      if(state.activeRig){var activePart=characterPartForRigId(state.activeRig.id);rigObjects(state.activeRig).forEach(function(object){add(activePart,object);});}
+      return out;
+    }
     if(state.character.committed&&state.character.parts.length)state.character.parts.forEach(function(part){if(part&&part.rig)rigObjects(part.rig).forEach(function(object){add(part,object);});});
     allLiveDemBonesRigs().forEach(function(rig){var part=characterPartForRigId(rig&&rig.id);rigObjects(rig).forEach(function(object){add(part,object);});});
     return out;
@@ -8102,7 +8113,9 @@
   function hideDemBonesTimelineRows(){
     var tracksEl=document.getElementById("timeline-tracks");if(!tracksEl)return;
     var ownedNames={};allObjectArrays().forEach(function(list){(list||[]).forEach(function(o){if(!o||!(o.demBones||o.demBonesExpression))return;var label=String(o.name||"").trim();if(label)ownedNames[label]=true;});});
-    tracksEl.querySelectorAll(".timeline-track-row").forEach(function(row){var nameEl=row.querySelector(".timeline-track-name");if(!nameEl)return;var textEl=nameEl.querySelector(".wick-layer-name-text")||nameEl;var text=String(textEl.textContent||"").trim().replace(/\s*\u00b7\s*NR$/,'');row.style.display=ownedNames[text]?"none":"";});
+    /* Dem Bones rows supplement the real artwork layer; they do not replace it.
+       Restore any native rigged-artwork row hidden by older tool versions. */
+    tracksEl.querySelectorAll(".timeline-track-row").forEach(function(row){var nameEl=row.querySelector(".timeline-track-name");if(!nameEl)return;var textEl=nameEl.querySelector(".wick-layer-name-text")||nameEl;var text=String(textEl.textContent||"").trim().replace(/\s*\u00b7\s*NR$/,'');if(ownedNames[text]&&row.style.display==="none")row.style.display="";});
   }
 
   function bindGlobal(){
