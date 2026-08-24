@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v237: Export Animation always uses and displays the complete current timeline length instead of retaining an editable default duration. -->
 <!-- LukeAnimate GPT v236: adds deterministic MP4 export with H.264 video, optional AAC project audio, and an MPEG-4 codec fallback. -->
 <!-- LukeAnimate GPT v235: loads Dem Bones v16.64 with seam-free overlapping raster-mesh triangle clips. -->
 <!-- LukeAnimate GPT v234: loading a saved project silently starts the Dem Bones runtime whenever rig data is present, so bone animation begins without opening the tool. -->
@@ -55,7 +56,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v236</title>
+<title>Luke Animate v237</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3172,8 +3173,8 @@
           </select>
         </div>
         <div class="row">
-          <label>Duration (s)</label>
-          <input type="number" id="inp-unified-export-duration" value="6" min="1" max="120" step="1" style="flex:1;">
+          <label>Timeline length (s)</label>
+          <input type="number" id="inp-unified-export-duration" value="6" readonly aria-readonly="true" title="The complete current timeline is exported" style="flex:1;">
         </div>
         <label class="toggle-line" id="unified-export-transparency-row"><input type="checkbox" id="chk-unified-export-transparent" checked> Transparent background</label>
         <div class="hint" id="unified-export-format-note" style="padding:6px 0 8px;">WebM can preserve transparency when VP9 alpha recording is supported by the browser.</div>
@@ -15038,8 +15039,14 @@ ctx.fill();</textarea>
 
   function syncTimelineFrameCountDisplay(){
     const framesInput = document.getElementById('inp-timelineframes');
+    const frameCount = Math.max(1, Math.round(timelineDuration * getTimelineFPS()));
     if(framesInput){
-      framesInput.value = String(Math.max(1, Math.round(timelineDuration * getTimelineFPS())));
+      framesInput.value = String(frameCount);
+    }
+    const exportDurationInput=document.getElementById('inp-unified-export-duration');
+    if(exportDurationInput){
+      exportDurationInput.value=String(Number(timelineDuration.toFixed(6)));
+      exportDurationInput.title=frameCount+' frames at '+getTimelineFPS()+' fps — the complete current timeline is exported';
     }
   }
 
@@ -18677,7 +18684,7 @@ ctx.fill();</textarea>
     if(!unifiedExportFormat || !unifiedExportButton) return;
     const format=unifiedExportFormat.value;
     const transparent=!!(unifiedExportTransparent && unifiedExportTransparent.checked && unifiedFormatSupportsTransparency(format));
-    if(unifiedExportDuration && document.getElementById('inp-duration')){ document.getElementById('inp-duration').value=unifiedExportDuration.value; document.getElementById('inp-duration').dispatchEvent(new Event('change',{bubbles:true})); }
+    syncTimelineFrameCountDisplay();
     unifiedExportButton.disabled=true; if(unifiedExportStop) unifiedExportStop.disabled=false; if(unifiedExportProgress) unifiedExportProgress.textContent='Starting export…';
     try{
       if(format==='webm'){ if(btnRecord && !btnRecord.disabled) btnRecord.click(); if(unifiedExportProgress) unifiedExportProgress.textContent='WebM export started…'; return; }
@@ -18691,7 +18698,7 @@ ctx.fill();</textarea>
   }
 
   if(unifiedExportFormat){ unifiedExportFormat.addEventListener('change',syncUnifiedExportUI); syncUnifiedExportUI(); }
-  if(unifiedExportDuration){ unifiedExportDuration.value=String(Math.max(1,Math.round(timelineDuration||6))); }
+  syncTimelineFrameCountDisplay();
   if(unifiedExportButton) unifiedExportButton.addEventListener('click',runUnifiedExport);
   if(unifiedExportStop) unifiedExportStop.addEventListener('click',()=>{ if(btnStop && !btnStop.disabled) btnStop.click(); try{if(unifiedFFmpeg) unifiedFFmpeg.exit();}catch(e){} unifiedFFmpeg=null; if(unifiedExportProgress) unifiedExportProgress.textContent='Export stopped.'; });
 
