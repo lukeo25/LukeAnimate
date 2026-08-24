@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.62
+/* Luke Animate Dem Bones + MyCharacter GPT v16.63
+   v16.63 supports silent runtime-only startup when a saved project contains
+   rigs, registering playback without opening the Dem Bones editing panel.
    v16.62 makes locked Bones layers pointer-transparent so unlocked particle
    path nodes and other stage controls remain selectable and draggable.
    v16.61 keeps PNG artwork visible while its deforming renderer becomes ready,
@@ -182,7 +184,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.62";
+  var TOOL_VERSION = "16.63";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -190,6 +192,7 @@
   var ICON_URL = (item && item.iconUrl) || "https://raw.githubusercontent.com/lukeo25/WickTools/main/scripts/Panel_SVG/Bone.svg";
   var GROUP_ID = group && group.id ? group.id : "animate";
   var ITEM_ID = item && (item.id || item.label) ? (item.id || item.label) : TOOL_ID;
+  var RUNTIME_ONLY = !!(item && item.runtimeOnly);
 
   if(!API || typeof API.getDrawObjects !== "function" || typeof API.getClips !== "function"){
     throw new Error("Dem Bones requires the Luke Animate plug-in API.");
@@ -8287,5 +8290,6 @@
   if(typeof API.registerObjectRenderer==="function")API.registerObjectRenderer(RASTER_RENDERER_ID,rasterObjectRenderer);
   API.registerStageOverlayRenderer(OVERLAY_ID,overlayRenderer);
   bindGlobal();
-  open();
+  if(RUNTIME_ONLY)syncDemBonesRuntimePlayback(currentTime());
+  else open();
 })();
