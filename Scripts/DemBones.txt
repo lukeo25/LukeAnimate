@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.56
+/* Luke Animate Dem Bones + MyCharacter GPT v16.57
+   v16.57 gives every Tube handle its own interpolated key channel and upgrades
+   Tube-controlled vector/raster artwork to a dense smooth deformation mesh.
    v16.56 keeps an immutable Tube bind cage and previews Tube deformation live
    while Dem Bones is open in Bones, Edit Bone, Animate, or Curves.
    v16.55 makes Tube sections flexible: dragging any section bends its nearest
@@ -168,7 +170,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.56";
+  var TOOL_VERSION = "16.57";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1009,6 +1011,43 @@
     return o;
   }
 
+  function subdivideVectorForTube(object){
+    if(!object||!Array.isArray(object.points)||object.points.length<2||object.points.length>=2048)return false;
+    if(typeof API.subdivideDrawObjectPoints==='function'){
+      try{if(API.subdivideDrawObjectPoints(object))return true;}catch(ignoreNativeTubeSubdivide){}
+    }
+    var count=object.closedPath?object.points.length:object.points.length-1,segments=[];
+    for(var i=0;i<count;i++)segments.push({startIndex:i,endIndex:(i+1)%object.points.length,insertIndex:i+1,ratio:.5});
+    for(var index=segments.length-1;index>=0;index--)insertPointInCurveObject(object,segments[index],false);
+    return true;
+  }
+
+  function ensureTubeSmoothMesh(rig){
+    if(!rig||rig.tubeSmoothMeshVersion>=2||!(rig.bones||[]).some(isTubeBone))return false;
+    var changed=false;
+    rigObjects(rig).forEach(function(object){
+      if(!object||!object.demBones)return;
+      if(object.demBones.raster){
+        var data=object.demBones,w=Math.max(1,n(data.sourceWidth,object.width||1)),h=Math.max(1,n(data.sourceHeight,object.height||1));
+        var cols=clamp(Math.ceil(w/8),16,96),rows=clamp(Math.ceil(h/8),16,96);
+        if(cols!==data.rasterCols||rows!==data.rasterRows){
+          var x=n(data.sourceX,object.x),y=n(data.sourceY,object.y),points=[];
+          for(var row=0;row<=rows;row++)for(var col=0;col<=cols;col++)points.push({x:x+w*(col/cols),y:y+h*(row/rows)});
+          data.rasterCols=cols;data.rasterRows=rows;data.restPoints=points;data.weights=[];changed=true;
+        }
+      }else if(Array.isArray(object.points)&&object.points.length>1){
+        for(var pass=0;pass<7&&object.points.length<2048;pass++){
+          var maxLength=0,segmentCount=object.closedPath?object.points.length:object.points.length-1;
+          for(var i=0;i<segmentCount;i++){var a=object.points[i],b=object.points[(i+1)%object.points.length];maxLength=Math.max(maxLength,Math.hypot(b.x-a.x,b.y-a.y));}
+          if(maxLength<=8)break;
+          if(!subdivideVectorForTube(object))break;changed=true;
+        }
+      }
+      rebuildObjectSkinData(object,rig);
+    });
+    rig.tubeSmoothMeshVersion=2;syncRigRefs(rig);return changed;
+  }
+
   function triangleMatrix(s0,s1,s2,d0,d1,d2){
     var sx0=s0.x,sy0=s0.y,sx1=s1.x,sy1=s1.y,sx2=s2.x,sy2=s2.y;
     var dx0=d0.x,dy0=d0.y,dx1=d1.x,dy1=d1.y,dx2=d2.x,dy2=d2.y;
@@ -1231,6 +1270,13 @@
         b.tubeHandleCount=clamp(Math.round(n(b.tubeHandleCount,3)),1,7);
         b.tubeRestOffsets=normaliseTubeOffsets(b.tubeRestOffsets,b.tubeHandleCount);
         b.tubeLockedToArtwork=b.tubeLockedToArtwork!==false;
+        b.tubeHandleKeys=Array.isArray(b.tubeHandleKeys)?b.tubeHandleKeys:[];
+        for(var tubeKeyIndex=0;tubeKeyIndex<b.tubeHandleCount;tubeKeyIndex++){
+          var tubeKeyList=Array.isArray(b.tubeHandleKeys[tubeKeyIndex])?b.tubeHandleKeys[tubeKeyIndex]:[];
+          tubeKeyList.forEach(function(key){key.time=Math.max(0,n(key.time,0));key.x=round3(n(key.x,0));key.y=round3(n(key.y,0));key.easing=key.easing||'linear';});
+          b.tubeHandleKeys[tubeKeyIndex]=tubeKeyList.sort(function(a,b){return a.time-b.time;});
+        }
+        b.tubeHandleKeys.length=b.tubeHandleCount;
         b.basePose.tubeOffsets=normaliseTubeOffsets(b.basePose.tubeOffsets,b.tubeHandleCount);
         b.basePose.tubeWaveAmplitude=n(b.basePose.tubeWaveAmplitude,0);
         b.basePose.tubeWaveFrequency=Math.max(.1,n(b.basePose.tubeWaveFrequency,1));
@@ -1659,6 +1705,7 @@
     }
     rig.bones.push(bone);
     normaliseRigBones(rig);
+    if(type==="tube")ensureTubeSmoothMesh(rig);
     if(bone.parentId){var parent=boneById(bone.parentId);if(parent)bone.localRestAngle=angleOf(bone.restHead,bone.restTail)-angleOf(parent.restHead,parent.restTail);}
     state.selectedBoneId=bone.id;
     state.mode="add-bone";
@@ -1814,6 +1861,25 @@
     API.refreshUI();
   }
 
+  function interpolatedTubeHandleOffset(bone,index,time,fallback){
+    var list=(bone.tubeHandleKeys&&bone.tubeHandleKeys[index]||[]).slice().sort(function(a,b){return a.time-b.time;});
+    fallback=fallback||{x:0,y:0};
+    function copy(value){return{x:n(value&&value.x,fallback.x),y:n(value&&value.y,fallback.y)};}
+    function blend(a,b,ratio){return{x:n(a.x,0)+(n(b.x,0)-n(a.x,0))*ratio,y:n(a.y,0)+(n(b.y,0)-n(a.y,0))*ratio};}
+    if(!list.length)return copy(fallback);
+    if(time<=list[0].time){if(list[0].time<=.0001)return copy(list[0]);return blend(fallback,list[0],easingValue(time/Math.max(.0001,list[0].time),list[0].easing||'linear'));}
+    if(time>=list[list.length-1].time)return copy(list[list.length-1]);
+    for(var i=0;i<list.length-1;i++){var a=list[i],b=list[i+1];if(time>=a.time&&time<=b.time)return blend(a,b,easingValue((time-a.time)/Math.max(.0001,b.time-a.time),a.easing||'linear'));}
+    return copy(fallback);
+  }
+
+  function applyTubeHandleAnimation(bone,time,pose){
+    if(!isTubeBone(bone))return pose;
+    var count=clamp(Math.round(n(bone.tubeHandleCount,3)),1,7),fallback=normaliseTubeOffsets(pose.tubeOffsets,count);
+    pose.tubeOffsets=fallback.map(function(offset,index){return interpolatedTubeHandleOffset(bone,index,time,offset);});
+    return pose;
+  }
+
   function interpolatePose(bone,time){
     var base=bone.basePose||{dx:0,dy:0,rotation:0,scale:1,easing:"linear"},keys=(bone.keys||[]).slice().sort(function(a,b){return a.time-b.time;});
     var tubeCount=isTubeBone(bone)?clamp(Math.round(n(bone.tubeHandleCount,3)),1,7):0;
@@ -1827,11 +1893,11 @@
       if(tubeCount){result.tubeOffsets=interpolateTubeOffsets(a.tubeOffsets,b.tubeOffsets,ratio,tubeCount);result.tubeWaveAmplitude=n(a.tubeWaveAmplitude,0)+(n(b.tubeWaveAmplitude,0)-n(a.tubeWaveAmplitude,0))*ratio;result.tubeWaveFrequency=Math.max(.1,n(a.tubeWaveFrequency,1)+(n(b.tubeWaveFrequency,1)-n(a.tubeWaveFrequency,1))*ratio);result.tubeWavePhase=n(a.tubeWavePhase,0)+(n(b.tubeWavePhase,0)-n(a.tubeWavePhase,0))*ratio;}
       return result;
     }
-    if(!keys.length)return copyPose(base);
-    if(time<=keys[0].time){if(keys[0].time<=.0001)return copyPose(keys[0]);var r=easingValue(time/Math.max(.0001,keys[0].time),base.easing||"linear");return blendPose(base,keys[0],r,keys[0].easing||"linear");}
-    if(time>=keys[keys.length-1].time)return copyPose(keys[keys.length-1]);
-    for(var i=0;i<keys.length-1;i++){var a=keys[i],b=keys[i+1];if(time>=a.time&&time<=b.time){var q=easingValue((time-a.time)/Math.max(.0001,b.time-a.time),a.easing||"linear");return blendPose(a,b,q,a.easing||"linear");}}
-    return copyPose(base);
+    if(!keys.length)return applyTubeHandleAnimation(bone,time,copyPose(base));
+    if(time<=keys[0].time){if(keys[0].time<=.0001)return applyTubeHandleAnimation(bone,time,copyPose(keys[0]));var r=easingValue(time/Math.max(.0001,keys[0].time),base.easing||"linear");return applyTubeHandleAnimation(bone,time,blendPose(base,keys[0],r,keys[0].easing||"linear"));}
+    if(time>=keys[keys.length-1].time)return applyTubeHandleAnimation(bone,time,copyPose(keys[keys.length-1]));
+    for(var i=0;i<keys.length-1;i++){var a=keys[i],b=keys[i+1];if(time>=a.time&&time<=b.time){var q=easingValue((time-a.time)/Math.max(.0001,b.time-a.time),a.easing||"linear");return applyTubeHandleAnimation(bone,time,blendPose(a,b,q,a.easing||"linear"));}}
+    return applyTubeHandleAnimation(bone,time,copyPose(base));
   }
 
   function restTransformMap(rig){
@@ -1945,6 +2011,7 @@
   function prepareRigSkinForEditing(rig){
     if(!rig)return false;
     normaliseRigBones(rig);
+    ensureTubeSmoothMesh(rig);
 
     /* Edit Bone is setup mode. The current restHead/restTail skeleton is the
        source skeleton for future animation. Never derive it from a posed frame. */
@@ -6142,12 +6209,10 @@
   function previewTubeHandleInputs(){
     var bone=selectedBone();
     if(!isTubeBone(bone)||!state.panel||rigTimelineLocked(state.activeRig))return;
-    var time=currentTime(),key=exactBoneKey(bone,time);
-    if(!key){API.pushUndo();key=ensureBoneKeyForDrag(bone,time);}
     var count=clamp(Math.round(n(bone.tubeHandleCount,3)),1,7),index=clamp(Math.round(n(state.selectedTubeHandleIndex,0)),0,count-1);
-    var offsets=normaliseTubeOffsets(key.tubeOffsets,count),xInput=state.panel.querySelector('[data-db-tube-handle-x]'),yInput=state.panel.querySelector('[data-db-tube-handle-y]');
-    offsets[index]={x:round3(n(xInput&&xInput.value,offsets[index].x)),y:round3(n(yInput&&yInput.value,offsets[index].y))};
-    key.tubeOffsets=offsets;syncRigDisplayGeometry(state.activeRig,time);API.refreshUI();
+    var time=currentTime(),key=exactTubeHandleKey(bone,index,time);if(!key){API.pushUndo();key=ensureTubeHandleKeyForDrag(bone,index,time);}
+    var xInput=state.panel.querySelector('[data-db-tube-handle-x]'),yInput=state.panel.querySelector('[data-db-tube-handle-y]');
+    key.x=round3(n(xInput&&xInput.value,key.x));key.y=round3(n(yInput&&yInput.value,key.y));syncRigDisplayGeometry(state.activeRig,time);API.refreshUI();
   }
   function previewSelectedBoneEnvelope(){
     var b=selectedBone();
@@ -6167,7 +6232,7 @@
   }
 
   function setBoneKey(){var b=selectedBone();if(!b){notify("Select a bone first.",true);return;}if(rigTimelineLocked(state.activeRig)){notify("Unlock this Bones layer before editing keys.",true);return;}API.pushUndo();var pose=readPoseInputs(),time=currentTime(),key=exactBoneKey(b,time);if(key)Object.assign(key,pose);else b.keys.push(Object.assign({time:time},pose));b.keys.sort(function(a,b){return a.time-b.time;});syncRigDisplayGeometry(state.activeRig,time);API.refreshUI();renderAll();notify("Bone key set on frame "+currentFrame()+".",false);}
-  function deleteBoneKey(){var b=selectedBone();if(!b)return;if(rigTimelineLocked(state.activeRig)){notify("Unlock this Bones layer before editing keys.",true);return;}var t=currentTime(),before=b.keys.length;b.keys=b.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});syncRigDisplayGeometry(state.activeRig,t);API.refreshUI();renderAll();notify(before!==b.keys.length?"Bone key deleted.":"No bone key on this frame.",false);}
+  function deleteBoneKey(){var b=selectedBone();if(!b)return;if(rigTimelineLocked(state.activeRig)){notify("Unlock this Bones layer before editing keys.",true);return;}var t=currentTime(),before=b.keys.length;b.keys=b.keys.filter(function(k){return Math.abs(k.time-t)>=.0005;});var handleDeleted=false;if(isTubeBone(b)&&Array.isArray(b.tubeHandleKeys)){var index=clamp(Math.round(n(state.selectedTubeHandleIndex,0)),0,b.tubeHandleKeys.length-1),list=b.tubeHandleKeys[index]||[],handleBefore=list.length;b.tubeHandleKeys[index]=list.filter(function(k){return Math.abs(k.time-t)>=.0005;});handleDeleted=b.tubeHandleKeys[index].length!==handleBefore;}syncRigDisplayGeometry(state.activeRig,t);API.refreshUI();renderAll();notify(before!==b.keys.length||handleDeleted?"Bone key deleted.":"No bone key on this frame.",false);}
 
   function normaliseWeightList(list){
     var total=0;(list||[]).forEach(function(w){total+=Math.max(0,n(w.weight,0));});
@@ -6729,6 +6794,16 @@
     return key;
   }
 
+  function exactTubeHandleKey(bone,index,time){return(bone&&bone.tubeHandleKeys&&bone.tubeHandleKeys[index]||[]).filter(function(key){return Math.abs(n(key.time,0)-time)<.0005;})[0]||null;}
+  function ensureTubeHandleKeyForDrag(bone,index,time){
+    var count=clamp(Math.round(n(bone.tubeHandleCount,3)),1,7);bone.tubeHandleKeys=Array.isArray(bone.tubeHandleKeys)?bone.tubeHandleKeys:[];
+    for(var i=0;i<count;i++)if(!Array.isArray(bone.tubeHandleKeys[i]))bone.tubeHandleKeys[i]=[];
+    var key=exactTubeHandleKey(bone,index,time);if(key)return key;
+    var pose=interpolatePose(bone,time),offset=normaliseTubeOffsets(pose.tubeOffsets,bone.tubeHandleCount||3)[index]||{x:0,y:0};
+    key={time:time,x:round3(offset.x),y:round3(offset.y),easing:'linear'};
+    bone.tubeHandleKeys[index].push(key);bone.tubeHandleKeys[index].sort(function(a,b){return a.time-b.time;});return key;
+  }
+
   function ensureRigKeyedAtTime(rig,time,preferredBoneId){
     if(!rig)return;
     (rig.bones||[]).forEach(function(bone){
@@ -6744,8 +6819,9 @@
       state.selectedTubeHandleIndex=tubeIndex;
       var tubeDelta=inverseRotateVector(pointer.x-drag.startPointer.x,pointer.y-drag.startPointer.y,startTransform.angle);
       var tubeOffsets=normaliseTubeOffsets(startPose.tubeOffsets,bone.tubeHandleCount||3);
-      tubeOffsets[tubeIndex]={x:round3(n(tubeOffsets[tubeIndex]&&tubeOffsets[tubeIndex].x,0)+tubeDelta.x),y:round3(n(tubeOffsets[tubeIndex]&&tubeOffsets[tubeIndex].y,0)+tubeDelta.y)};
-      key.tubeOffsets=tubeOffsets;
+      var tubeKey=drag.tubeKey||(drag.tubeKey=ensureTubeHandleKeyForDrag(bone,tubeIndex,currentTime()));
+      tubeKey.x=round3(n(tubeOffsets[tubeIndex]&&tubeOffsets[tubeIndex].x,0)+tubeDelta.x);
+      tubeKey.y=round3(n(tubeOffsets[tubeIndex]&&tubeOffsets[tubeIndex].y,0)+tubeDelta.y);
       if(bone.parentId){key.dx=0;key.dy=0;}
       return;
     }
