@@ -1,3 +1,5 @@
+<!-- LukeAnimate GPT v242: gives Directions the draggable Dem Bones panel style used by Luke Animate floating tools. -->
+<!-- LukeAnimate GPT v241: lets Life target an actual text object inside a Clip without requiring Wick-style object names. -->
 <!-- LukeAnimate GPT v240: adds Wick-style Publish Game export as standalone HTML or an itch.io-ready ZIP with a clean embedded player. -->
 <!-- LukeAnimate GPT v239: adds the Life Type Tool and per-Clip editable Type Tool code, saved with the project. -->
 <!-- LukeAnimate GPT v238: adds native, project-safe Type Tool data and the Directions eight-way Clip movement tool. -->
@@ -59,7 +61,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v240</title>
+<title>Luke Animate v242</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3484,6 +3486,30 @@ ctx.fill();</textarea>
   function registerFloatingPanel(panel){
     if(!panel) return;
     panel.addEventListener('pointerdown', ()=> bringFloatingPanelToFront(panel), true);
+    const dragHandle=panel.querySelector('[data-floating-panel-drag]');
+    if(!dragHandle||dragHandle.dataset.floatingDragBound==='true')return;
+    dragHandle.dataset.floatingDragBound='true';
+    let drag=null;
+    dragHandle.addEventListener('pointerdown',event=>{
+      if(event.button!==0||event.target.closest('button,input,select,textarea,a'))return;
+      const rect=panel.getBoundingClientRect();
+      drag={pointerId:event.pointerId,offsetX:event.clientX-rect.left,offsetY:event.clientY-rect.top};
+      bringFloatingPanelToFront(panel);
+      try{dragHandle.setPointerCapture(event.pointerId);}catch(_error){}
+      event.preventDefault();
+    });
+    dragHandle.addEventListener('pointermove',event=>{
+      if(!drag||event.pointerId!==drag.pointerId)return;
+      panel.style.left=(event.clientX-drag.offsetX)+'px';panel.style.top=(event.clientY-drag.offsetY)+'px';panel.style.right='auto';panel.style.bottom='auto';
+      clampFloatingPanelToViewport(panel);event.preventDefault();
+    });
+    const stopDrag=event=>{
+      if(!drag||event.pointerId!==drag.pointerId)return;
+      try{dragHandle.releasePointerCapture(event.pointerId);}catch(_error){}
+      drag=null;clampFloatingPanelToViewport(panel);
+    };
+    dragHandle.addEventListener('pointerup',stopDrag);
+    dragHandle.addEventListener('pointercancel',stopDrag);
   }
 
   // ---------------- Animate: Clips (nestable mini-scenes) ----------------
@@ -4309,7 +4335,10 @@ ctx.fill();</textarea>
       version:1,
       enabled:source.enabled!==false,
       varName:String(source.varName||'LT_Life').trim()||'LT_Life',
-      textName:String(source.textName||'LifeText').trim()||'LifeText',
+      textObjectId:String(source.textObjectId||'').trim(),
+      // Older Life settings used Wick's named-text convention. Retain that as
+      // a fallback while new Luke Animate projects target the text object's ID.
+      textName:String(source.textName||'').trim(),
       defaultValue:source.defaultValue===undefined?'0':source.defaultValue,
       prefix:String(source.prefix||''),
       suffix:String(source.suffix||''),
@@ -4502,7 +4531,10 @@ ctx.fill();</textarea>
       const tools=typeToolsForObject(owner,false);
       if(!tools||!tools.life)continue;
       const config=normaliseLifeTypeTool(tools.life);
-      if(!config.enabled||String(obj.name||'')!==config.textName)continue;
+      if(!config.enabled)continue;
+      const matchesObjectId=config.textObjectId&&String(obj.id||'')===config.textObjectId;
+      const matchesLegacyName=!config.textObjectId&&config.textName&&String(obj.name||'')===config.textName;
+      if(!matchesObjectId&&!matchesLegacyName)continue;
       const runtime=typeToolRuntimeForObject(owner,true);
       let value=typeToolReadValue(owner,config.varName,config.defaultValue);
       let result={
@@ -12009,7 +12041,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=43';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=45';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -12417,7 +12449,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 119,
+    version: 120,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -13179,7 +13211,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 150;
+    project.projectVersion = 151;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);

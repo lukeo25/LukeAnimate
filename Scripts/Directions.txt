@@ -1,5 +1,5 @@
 /*
-  Luke Animate Directions Type Tool v1.1
+  Luke Animate Directions Type Tool v1.2
   Native, opt-in eight-direction movement for selected Clip instances.
 */
 (function(){
@@ -41,16 +41,17 @@ runtime.offsetY += vector.y * distance;`;
     const style=document.createElement("style");
     style.id=STYLE_ID;
     style.textContent=`
-      #${PANEL_ID}{position:fixed;z-index:2500;top:82px;right:22px;width:330px;max-height:calc(100vh - 105px);display:flex;flex-direction:column;background:#f8fafc;border:1px solid #aeb8c4;border-radius:10px;box-shadow:0 12px 32px rgba(15,23,42,.28);color:#263442;font:13px Arial,sans-serif;overflow:hidden}
+      #${PANEL_ID}{position:fixed;z-index:10000;left:28px;top:18px;width:374px;max-width:calc(100vw - 16px);height:min(650px,calc(100vh - 36px));display:flex;flex-direction:column;background:#f1f3f6;border:1px solid #bfc6cf;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);color:#27313d;font:13px Inter,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;overflow:hidden}
       #${PANEL_ID} *{box-sizing:border-box}
-      #${PANEL_ID} .dt-head{display:flex;align-items:center;gap:9px;padding:10px 12px;background:#e8edf2;border-bottom:1px solid #c6ced7;cursor:move;font-weight:700}
-      #${PANEL_ID} .dt-head img{width:25px;height:25px;object-fit:contain}
-      #${PANEL_ID} .dt-head-title{flex:1}
-      #${PANEL_ID} .dt-close{width:27px;height:27px;border:0;border-radius:6px;background:#65717e;color:#fff;cursor:pointer;font-size:18px;line-height:25px}
-      #${PANEL_ID} .dt-body{padding:12px;overflow:auto}
-      #${PANEL_ID} .dt-selected{padding:8px 9px;margin-bottom:10px;border:1px solid #cad2db;border-radius:7px;background:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      #${PANEL_ID} .dt-head{display:flex;align-items:center;gap:9px;padding:8px 10px;background:#fff;border-bottom:1px solid #d3d8df;cursor:move;user-select:none}
+      #${PANEL_ID} .dt-head img{width:27px;height:27px;object-fit:contain;filter:grayscale(1) brightness(.72)}
+      #${PANEL_ID} .dt-title{flex:1} #${PANEL_ID} .dt-title strong{display:block;font-size:14px;color:#29434a} #${PANEL_ID} .dt-title span{font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:#7b8491}
+      #${PANEL_ID} .dt-close{width:32px;height:32px;border:1px solid #bbc3cd;border-radius:8px;background:#fff;font-size:20px;color:#566270;cursor:pointer}
+      #${PANEL_ID} .dt-body{flex:1;min-height:0;padding:8px 7px 46px;overflow:auto}
+      #${PANEL_ID} .dt-selected{padding:8px 9px;margin-bottom:7px;border:1px solid #d2d7de;border-radius:10px;background:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       #${PANEL_ID} .dt-selected strong{color:#0e8f7c}
-      #${PANEL_ID} .dt-section{margin-top:10px;padding-top:10px;border-top:1px solid #d9dfe6}
+      #${PANEL_ID} .dt-controls{padding:9px;border:1px solid #d2d7de;border-radius:10px;background:#fff}
+      #${PANEL_ID} .dt-section{margin-top:9px;padding-top:9px;border-top:1px solid #d9dfe6}
       #${PANEL_ID} .dt-label{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-weight:700}
       #${PANEL_ID} .dt-speed-row{display:grid;grid-template-columns:1fr 62px;gap:8px;align-items:center}
       #${PANEL_ID} input[type=range]{width:100%;accent-color:#0e9c86}
@@ -58,43 +59,47 @@ runtime.offsetY += vector.y * distance;`;
       #${PANEL_ID} .dt-check{display:flex;align-items:center;gap:7px;margin:8px 0}
       #${PANEL_ID} .dt-check input{accent-color:#0e9c86}
       #${PANEL_ID} .dt-muted{color:#74808d;font-size:11px;line-height:1.35}
-      #${PANEL_ID} details{margin-top:10px;border:1px solid #cad2db;border-radius:7px;background:#fff;overflow:hidden}
-      #${PANEL_ID} summary{padding:8px 9px;cursor:pointer;font-weight:700;background:#eef2f5}
+      #${PANEL_ID} details{margin-top:7px;border:1px solid #d2d7de;border-radius:10px;background:#fff;overflow:hidden}
+      #${PANEL_ID} summary{padding:8px 9px;cursor:pointer;font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:#66717e;background:#fff}
       #${PANEL_ID} .dt-code-wrap{padding:9px}
       #${PANEL_ID} textarea{width:100%;min-height:150px;resize:vertical;padding:8px;border:1px solid #aeb8c4;border-radius:6px;background:#17212b;color:#e7f5f2;font:12px/1.45 Consolas,monospace;tab-size:2}
       #${PANEL_ID} .dt-code-tools{display:flex;justify-content:flex-end;margin-top:6px}
       #${PANEL_ID} .dt-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
-      #${PANEL_ID} .dt-btn{padding:9px;border:1px solid #aeb8c4;border-radius:7px;background:#eef2f5;color:#263442;font-weight:700;cursor:pointer}
-      #${PANEL_ID} .dt-btn.primary{border-color:#078674;background:#0e9c86;color:#fff}
+      #${PANEL_ID} .dt-btn{padding:7px;border:1px solid #b8c0ca;border-radius:8px;background:#eceff2;color:#4b5766;font-size:10px;cursor:pointer}
+      #${PANEL_ID} .dt-btn:hover{border-color:#0e9c86} #${PANEL_ID} .dt-btn.primary{border-color:#0e9c86;background:#0e9c86;color:#fff;font-weight:700}
       #${PANEL_ID} .dt-btn:disabled{opacity:.45;cursor:not-allowed}
-      #${PANEL_ID} .dt-status{min-height:17px;margin-top:9px;font-size:12px;color:#65717e}
-      #${PANEL_ID} .dt-status.good{color:#087b68}
-      #${PANEL_ID} .dt-status.bad{color:#b42318}
+      #${PANEL_ID} .dt-status{position:absolute;left:7px;right:7px;bottom:7px;min-height:26px;max-height:42px;overflow:auto;border:1px solid #cbd2da;border-radius:8px;background:rgba(255,255,255,.97);padding:8px 10px;font-size:10px;line-height:1.35;color:#596573}
+      #${PANEL_ID} .dt-status.good{border-color:#0e9c86;color:#117d6d}
+      #${PANEL_ID} .dt-status.bad{border-color:#c66a6a;color:#a33d3d}
+      @media(max-width:560px){#${PANEL_ID}{left:8px;top:8px;width:calc(100vw - 16px);height:calc(100vh - 16px)}}
     `;
     document.head.appendChild(style);
   }
 
   const panel=document.createElement("section");
   panel.id=PANEL_ID;
+  panel.className="open";
   panel.innerHTML=`
-    <div class="dt-head">
+    <div class="dt-head" data-floating-panel-drag>
       <img src="${TOOL_ICON_URL.replace(/"/g,"&quot;")}" alt="">
-      <span class="dt-head-title">Directions</span>
+      <div class="dt-title"><strong>Directions</strong><span>Eight-way Clip movement</span></div>
       <button class="dt-close" type="button" title="Close">×</button>
     </div>
     <div class="dt-body">
       <div class="dt-selected"><strong>Selected:</strong> <span data-dt-selected>No Clip selected</span></div>
-      <div class="dt-label"><span>Movement speed</span><span data-dt-speed-label>5</span></div>
-      <div class="dt-speed-row">
-        <input data-dt-speed type="range" min="0.5" max="20" step="0.5" value="5">
-        <input data-dt-speed-number type="number" min="0.5" max="20" step="0.5" value="5">
-      </div>
-      <div class="dt-section">
-        <label class="dt-check"><input data-dt-wasd type="checkbox" checked> WASD keys</label>
-        <label class="dt-check"><input data-dt-arrows type="checkbox" checked> Arrow keys</label>
-        <label class="dt-check"><input data-dt-diagonal type="checkbox" checked> Allow diagonal movement</label>
-        <label class="dt-check"><input data-dt-normalize type="checkbox" checked> Keep diagonal speed even</label>
-        <label class="dt-check dt-muted" title="This option becomes active when the Solid Type Tool is added"><input data-dt-solid type="checkbox" disabled> Collide with Solids (coming with Solid)</label>
+      <div class="dt-controls">
+        <div class="dt-label"><span>Movement speed</span><span data-dt-speed-label>5</span></div>
+        <div class="dt-speed-row">
+          <input data-dt-speed type="range" min="0.5" max="20" step="0.5" value="5">
+          <input data-dt-speed-number type="number" min="0.5" max="20" step="0.5" value="5">
+        </div>
+        <div class="dt-section">
+          <label class="dt-check"><input data-dt-wasd type="checkbox" checked> WASD keys</label>
+          <label class="dt-check"><input data-dt-arrows type="checkbox" checked> Arrow keys</label>
+          <label class="dt-check"><input data-dt-diagonal type="checkbox" checked> Allow diagonal movement</label>
+          <label class="dt-check"><input data-dt-normalize type="checkbox" checked> Keep diagonal speed even</label>
+          <label class="dt-check dt-muted" title="This option becomes active when the Solid Type Tool is added"><input data-dt-solid type="checkbox" disabled> Collide with Solids (coming with Solid)</label>
+        </div>
       </div>
       <details>
         <summary>View / edit code</summary>
