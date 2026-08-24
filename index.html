@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v239: adds the Life Type Tool and per-Clip editable Type Tool code, saved with the project. -->
 <!-- LukeAnimate GPT v238: adds native, project-safe Type Tool data and the Directions eight-way Clip movement tool. -->
 <!-- LukeAnimate GPT v237: Export Animation always uses and displays the complete current timeline length instead of retaining an editable default duration. -->
 <!-- LukeAnimate GPT v236: adds deterministic MP4 export with H.264 video, optional AAC project audio, and an MPEG-4 codec fallback. -->
@@ -57,7 +58,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v238</title>
+<title>Luke Animate v239</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4213,6 +4214,7 @@ ctx.fill();</textarea>
   const TYPE_TOOLS_DATA_KEY = '_lukeAnimateTypeTools';
   const TYPE_TOOLS_RUNTIME_KEY = '_lukeAnimateTypeToolsRuntime';
   const typeToolPressedKeys = new Set();
+  const typeToolRenderStack = [];
 
   function normaliseDirectionsTypeTool(settings){
     const source=settings&&typeof settings==='object'?settings:{};
@@ -4227,13 +4229,32 @@ ctx.fill();</textarea>
       normalize:source.normalize!==false,
       // Retained now so Solid can add collision resolution without migrating
       // existing Directions settings later.
-      solidCollision:!!source.solidCollision
+      solidCollision:!!source.solidCollision,
+      code:String(source.code||'')
+    };
+  }
+
+  function normaliseLifeTypeTool(settings){
+    const source=settings&&typeof settings==='object'?settings:{};
+    return {
+      type:'life',
+      version:1,
+      enabled:source.enabled!==false,
+      varName:String(source.varName||'LT_Life').trim()||'LT_Life',
+      textName:String(source.textName||'LifeText').trim()||'LifeText',
+      defaultValue:source.defaultValue===undefined?'0':source.defaultValue,
+      prefix:String(source.prefix||''),
+      suffix:String(source.suffix||''),
+      fontFamily:String(source.fontFamily||'Poppins').trim()||'Poppins',
+      showConsole:!!source.showConsole,
+      code:String(source.code||'')
     };
   }
 
   function normaliseTypeToolSettings(toolId,settings){
     const id=String(toolId||'').trim().toLowerCase();
     if(id==='directions')return normaliseDirectionsTypeTool(settings);
+    if(id==='life')return normaliseLifeTypeTool(settings);
     const clone=JSON.parse(JSON.stringify(settings&&typeof settings==='object'?settings:{}));
     clone.type=id;
     if(clone.enabled===undefined)clone.enabled=true;
@@ -4254,14 +4275,58 @@ ctx.fill();</textarea>
     if(!object)return null;
     let runtime=object[TYPE_TOOLS_RUNTIME_KEY];
     if(!runtime&&create){
-      runtime={offsetX:0,offsetY:0};
+      runtime={offsetX:0,offsetY:0,values:Object.create(null),compiled:Object.create(null),errors:Object.create(null)};
       try{
         Object.defineProperty(object,TYPE_TOOLS_RUNTIME_KEY,{value:runtime,writable:true,configurable:true,enumerable:false});
       }catch(_error){
         object[TYPE_TOOLS_RUNTIME_KEY]=runtime;
       }
     }
+    if(runtime&&create){
+      if(!runtime.values||typeof runtime.values!=='object')runtime.values=Object.create(null);
+      if(!runtime.compiled||typeof runtime.compiled!=='object')runtime.compiled=Object.create(null);
+      if(!runtime.errors||typeof runtime.errors!=='object')runtime.errors=Object.create(null);
+    }
     return runtime||null;
+  }
+
+  function runTypeToolCode(object,toolId,source,context){
+    const code=String(source||'');
+    if(!code.trim())return undefined;
+    const runtime=typeToolRuntimeForObject(object,true);
+    const id=String(toolId||'type-tool');
+    let compiled=runtime.compiled[id];
+    if(!compiled||compiled.source!==code){
+      compiled={source:code,fn:null};
+      try{compiled.fn=new Function('context','"use strict";\n'+code+'\n//# sourceURL=LukeAnimate-TypeTool-'+id+'.js');}
+      catch(error){runtime.errors[id]=String(error&&error.message||error);return undefined;}
+      runtime.compiled[id]=compiled;
+    }
+    try{
+      const result=compiled.fn(context);
+      delete runtime.errors[id];
+      return result;
+    }catch(error){
+      runtime.errors[id]=String(error&&error.message||error);
+      return undefined;
+    }
+  }
+
+  function typeToolReadValue(object,name,fallback){
+    const key=String(name||'');
+    const runtime=typeToolRuntimeForObject(object,true);
+    if(Object.prototype.hasOwnProperty.call(runtime.values,key))return runtime.values[key];
+    try{if(window[key]!==undefined&&window[key]!==null)return window[key];}catch(_error){}
+    return fallback;
+  }
+
+  function typeToolWriteValue(object,name,value){
+    const key=String(name||'');
+    if(!key)return value;
+    const runtime=typeToolRuntimeForObject(object,true);
+    runtime.values[key]=value;
+    try{window[key]=value;}catch(_error){}
+    return value;
   }
 
   function visitAllTypeToolObjects(callback){
@@ -4343,13 +4408,64 @@ ctx.fill();</textarea>
       const config=normaliseDirectionsTypeTool(tools.directions);
       if(!config.enabled)return;
       const vector=directionInputVector(config);
-      if(!vector.x&&!vector.y)return;
       const runtime=typeToolRuntimeForObject(object,true);
       // Wick's original speed is pixels per update at roughly 60 updates/s.
-      const distance=config.speed*60*step;
-      runtime.offsetX+=vector.x*distance;
-      runtime.offsetY+=vector.y*distance;
+      if(config.code.trim()){
+        runTypeToolCode(object,'directions',config.code,{
+          object,config,runtime,delta:step,time:t,api:LukeAnimatePluginAPI,
+          keys:typeToolPressedKeys,
+          vector,
+          readValue:(name,fallback)=>typeToolReadValue(object,name,fallback),
+          writeValue:(name,value)=>typeToolWriteValue(object,name,value)
+        });
+      }else{
+        if(!vector.x&&!vector.y)return;
+        const distance=config.speed*60*step;
+        runtime.offsetX+=vector.x*distance;
+        runtime.offsetY+=vector.y*distance;
+      }
     });
+  }
+
+  function lifeTypeToolTextOverride(obj,effective,timeValue){
+    if(!obj||obj.type!=='text'||!typeToolRenderStack.length)return effective;
+    for(let index=typeToolRenderStack.length-1;index>=0;index--){
+      const owner=typeToolRenderStack[index].object;
+      const tools=typeToolsForObject(owner,false);
+      if(!tools||!tools.life)continue;
+      const config=normaliseLifeTypeTool(tools.life);
+      if(!config.enabled||String(obj.name||'')!==config.textName)continue;
+      const runtime=typeToolRuntimeForObject(owner,true);
+      let value=typeToolReadValue(owner,config.varName,config.defaultValue);
+      let result={
+        value,
+        text:config.prefix+String(value)+config.suffix,
+        fontFamily:config.fontFamily
+      };
+      if(config.code.trim()){
+        const custom=runTypeToolCode(owner,'life',config.code,{
+          object:owner,textObject:obj,config,runtime,time:timeValue,api:LukeAnimatePluginAPI,
+          value,
+          readValue:(name,fallback)=>typeToolReadValue(owner,name,fallback),
+          writeValue:(name,next)=>typeToolWriteValue(owner,name,next)
+        });
+        if(custom&&typeof custom==='object')result=Object.assign(result,custom);
+      }
+      if(result.value!==undefined){
+        value=result.value;
+        typeToolWriteValue(owner,config.varName,value);
+      }
+      const next=effective===obj?Object.assign({},obj):Object.assign({},effective);
+      next.text=result.text===undefined?config.prefix+String(value)+config.suffix:String(result.text);
+      next.fontFamily=String(result.fontFamily||config.fontFamily);
+      ensureGoogleFont(next.fontFamily);
+      if(config.showConsole&&runtime.lastLifeText!==next.text){
+        runtime.lastLifeText=next.text;
+        console.log('Life:',config.varName+':',value,'Text:',next.text);
+      }
+      return next;
+    }
+    return effective;
   }
 
   function currentSceneHasDirectionsTypeTool(){
@@ -7329,6 +7445,7 @@ ctx.fill();</textarea>
       rebuildPath();
 
       ctx.save();
+      typeToolRenderStack.push({object:obj,time:localT});
 
       try{
         ctx.globalAlpha*=(
@@ -7380,6 +7497,7 @@ ctx.fill();</textarea>
         renderDrawObjects();
         renderSceneLayers(true);
       }finally{
+        typeToolRenderStack.pop();
         ctx.restore();
       }
     }finally{
@@ -11823,7 +11941,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=42';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=43';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -12231,7 +12349,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 117,
+    version: 118,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
     get overlay(){ return overlay; },
@@ -12359,6 +12477,12 @@ ctx.fill();</textarea>
       const tools=typeToolsForObject(object,false);
       return tools ? JSON.parse(JSON.stringify(tools)) : {};
     },
+    getTypeToolError(object,toolId){
+      const runtime=typeToolRuntimeForObject(object,false);
+      return runtime&&runtime.errors ? String(runtime.errors[String(toolId||'')]||'') : '';
+    },
+    getTypeValue(object,name,fallback){ return typeToolReadValue(object,name,fallback); },
+    setTypeValue(object,name,value){ return typeToolWriteValue(object,name,value); },
     setTypeTool(object,toolId,settings){
       if(!object||object.type!=='clipinstance')throw new Error('Type Tools can only be attached to a Clip instance.');
       const id=String(toolId||'').trim().toLowerCase();
@@ -12986,7 +13110,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 148;
+    project.projectVersion = 149;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -17438,6 +17562,8 @@ ctx.fill();</textarea>
         effective.y=(Number(effective.y)||0)+(Number(runtime.offsetY)||0);
       }
     }
+
+    if(obj&&obj.type==='text')effective=lifeTypeToolTextOverride(obj,effective,keyframeTime);
 
     /*
       v172 layer exposure fades:

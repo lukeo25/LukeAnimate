@@ -1,5 +1,5 @@
 /*
-  Luke Animate Directions Type Tool v1.0
+  Luke Animate Directions Type Tool v1.1
   Native, opt-in eight-direction movement for selected Clip instances.
 */
 (function(){
@@ -11,9 +11,14 @@
   const TOOL_GROUP_ID=String(group&&group.id?group.id:"type");
   const TOOL_ITEM_ID=String(item&&(item.id||item.label)?(item.id||item.label):"Directions");
   const TOOL_ICON_URL=String(item&&item.iconUrl?item.iconUrl:"https://lukeo25.github.io/LukeAnimate/SVGs/Directions.svg");
+  const DEFAULT_CODE=`const { config, runtime, delta, vector } = context;
+if (!vector.x && !vector.y) return;
+const distance = config.speed * 60 * delta;
+runtime.offsetX += vector.x * distance;
+runtime.offsetY += vector.y * distance;`;
 
-  if(!LukeAnimate||Number(LukeAnimate.version||0)<117||typeof LukeAnimate.setTypeTool!=="function"){
-    throw new Error("Directions requires Luke Animate v117 or later.");
+  if(!LukeAnimate||Number(LukeAnimate.version||0)<118||typeof LukeAnimate.setTypeTool!=="function"){
+    throw new Error("Directions requires Luke Animate v118 or later.");
   }
 
   function setToolSelected(active){
@@ -53,6 +58,11 @@
       #${PANEL_ID} .dt-check{display:flex;align-items:center;gap:7px;margin:8px 0}
       #${PANEL_ID} .dt-check input{accent-color:#0e9c86}
       #${PANEL_ID} .dt-muted{color:#74808d;font-size:11px;line-height:1.35}
+      #${PANEL_ID} details{margin-top:10px;border:1px solid #cad2db;border-radius:7px;background:#fff;overflow:hidden}
+      #${PANEL_ID} summary{padding:8px 9px;cursor:pointer;font-weight:700;background:#eef2f5}
+      #${PANEL_ID} .dt-code-wrap{padding:9px}
+      #${PANEL_ID} textarea{width:100%;min-height:150px;resize:vertical;padding:8px;border:1px solid #aeb8c4;border-radius:6px;background:#17212b;color:#e7f5f2;font:12px/1.45 Consolas,monospace;tab-size:2}
+      #${PANEL_ID} .dt-code-tools{display:flex;justify-content:flex-end;margin-top:6px}
       #${PANEL_ID} .dt-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
       #${PANEL_ID} .dt-btn{padding:9px;border:1px solid #aeb8c4;border-radius:7px;background:#eef2f5;color:#263442;font-weight:700;cursor:pointer}
       #${PANEL_ID} .dt-btn.primary{border-color:#078674;background:#0e9c86;color:#fff}
@@ -86,6 +96,14 @@
         <label class="dt-check"><input data-dt-normalize type="checkbox" checked> Keep diagonal speed even</label>
         <label class="dt-check dt-muted" title="This option becomes active when the Solid Type Tool is added"><input data-dt-solid type="checkbox" disabled> Collide with Solids (coming with Solid)</label>
       </div>
+      <details>
+        <summary>View / edit code</summary>
+        <div class="dt-code-wrap">
+          <p class="dt-muted">The code runs during playback. Available as <code>context</code>: config, runtime, delta, vector, keys, object, readValue and writeValue.</p>
+          <textarea data-dt-code spellcheck="false"></textarea>
+          <div class="dt-code-tools"><button class="dt-btn" data-dt-reset-code type="button">Reset code</button></div>
+        </div>
+      </details>
       <p class="dt-muted">Apply Directions, press Play, then use the chosen keys. Pause holds the live position; Stop returns the Clip to its authored position.</p>
       <div class="dt-actions">
         <button class="dt-btn" data-dt-remove type="button">Remove</button>
@@ -144,12 +162,16 @@
     get("[data-dt-diagonal]").checked=config.diagonal!==false;
     get("[data-dt-normalize]").checked=config.normalize!==false;
     get("[data-dt-solid]").checked=!!config.solidCollision;
+    get("[data-dt-code]").value=String(config.code||DEFAULT_CODE);
   }
 
   function refreshSelection(force){
     const next=selectedClip();
     const nextKey=next?String(next.id||next.clipId):"";
-    if(!force&&nextKey===selectedKey)return;
+    if(!force&&nextKey===selectedKey){
+      if(next){const error=LukeAnimate.getTypeToolError(next,TOOL_ID);if(error)setStatus("Code error: "+error,"bad");}
+      return;
+    }
     selectedObject=next;
     selectedKey=nextKey;
     selectedLabel.textContent=objectName(next);
@@ -168,12 +190,14 @@
       useArrows:get("[data-dt-arrows]").checked,
       diagonal:get("[data-dt-diagonal]").checked,
       normalize:get("[data-dt-normalize]").checked,
-      solidCollision:get("[data-dt-solid]").checked
+      solidCollision:get("[data-dt-solid]").checked,
+      code:get("[data-dt-code]").value
     };
   }
 
   speed.addEventListener("input",()=>setSpeed(speed.value));
   speedNumber.addEventListener("input",()=>setSpeed(speedNumber.value));
+  get("[data-dt-reset-code]").addEventListener("click",()=>{get("[data-dt-code]").value=DEFAULT_CODE;setStatus("Directions code reset. Click Apply to save it.","good");});
   applyButton.addEventListener("click",()=>{
     refreshSelection(false);
     if(!selectedObject){setStatus("Select one Clip instance first.","bad");return;}

@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 42,
+  "version": 43,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -118,7 +118,7 @@
           "id": "Life",
           "label": "Life",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Life.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Life.txt",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Life.txt?v=1.0",
           "action": "script",
           "F_Screen": 0
         },
@@ -126,7 +126,7 @@
           "id": "Directions",
           "label": "Directions",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Directions.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Directions.txt?v=1.0",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Directions.txt?v=1.1",
           "action": "script",
           "F_Screen": 0
         },

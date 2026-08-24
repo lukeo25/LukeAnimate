@@ -1,0 +1,162 @@
+/*
+  Luke Animate Life Type Tool v1.0
+  Displays a live named value through a text object inside a Clip.
+*/
+(function(){
+  "use strict";
+
+  const PANEL_ID="lukeanimate-life-panel";
+  const STYLE_ID="lukeanimate-life-style";
+  const TOOL_ID="life";
+  const TOOL_GROUP_ID=String(group&&group.id?group.id:"type");
+  const TOOL_ITEM_ID=String(item&&(item.id||item.label)?(item.id||item.label):"Life");
+  const TOOL_ICON_URL=String(item&&item.iconUrl?item.iconUrl:"https://lukeo25.github.io/LukeAnimate/SVGs/Life.svg");
+  const DEFAULT_CODE=`const value = context.readValue(config.varName, config.defaultValue);
+return {
+  value,
+  text: config.prefix + String(value) + config.suffix,
+  fontFamily: config.fontFamily
+};`;
+
+  if(!LukeAnimate||Number(LukeAnimate.version||0)<118||typeof LukeAnimate.setTypeTool!=="function"){
+    throw new Error("Life requires Luke Animate v118 or later.");
+  }
+
+  function setToolSelected(active){
+    if(typeof LukeAnimate.setConfiguredToolActive==="function")LukeAnimate.setConfiguredToolActive(TOOL_GROUP_ID,TOOL_ITEM_ID,!!active);
+  }
+
+  const existing=document.getElementById(PANEL_ID);
+  if(existing){
+    existing.style.display="flex";existing.classList.add("open");setToolSelected(true);
+    LukeAnimate.bringFloatingPanelToFront(existing);LukeAnimate.clampFloatingPanelToViewport(existing);return;
+  }
+
+  if(!document.getElementById(STYLE_ID)){
+    const style=document.createElement("style");
+    style.id=STYLE_ID;
+    style.textContent=`
+      #${PANEL_ID}{position:fixed;z-index:2500;top:78px;right:22px;width:370px;max-height:calc(100vh - 100px);display:flex;flex-direction:column;background:#f8fafc;border:1px solid #aeb8c4;border-radius:10px;box-shadow:0 12px 32px rgba(15,23,42,.28);color:#263442;font:13px Arial,sans-serif;overflow:hidden}
+      #${PANEL_ID} *{box-sizing:border-box}
+      #${PANEL_ID} .lt-head{display:flex;align-items:center;gap:9px;padding:10px 12px;background:#e8edf2;border-bottom:1px solid #c6ced7;cursor:move;font-weight:700}
+      #${PANEL_ID} .lt-head img{width:25px;height:25px;object-fit:contain}
+      #${PANEL_ID} .lt-head-title{flex:1}
+      #${PANEL_ID} .lt-close{width:27px;height:27px;border:0;border-radius:6px;background:#65717e;color:#fff;cursor:pointer;font-size:18px;line-height:25px}
+      #${PANEL_ID} .lt-body{padding:12px;overflow:auto}
+      #${PANEL_ID} .lt-selected{padding:8px 9px;margin-bottom:10px;border:1px solid #cad2db;border-radius:7px;background:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      #${PANEL_ID} .lt-selected strong{color:#0e8f7c}
+      #${PANEL_ID} .lt-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+      #${PANEL_ID} label.lt-field{display:flex;flex-direction:column;gap:4px;font-size:11px;font-weight:700;color:#596674}
+      #${PANEL_ID} label.lt-field.wide{grid-column:1/-1}
+      #${PANEL_ID} input[type=text]{width:100%;padding:7px;border:1px solid #b9c3ce;border-radius:6px;background:#fff;color:#263442;font:13px Arial,sans-serif}
+      #${PANEL_ID} .lt-check{display:flex;align-items:center;gap:7px;margin:9px 0}
+      #${PANEL_ID} .lt-check input{accent-color:#0e9c86}
+      #${PANEL_ID} .lt-muted{color:#74808d;font-size:11px;line-height:1.35}
+      #${PANEL_ID} details{margin-top:10px;border:1px solid #cad2db;border-radius:7px;background:#fff;overflow:hidden}
+      #${PANEL_ID} summary{padding:8px 9px;cursor:pointer;font-weight:700;background:#eef2f5}
+      #${PANEL_ID} .lt-code-wrap{padding:9px}
+      #${PANEL_ID} textarea{width:100%;min-height:165px;resize:vertical;padding:8px;border:1px solid #aeb8c4;border-radius:6px;background:#17212b;color:#e7f5f2;font:12px/1.45 Consolas,monospace;tab-size:2}
+      #${PANEL_ID} .lt-code-tools{display:flex;justify-content:flex-end;margin-top:6px}
+      #${PANEL_ID} .lt-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+      #${PANEL_ID} .lt-btn{padding:9px;border:1px solid #aeb8c4;border-radius:7px;background:#eef2f5;color:#263442;font-weight:700;cursor:pointer}
+      #${PANEL_ID} .lt-btn.primary{border-color:#078674;background:#0e9c86;color:#fff}
+      #${PANEL_ID} .lt-btn:disabled{opacity:.45;cursor:not-allowed}
+      #${PANEL_ID} .lt-status{min-height:17px;margin-top:9px;font-size:12px;color:#65717e}
+      #${PANEL_ID} .lt-status.good{color:#087b68} #${PANEL_ID} .lt-status.bad{color:#b42318} #${PANEL_ID} .lt-status.warn{color:#9a5b00}
+    `;
+    document.head.appendChild(style);
+  }
+
+  const panel=document.createElement("section");
+  panel.id=PANEL_ID;
+  panel.innerHTML=`
+    <div class="lt-head"><img src="${TOOL_ICON_URL.replace(/"/g,"&quot;")}" alt=""><span class="lt-head-title">Life</span><button class="lt-close" type="button" title="Close">×</button></div>
+    <div class="lt-body">
+      <div class="lt-selected"><strong>Selected:</strong> <span data-lt-selected>No Clip selected</span></div>
+      <p class="lt-muted">Add a text object inside the Clip, name it <strong>LifeText</strong>, then apply Life to the Clip instance.</p>
+      <div class="lt-grid">
+        <label class="lt-field"><span>Variable name</span><input data-lt-variable type="text" value="LT_Life"></label>
+        <label class="lt-field"><span>Default value</span><input data-lt-default type="text" value="0"></label>
+        <label class="lt-field wide"><span>Text object name</span><input data-lt-text-name type="text" value="LifeText" list="lukeanimate-life-text-names"><datalist id="lukeanimate-life-text-names"></datalist></label>
+        <label class="lt-field"><span>Prefix</span><input data-lt-prefix type="text" value=""></label>
+        <label class="lt-field"><span>Suffix</span><input data-lt-suffix type="text" value=""></label>
+        <label class="lt-field wide"><span>Font</span><input data-lt-font type="text" value="Poppins" list="lukeanimate-life-fonts"><datalist id="lukeanimate-life-fonts"><option>Montserrat</option><option>Poppins</option><option>Roboto</option><option>Open Sans</option><option>Inter</option><option>Orbitron</option><option>Bangers</option><option>Press Start 2P</option></datalist></label>
+      </div>
+      <label class="lt-check"><input data-lt-console type="checkbox"> Log changed Life values to the console</label>
+      <details>
+        <summary>View / edit code</summary>
+        <div class="lt-code-wrap">
+          <p class="lt-muted">Return an object containing <code>value</code>, <code>text</code> and/or <code>fontFamily</code>. The <code>context</code> also provides config, object, textObject, time, readValue and writeValue.</p>
+          <textarea data-lt-code spellcheck="false"></textarea>
+          <div class="lt-code-tools"><button class="lt-btn" data-lt-reset-code type="button">Reset code</button></div>
+        </div>
+      </details>
+      <div class="lt-actions"><button class="lt-btn" data-lt-remove type="button">Remove</button><button class="lt-btn primary" data-lt-apply type="button">Apply</button></div>
+      <div class="lt-status" data-lt-status></div>
+    </div>`;
+  document.body.appendChild(panel);
+  LukeAnimate.registerFloatingPanel(panel);LukeAnimate.bringFloatingPanelToFront(panel);LukeAnimate.clampFloatingPanelToViewport(panel);setToolSelected(true);
+
+  const get=selector=>panel.querySelector(selector);
+  const status=get("[data-lt-status]");
+  const applyButton=get("[data-lt-apply]");
+  const removeButton=get("[data-lt-remove]");
+  let selectedObject=null,selectedKey="";
+
+  function setStatus(message,kind){status.textContent=String(message||"");status.className="lt-status"+(kind?" "+kind:"");}
+  function selectedClip(){
+    const selected=LukeAnimate.getSelectedDrawObjects()||[];
+    if(selected.length!==1||!selected[0]||selected[0].type!=="clipinstance")return null;
+    const clips=LukeAnimate.getClips?LukeAnimate.getClips():{};
+    return clips&&clips[selected[0].clipId]?selected[0]:null;
+  }
+  function objectName(object){const clips=LukeAnimate.getClips?LukeAnimate.getClips():{};return object?String(object.name||(clips[object.clipId]&&clips[object.clipId].name)||"Clip"):"No Clip selected";}
+  function textNamesForClip(object){
+    const clips=LukeAnimate.getClips?LukeAnimate.getClips():{},clip=object&&clips[object.clipId],names=new Set(),seen=new Set();
+    function visit(value){
+      if(!value||typeof value!=="object"||seen.has(value))return;seen.add(value);
+      if(value.type==="text"&&value.name)names.add(String(value.name));
+      if(Array.isArray(value.children))value.children.forEach(visit);
+    }
+    if(clip){(clip.drawObjects||[]).forEach(visit);(clip.sceneFrames||[]).forEach(frame=>(frame&&frame.objects||[]).forEach(visit));}
+    return Array.from(names).sort();
+  }
+  function fillTextNames(object){get("#lukeanimate-life-text-names").innerHTML=textNamesForClip(object).map(name=>`<option value="${name.replace(/"/g,"&quot;")}"></option>`).join("");}
+  function loadSettings(settings){
+    const config=settings||{};
+    get("[data-lt-variable]").value=String(config.varName||"LT_Life");
+    get("[data-lt-default]").value=String(config.defaultValue===undefined?"0":config.defaultValue);
+    get("[data-lt-text-name]").value=String(config.textName||"LifeText");
+    get("[data-lt-prefix]").value=String(config.prefix||"");
+    get("[data-lt-suffix]").value=String(config.suffix||"");
+    get("[data-lt-font]").value=String(config.fontFamily||"Poppins");
+    get("[data-lt-console]").checked=!!config.showConsole;
+    get("[data-lt-code]").value=String(config.code||DEFAULT_CODE);
+  }
+  function refreshSelection(force){
+    const next=selectedClip(),nextKey=next?String(next.id||next.clipId):"";
+    if(!force&&nextKey===selectedKey){
+      if(next){const error=LukeAnimate.getTypeToolError(next,TOOL_ID);if(error)setStatus("Code error: "+error,"bad");}
+      return;
+    }
+    selectedObject=next;selectedKey=nextKey;get("[data-lt-selected]").textContent=objectName(next);applyButton.disabled=!next;fillTextNames(next);
+    const settings=next?LukeAnimate.getTypeTool(next,TOOL_ID):null;removeButton.disabled=!settings;loadSettings(settings);
+    setStatus(next?(settings?"Life is attached to this Clip.":"Ready to attach Life."):"Select one Clip instance on the stage.",next?"good":"");
+  }
+  function currentSettings(){return{enabled:true,varName:get("[data-lt-variable]").value,textName:get("[data-lt-text-name]").value,defaultValue:get("[data-lt-default]").value,prefix:get("[data-lt-prefix]").value,suffix:get("[data-lt-suffix]").value,fontFamily:get("[data-lt-font]").value,showConsole:get("[data-lt-console]").checked,code:get("[data-lt-code]").value};}
+
+  get("[data-lt-reset-code]").addEventListener("click",()=>{get("[data-lt-code]").value=DEFAULT_CODE;setStatus("Life code reset. Click Apply to save it.","good");});
+  applyButton.addEventListener("click",()=>{
+    refreshSelection(false);if(!selectedObject){setStatus("Select one Clip instance first.","bad");return;}
+    const settings=currentSettings(),names=textNamesForClip(selectedObject);
+    LukeAnimate.setTypeTool(selectedObject,TOOL_ID,settings);removeButton.disabled=false;
+    setStatus(names.includes(settings.textName)?"Life applied. Press Play or scrub the timeline to see it.":"Life applied, but no text object named “"+settings.textName+"” was found inside this Clip.",names.includes(settings.textName)?"good":"warn");
+  });
+  removeButton.addEventListener("click",()=>{
+    refreshSelection(false);if(!selectedObject||!LukeAnimate.removeTypeTool(selectedObject,TOOL_ID)){setStatus("This Clip does not have Life attached.","bad");return;}
+    removeButton.disabled=true;loadSettings(null);setStatus("Life removed from the Clip.","good");
+  });
+  const pollTimer=setInterval(()=>refreshSelection(false),250);
+  get(".lt-close").addEventListener("click",()=>{clearInterval(pollTimer);panel.remove();setToolSelected(false);});
+  refreshSelection(true);
+})();
