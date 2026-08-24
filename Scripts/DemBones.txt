@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.63
+/* Luke Animate Dem Bones + MyCharacter GPT v16.64
+   v16.64 removes raster-mesh grid seams by slightly overlapping adjacent
+   texture-triangle clips in device-pixel space during deformation rendering.
    v16.63 supports silent runtime-only startup when a saved project contains
    rigs, registering playback without opening the Dem Bones editing panel.
    v16.62 makes locked Bones layers pointer-transparent so unlocked particle
@@ -184,7 +186,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.63";
+  var TOOL_VERSION = "16.64";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1168,9 +1170,21 @@
   function drawRasterTriangle(ctx,image,s0,s1,s2,d0,d1,d2){
     var m=triangleMatrix(s0,s1,s2,d0,d1,d2);
     if(!m)return;
+    /* Canvas anti-aliases each clipped triangle independently. Exact shared
+       edges can therefore expose a pale one-pixel crack. Grow the destination
+       clip by roughly one device pixel; neighbouring triangles then overdraw
+       that fringe instead of revealing the stage beneath the mesh. */
+    var overlap=.85;
+    try{
+      var matrix=ctx.getTransform&&ctx.getTransform();
+      if(matrix){var pixelScale=Math.max(Math.hypot(matrix.a,matrix.b),Math.hypot(matrix.c,matrix.d));if(pixelScale>0)overlap/=pixelScale;}
+    }catch(ignoreRasterTransform){}
+    var cx=(d0.x+d1.x+d2.x)/3,cy=(d0.y+d1.y+d2.y)/3;
+    function expanded(point){var dx=point.x-cx,dy=point.y-cy,len=Math.hypot(dx,dy)||1;return{x:point.x+dx/len*overlap,y:point.y+dy/len*overlap};}
+    var c0=expanded(d0),c1=expanded(d1),c2=expanded(d2);
     ctx.save();
     ctx.beginPath();
-    ctx.moveTo(d0.x,d0.y);ctx.lineTo(d1.x,d1.y);ctx.lineTo(d2.x,d2.y);ctx.closePath();
+    ctx.moveTo(c0.x,c0.y);ctx.lineTo(c1.x,c1.y);ctx.lineTo(c2.x,c2.y);ctx.closePath();
     ctx.clip();
     ctx.transform(m.a,m.b,m.c,m.d,m.e,m.f);
     ctx.drawImage(image,0,0);
