@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 30,
+  "version": 31,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -23,7 +23,7 @@
           "label": "Dem Bones",
           "description": "Create, bind and animate vector bones directly in Luke Animate.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Bone.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DemBones.txt?v=16.53",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DemBones.txt?v=16.54",
           "action": "animate",
           "F_Screen": 0
         },
