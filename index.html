@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v253: adds live pointer input to Node Coder and a visual Drag & Drop node for playable Clip interaction. -->
 <!-- LukeAnimate GPT v252: constrains rectangle and ellipse drags to uniform squares and circles while Shift is held, and snaps Shift-dragged lines to 45-degree angles. -->
 <!-- LukeAnimate GPT v251: gives Node Coder nodes beginner-friendly visual controls while preserving an advanced editable-code view. -->
 <!-- LukeAnimate GPT v250: adds the native Node Coder runtime with persistent named code slots and managed slots for every Type Tool code update. -->
@@ -71,7 +72,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v252</title>
+<title>Luke Animate v253</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4322,6 +4323,50 @@ ctx.fill();</textarea>
   const typeToolPressedKeys = new Set();
   const typeToolRenderStack = [];
   const nodeCodeActiveObjects = new Set();
+  // Node Coder input is kept separate from authored stage transforms. Visual
+  // interaction nodes can read this snapshot during playback without turning
+  // a game interaction into an editor move or a saved keyframe.
+  const nodeCodePointer = {x:0,y:0,down:false,pressed:false,released:false,button:0};
+
+  function updateNodeCodePointer(event,phase){
+    if(!event)return;
+    const point=canvasCoords(event.clientX,event.clientY);
+    nodeCodePointer.x=Number(point.x)||0;
+    nodeCodePointer.y=Number(point.y)||0;
+    if(phase==='down'){
+      nodeCodePointer.down=true;
+      nodeCodePointer.pressed=true;
+      nodeCodePointer.released=false;
+      nodeCodePointer.button=Number(event.button)||0;
+    }else if(phase==='up'){
+      nodeCodePointer.down=false;
+      nodeCodePointer.released=true;
+    }
+  }
+
+  window.addEventListener('pointerdown',event=>{
+    if(isWithinCanvas(event.clientX,event.clientY))updateNodeCodePointer(event,'down');
+  },true);
+  window.addEventListener('pointermove',event=>{
+    if(nodeCodePointer.down||isWithinCanvas(event.clientX,event.clientY))updateNodeCodePointer(event,'move');
+  },true);
+  window.addEventListener('pointerup',event=>updateNodeCodePointer(event,'up'),true);
+  window.addEventListener('pointercancel',event=>updateNodeCodePointer(event,'up'),true);
+
+  function nodeCodeDragTargetAtPoint(point){
+    if(!point)return null;
+    const active=activeTypeToolObjectsAtTime();
+    for(let index=active.length-1;index>=0;index--){
+      const object=active[index];
+      const documentData=nodeCodeDocumentForObject(object,false);
+      const hasDrag=documentData&&documentData.slots.some(slot=>
+        slot&&slot.enabled!==false&&slot.source!=='type-tool'&&slot.event==='update'&&
+        slot.ui&&slot.ui.kind==='drag'
+      );
+      if(hasDrag&&pointInBounds(point.x,point.y,getEffectiveBounds(object),0))return object;
+    }
+    return null;
+  }
 
   function normaliseDirectionsTypeTool(settings){
     const source=settings&&typeof settings==='object'?settings:{};
@@ -4543,8 +4588,16 @@ ctx.fill();</textarea>
     }
     if(!compiled.fn)return;
     try{
+      const effective=getEffectiveObj(object,t);
+      const bounds=getEffectiveBounds(object);
+      const pointer={
+        x:nodeCodePointer.x,y:nodeCodePointer.y,
+        down:nodeCodePointer.down,pressed:nodeCodePointer.pressed,released:nodeCodePointer.released,
+        button:nodeCodePointer.button,
+        over:pointInBounds(nodeCodePointer.x,nodeCodePointer.y,bounds,0)
+      };
       const result=compiled.fn({
-        object,state:nodeRuntime.state,values:typeToolRuntimeForObject(object,true).values,
+        object,effective,pointer,state:nodeRuntime.state,values:typeToolRuntimeForObject(object,true).values,
         event:eventName,eventData:eventData||null,delta:Math.max(0,Number(step)||0),time:t,api:LukeAnimatePluginAPI,
         readValue:(name,fallback)=>typeToolReadValue(object,name,fallback),
         writeValue:(name,value)=>typeToolWriteValue(object,name,value)
@@ -4898,10 +4951,10 @@ ctx.fill();</textarea>
   }
 
   function tickTypeToolRuntime(deltaSeconds){
-    if(!playing||exportPlayback.active){nodeCodeActiveObjects.forEach(unloadNodeCodeObject);nodeCodeActiveObjects.clear();return;}
+    if(!playing||exportPlayback.active){nodeCodeActiveObjects.forEach(unloadNodeCodeObject);nodeCodeActiveObjects.clear();nodeCodePointer.pressed=false;nodeCodePointer.released=false;return;}
     // Avoid a large jump after a suspended/background browser tab resumes.
     const step=Math.max(0,Math.min(.05,Number(deltaSeconds)||0));
-    if(!step)return;
+    if(!step){nodeCodePointer.pressed=false;nodeCodePointer.released=false;return;}
     const activeObjects=activeTypeToolObjectsAtTime();
     const activeSet=new Set(activeObjects);
     nodeCodeActiveObjects.forEach(object=>{if(!activeSet.has(object)){unloadNodeCodeObject(object);nodeCodeActiveObjects.delete(object);}});
@@ -4949,6 +5002,8 @@ ctx.fill();</textarea>
         moveSideRunnerWithSolids(object,{runtime,vx:dx,vy:dy,grounded:false},dx,dy);
       }
     });
+    nodeCodePointer.pressed=false;
+    nodeCodePointer.released=false;
   }
 
   function lifeTypeToolTextOverride(obj,effective,timeValue){
@@ -12569,7 +12624,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=54';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=55';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -12977,7 +13032,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 126,
+    version: 127,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -13814,7 +13869,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 161;
+    project.projectVersion = 162;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -14363,6 +14418,15 @@ ctx.fill();</textarea>
   overlay.addEventListener('mousedown', (e)=>{
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
 
+    // During playback, a visual Drag & Drop node owns the pointer over its
+    // Clip. Do not let the editor's selection/transform drag rewrite the
+    // authored object underneath the live game interaction.
+    if(playing&&nodeCodeDragTargetAtPoint(canvasCoords(e.clientX,e.clientY))){
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
     /*
       Space-drag and middle-mouse belong to stage panning. Ctrl/Cmd is NOT
       consumed here: it is again available for additive selection/marquee.
@@ -14558,6 +14622,14 @@ ctx.fill();</textarea>
   });
 
   overlay.addEventListener('contextmenu',(event)=>{
+    if(
+      playing&&
+      isWithinCanvas(event.clientX,event.clientY)&&
+      nodeCodeDragTargetAtPoint(canvasCoords(event.clientX,event.clientY))
+    ){
+      event.preventDefault();
+      return;
+    }
     if(
       stageTool!=='none' &&
       isWithinCanvas(
