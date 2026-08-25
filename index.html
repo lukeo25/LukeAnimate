@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v245: prevents Side Runner floor contact from being misread as a side collision that throws the character to a Solid edge. -->
 <!-- LukeAnimate GPT v244: adds native Side Runner physics and Solid Clip collision surfaces with editable settings and state-frame support. -->
 <!-- LukeAnimate GPT v243: lets Life attach directly to selected text, preserves that text's font, and still supports text inside Clips. -->
 <!-- LukeAnimate GPT v242: gives Directions the draggable Dem Bones panel style used by Luke Animate floating tools. -->
@@ -63,7 +64,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v244</title>
+<title>Luke Animate v245</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4545,6 +4546,9 @@ ctx.fill();</textarea>
   }
 
   function boundsOverlap(a,b){return !!(a&&b&&a.x2>b.x1&&a.x1<b.x2&&a.y2>b.y1&&a.y1<b.y2);}
+  function boundsOverlapDepth(a,b){
+    return {x:Math.min(a.x2,b.x2)-Math.max(a.x1,b.x1),y:Math.min(a.y2,b.y2)-Math.max(a.y1,b.y1)};
+  }
 
   function moveSideRunnerWithSolids(object,state,dx,dy){
     const solids=sideRunnerSolidObjects(object);
@@ -4556,7 +4560,11 @@ ctx.fill();</textarea>
         if(config.oneWay)return;
         const solidBounds=getStandaloneEffectiveBounds(solid,t);
         if(!boundsOverlap(bounds,solidBounds))return;
-        state.runtime.offsetX+=dx>0?solidBounds.x1-bounds.x2:solidBounds.x2-bounds.x1;
+        // Resting on a floor can leave a microscopic floating-point overlap.
+        // It is top contact, not a wall: never eject the runner to the floor's
+        // left/right edge unless there is meaningful vertical penetration.
+        if(boundsOverlapDepth(bounds,solidBounds).y<=.5)return;
+        state.runtime.offsetX+=dx>0?(solidBounds.x1-bounds.x2-.01):(solidBounds.x2-bounds.x1+.01);
         state.vx=0;bounds=getStandaloneEffectiveBounds(object,t);
       });
     }
@@ -4570,8 +4578,8 @@ ctx.fill();</textarea>
         const solidBounds=getStandaloneEffectiveBounds(solid,t);
         if(config.oneWay&&(dy<=0||before.y2>solidBounds.y1+Math.max(2,Math.abs(dy)+1)))return;
         if(!boundsOverlap(bounds,solidBounds))return;
-        if(dy>0){state.runtime.offsetY+=solidBounds.y1-bounds.y2;state.grounded=true;}
-        else if(!config.oneWay)state.runtime.offsetY+=solidBounds.y2-bounds.y1;
+        if(dy>0){state.runtime.offsetY+=solidBounds.y1-bounds.y2-.01;state.grounded=true;}
+        else if(!config.oneWay)state.runtime.offsetY+=solidBounds.y2-bounds.y1+.01;
         state.vy=0;bounds=getStandaloneEffectiveBounds(object,t);
       });
     }
@@ -12172,7 +12180,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=47';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=48';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -13343,7 +13351,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 153;
+    project.projectVersion = 154;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
