@@ -1,4 +1,4 @@
-/* Luke Animate Side Runner Type Tool v1.1 */
+/* Luke Animate Side Runner Type Tool v1.2 */
 (function(){
   "use strict";
   const PANEL_ID="lukeanimate-siderunner-panel",STYLE_ID="lukeanimate-siderunner-style",TOOL_ID="siderunner";
@@ -6,7 +6,8 @@
   const ICON=String(item&&item.iconUrl?item.iconUrl:"https://lukeo25.github.io/LukeAnimate/SVGs/GameCharacter.svg");
   const DEFAULT_CODE=`const { velocity } = context;
 return { vx: velocity.x, vy: velocity.y };`;
-  if(!LukeAnimate||Number(LukeAnimate.version||0)<123)throw new Error("Side Runner requires Luke Animate v123 or later.");
+  const DEFAULT_STATE_FRAMES=['Idle_Right','Idle_Left','Run_Right','Run_Left','Jump_Right','Jump_Left','Fire_Right','Fire_Left','Fight_Right','Fight_Left','Death'];
+  if(!LukeAnimate||Number(LukeAnimate.version||0)<124)throw new Error("Side Runner requires Luke Animate v124 or later.");
   const selectTool=active=>{if(LukeAnimate.setConfiguredToolActive)LukeAnimate.setConfiguredToolActive(GROUP_ID,ITEM_ID,!!active);};
   const old=document.getElementById(PANEL_ID);
   if(old){old.style.display="flex";old.classList.add("open");selectTool(true);LukeAnimate.bringFloatingPanelToFront(old);LukeAnimate.clampFloatingPanelToViewport(old);return;}
@@ -34,7 +35,7 @@ return { vx: velocity.x, vy: velocity.y };`;
     <div class="sr-selected"><strong>Selected:</strong> <span data-sr-selected>No Clip selected</span></div>
     <div class="sr-card"><div class="sr-facing"><strong>Selected artwork faces</strong><label><input type="radio" name="sr-facing" value="right" checked> Right</label><label><input type="radio" name="sr-facing" value="left"> Left</label></div>${fields.map(f=>`<div class="sr-field"><label>${f[1]}</label><input data-sr-range="${f[0]}" type="range" min="${f[2]}" max="${f[3]}" step="${f[4]}" value="${f[5]}"><input data-sr-number="${f[0]}" type="number" min="${f[2]}" max="${f[3]}" step="${f[4]}" value="${f[5]}"></div>`).join('')}</div>
     <div class="sr-card sr-checks"><label class="sr-check"><input data-sr-check="enableLR" type="checkbox" checked> Left/right movement</label><label class="sr-check"><input data-sr-check="enableJump" type="checkbox" checked> Jump</label><label class="sr-check"><input data-sr-check="enableGravity" type="checkbox" checked> Gravity and falling</label><label class="sr-check"><input data-sr-check="animateStates" type="checkbox" checked> Use named state frames</label></div>
-    <p class="sr-muted">Arrow keys or A/D move. Space, W or Up jumps. Solid Clips stop the character. Optional frame labels: Right, Left, Right_Run, Left_Run, Right_Jump and Left_Jump.</p>
+    <p class="sr-muted">Arrow keys or A/D move. Space, W or Up jumps. Applying Side Runner adds editable named frames for idle, run, jump, fire, fight and death in both directions while preserving existing frames.</p>
     <div class="sr-card"><label class="sr-check"><input data-sr-death-enabled type="checkbox"> Respond to a death value</label><div class="sr-death-grid">
       <label class="sr-death-field"><span>If variable</span><input data-sr-death-variable type="text" value="Character_Die"></label>
       <label class="sr-death-field"><span>equals number</span><input data-sr-death-value type="number" value="1" step="1"></label>
@@ -57,7 +58,7 @@ return { vx: velocity.x, vy: velocity.y };`;
   function settings(){const out={enabled:true,selectedFacing:get('input[name="sr-facing"]:checked').value,deathEnabled:get('[data-sr-death-enabled]').checked,deathVariable:get('[data-sr-death-variable]').value,deathValue:Number(get('[data-sr-death-value]').value),deathAction:get('[data-sr-death-action]').value,deathFrame:Number(get('[data-sr-death-frame]').value),reappearDelay:Number(get('[data-sr-reappear-delay]').value),resetPositionOnReappear:get('[data-sr-reset-position]').checked,code:get('[data-sr-code]').value};fields.forEach(f=>out[f[0]]=Number(get(`[data-sr-number="${f[0]}"]`).value));['enableLR','enableJump','enableGravity','animateStates'].forEach(id=>out[id]=get(`[data-sr-check="${id}"]`).checked);return out;}
   get('[data-sr-death-action]').addEventListener('change',updateDeathFields);
   get('[data-sr-reset]').addEventListener('click',()=>{get('[data-sr-code]').value=DEFAULT_CODE;setStatus('Code reset. Click Apply to save it.','good');});
-  apply.addEventListener('click',()=>{refresh(false);if(!selected){setStatus('Select one Clip first.','bad');return;}LukeAnimate.setTypeTool(selected,TOOL_ID,settings());remove.disabled=false;setStatus('Side Runner applied. Press Play to test it.','good');});
+  apply.addEventListener('click',()=>{refresh(false);if(!selected){setStatus('Select one Clip first.','bad');return;}if(LukeAnimate.ensureClipStateFrames)LukeAnimate.ensureClipStateFrames(selected.clipId,DEFAULT_STATE_FRAMES);LukeAnimate.setTypeTool(selected,TOOL_ID,settings());remove.disabled=false;setStatus('Side Runner applied with idle, run, jump, fire, fight and death frames. Press Play to test it.','good');});
   remove.addEventListener('click',()=>{refresh(false);if(!selected||!LukeAnimate.removeTypeTool(selected,TOOL_ID)){setStatus('The selected Clip does not have Side Runner.','bad');return;}remove.disabled=true;load(null);setStatus('Side Runner removed.','good');});
   const timer=setInterval(()=>refresh(false),250);get('.sr-close').addEventListener('click',()=>{clearInterval(timer);panel.remove();selectTool(false);});refresh(true);
 })();

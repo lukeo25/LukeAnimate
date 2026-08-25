@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v247: links Old Timer directly to a chosen Side Runner Clip and installs its numeric Character_Die response in that runner's live loop. -->
 <!-- LukeAnimate GPT v246: adds native Old Timer countdown/countup behaviour, live Clip text display, completion controls and Character_Die output. -->
 <!-- LukeAnimate GPT v245: prevents Side Runner floor contact from being misread as a side collision that throws the character to a Solid edge. -->
 <!-- LukeAnimate GPT v244: adds native Side Runner physics and Solid Clip collision surfaces with editable settings and state-frame support. -->
@@ -65,7 +66,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v246</title>
+<title>Luke Animate v247</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4410,6 +4411,11 @@ ctx.fill();</textarea>
       showConsole:!!source.showConsole,
       setCharacterDie:!!source.setCharacterDie,
       characterDieValue:Number.isFinite(Number(source.characterDieValue))?Number(source.characterDieValue):1,
+      targetSideRunnerId:String(source.targetSideRunnerId||'').trim(),
+      targetDeathAction:['goto_frame','destroy','reappear','reset_position'].includes(source.targetDeathAction)?source.targetDeathAction:'goto_frame',
+      targetDeathFrame:Math.max(1,Math.round(Number(source.targetDeathFrame)||1)),
+      targetReappearDelay:Math.max(0,Math.min(3600,Number(source.targetReappearDelay)||1)),
+      targetResetPosition:source.targetResetPosition!==false,
       code:String(source.code||'')
     };
   }
@@ -4511,11 +4517,26 @@ ctx.fill();</textarea>
     });
   }
 
+  function typeToolObjectById(objectId){
+    const id=String(objectId||'');
+    if(!id)return null;
+    let found=null;
+    visitAllTypeToolObjects(object=>{if(!found&&String(object&&object.id||'')===id)found=object;});
+    return found;
+  }
+
+  function writeOldTimerDeathSignal(owner,config,value){
+    typeToolWriteValue(owner,'Character_Die',value);
+    const target=config&&config.targetSideRunnerId?typeToolObjectById(config.targetSideRunnerId):null;
+    if(target&&target!==owner)typeToolWriteValue(target,'Character_Die',value);
+    return value;
+  }
+
   function resetTypeToolRuntime(){
     visitAllTypeToolObjects(object=>{
       const runtime=typeToolRuntimeForObject(object,false);
       const tools=typeToolsForObject(object,false);
-      if(tools&&tools.oldtimer&&normaliseOldTimerTypeTool(tools.oldtimer).setCharacterDie)typeToolWriteValue(object,'Character_Die',0);
+      if(tools&&tools.oldtimer){const config=normaliseOldTimerTypeTool(tools.oldtimer);if(config.setCharacterDie)writeOldTimerDeathSignal(object,config,0);}
       if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;}
     });
     typeToolPressedKeys.clear();
@@ -4725,7 +4746,7 @@ ctx.fill();</textarea>
     state.displayText=result.text===undefined?formatOldTimerValue(state.value,config.displayMode):String(result.text);
     state.fontFamily=String(result.fontFamily||config.fontFamily);
     typeToolWriteValue(object,config.varName,state.value);
-    if(config.setCharacterDie)typeToolWriteValue(object,'Character_Die',result.characterDie===undefined?(state.done?config.characterDieValue:0):result.characterDie);
+    if(config.setCharacterDie)writeOldTimerDeathSignal(object,config,result.characterDie===undefined?(state.done?config.characterDieValue:0):result.characterDie);
     return result;
   }
 
@@ -4733,12 +4754,12 @@ ctx.fill();</textarea>
     const runtime=typeToolRuntimeForObject(object,true);
     if(!runtime.oldTimer){
       runtime.oldTimer={elapsed:0,value:config.startSeconds,done:false,loopPending:false,clipStopTime:null,lastLogText:''};
-      if(config.setCharacterDie)typeToolWriteValue(object,'Character_Die',0);
+      if(config.setCharacterDie)writeOldTimerDeathSignal(object,config,0);
     }
     const state=runtime.oldTimer;
     if(state.loopPending){
       state.elapsed=0;state.value=config.startSeconds;state.done=false;state.loopPending=false;state.clipStopTime=null;
-      if(config.setCharacterDie)typeToolWriteValue(object,'Character_Die',0);
+      if(config.setCharacterDie)writeOldTimerDeathSignal(object,config,0);
     }
     if(!state.done){
       state.elapsed+=step;
@@ -12353,7 +12374,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=49';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=50';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -12761,7 +12782,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 123,
+    version: 124,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -12903,10 +12924,11 @@ ctx.fill();</textarea>
       if(!validTarget)throw new Error(id==='life'?'Life can only be attached to a text object or Clip instance.':'This Type Tool can only be attached to a Clip instance.');
       pushUndo();
       const tools=typeToolsForObject(object,true);
+      if(id==='oldtimer'&&tools[id]){const previous=normaliseOldTimerTypeTool(tools[id]);if(previous.setCharacterDie)writeOldTimerDeathSignal(object,previous,0);}
       tools[id]=normaliseTypeToolSettings(id,settings);
       const runtime=typeToolRuntimeForObject(object,false);
       if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;}
-      if(id==='oldtimer'&&tools[id].setCharacterDie)typeToolWriteValue(object,'Character_Die',0);
+      if(id==='oldtimer'&&tools[id].setCharacterDie)writeOldTimerDeathSignal(object,tools[id],0);
       this.refreshUI();
       return JSON.parse(JSON.stringify(tools[id]));
     },
@@ -12915,7 +12937,7 @@ ctx.fill();</textarea>
       const id=String(toolId||'').trim().toLowerCase();
       if(!tools||!Object.prototype.hasOwnProperty.call(tools,id))return false;
       pushUndo();
-      if(id==='oldtimer'&&normaliseOldTimerTypeTool(tools[id]).setCharacterDie)typeToolWriteValue(object,'Character_Die',0);
+      if(id==='oldtimer'){const config=normaliseOldTimerTypeTool(tools[id]);if(config.setCharacterDie)writeOldTimerDeathSignal(object,config,0);}
       delete tools[id];
       const runtime=typeToolRuntimeForObject(object,false);
       if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;}
@@ -13282,6 +13304,52 @@ ctx.fill();</textarea>
       this.refreshUI();
       return true;
     },
+    ensureClipStateFrames(clipId,names){
+      const clip=clips[clipId];
+      if(!clip)return [];
+      const requested=(Array.isArray(names)?names:[]).map(name=>String(name||'').trim()).filter(Boolean);
+      if(!requested.length)return this.getClipFrameLabels(clipId);
+      pushUndo();
+      const fps=Math.max(1,getTimelineFPS());
+      const existing=normalizedClipFrameLabels(clip).map(label=>Object.assign({},label));
+      const byName=new Map(existing.map(label=>[String(label.name).toLowerCase(),label]));
+      const used=new Set(existing.map(label=>Math.max(0,Math.round(Number(label.frame)||1)-1)));
+      let cursor=0;
+      requested.forEach(name=>{
+        if(byName.has(name.toLowerCase()))return;
+        while(used.has(cursor))cursor++;
+        const label={name,frame:cursor+1,time:cursor/fps};existing.push(label);byName.set(name.toLowerCase(),label);used.add(cursor);cursor++;
+      });
+      const lastIndex=Math.max(0,...existing.map(label=>Math.max(0,Math.round(Number(label.frame)||1)-1)));
+      clip.timelineDuration=Math.max(Number(clip.timelineDuration)||0,(lastIndex+1)/fps);
+      const total=totalFrameIndexForDuration(clip.timelineDuration);
+      const model=wickEnsureClipDrawingLayers(clip);
+      wickNormalizeLayerModel(model,clip.timelineDuration);
+      model.forEach(layer=>{
+        if(!layer||!Array.isArray(layer.frames)||!layer.frames.length)return;
+        const last=layer.frames.slice().sort((a,b)=>b.endFrame-a.endFrame)[0];
+        if(last&&last.endFrame<total){last.endFrame=total;if(last.object)last.object.frameLinkEnd=total;}
+        Array.from(used).sort((a,b)=>a-b).forEach(frameIndex=>{
+          if(frameIndex<=0||layer.frames.some(frame=>frame.startFrame===frameIndex))return;
+          const source=layer.frames.find(frame=>frame.startFrame<frameIndex&&frame.endFrame>=frameIndex);
+          if(!source)return;
+          const previousEnd=source.endFrame;source.endFrame=frameIndex-1;if(source.object)source.object.frameLinkEnd=source.endFrame;
+          const object=source.object&&!source.blank?wickCloneObjectAtTime(source.object,frameIndex/fps):null;
+          const frame={id:wickNextFrameId(),startFrame:frameIndex,endFrame:previousEnd,blank:!object,object,_sequence:layer.frames.length+1};
+          if(object){object.timelineLayerId=layer.id;object.timelineLayerOrder=layer.order;object.frameLinkId=frame.id;object.frameLinkStart=frame.startFrame;object.frameLinkEnd=frame.endFrame;}
+          layer.frames.push(frame);
+        });
+      });
+      wickNormalizeLayerModel(model,clip.timelineDuration);
+      clip.drawingLayers=model;
+      ensureClipSceneFrames(clip);
+      wickProjectLayerModel(model,clip.sceneFrames,clip.timelineDuration);
+      clip.drawObjects=sceneFrameObjectsAtTime(clip.sceneFrames,0,clip.timelineDuration,clip.drawObjects||[]);
+      clip.frameLabels=existing.map(label=>({name:String(label.name),frame:Math.max(1,Math.round(Number(label.frame)||1)),time:Math.max(0,(Math.max(1,Math.round(Number(label.frame)||1))-1)/fps)})).sort((a,b)=>a.frame-b.frame);
+      normalizedClipFrameLabels(clip);
+      this.refreshUI();renderClipLibrary();renderClipFrameNameList();
+      return this.getClipFrameLabels(clipId);
+    },
     async openConfiguredTool(groupId,itemId){
       const groups=lukeAnimateConfig&&Array.isArray(lukeAnimateConfig.groups)?lukeAnimateConfig.groups:[];
       const wantedGroup=groups.find(entry=>String(entry&&entry.id||'')===String(groupId||''));
@@ -13526,7 +13594,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 155;
+    project.projectVersion = 156;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);

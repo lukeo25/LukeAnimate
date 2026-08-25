@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 49,
+  "version": 50,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -94,7 +94,7 @@
           "id": "Side_Runner",
           "label": "Side Runner",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/GameCharacter.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/SideRunner.txt?v=1.1",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/SideRunner.txt?v=1.2",
           "action": "script",
           "F_Screen": 0
         },
@@ -110,7 +110,7 @@
           "id": "Old Timer",
           "label": "Old Timer",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Timer.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Old_Timer.txt?v=1.0",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Old_Timer.txt?v=1.1",
           "action": "script",
           "F_Screen": 0
         },
