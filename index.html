@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v250: adds the native Node Coder runtime with persistent named code slots and managed slots for every Type Tool code update. -->
 <!-- LukeAnimate GPT v249: renders live evaluated text and font values so Old Timer and Life visibly update instead of redrawing the authored text every frame. -->
 <!-- LukeAnimate GPT v248: keeps Old Timer text live across Clip drawing frames and makes its optional Side Runner death target independent from the timer display. -->
 <!-- LukeAnimate GPT v247: links Old Timer directly to a chosen Side Runner Clip and installs its numeric Character_Die response in that runner's live loop. -->
@@ -68,7 +69,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v249</title>
+<title>Luke Animate v250</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4315,8 +4316,10 @@ ctx.fill();</textarea>
   // never rewrite the Clip's authored transform or leak into project JSON.
   const TYPE_TOOLS_DATA_KEY = '_lukeAnimateTypeTools';
   const TYPE_TOOLS_RUNTIME_KEY = '_lukeAnimateTypeToolsRuntime';
+  const NODE_CODE_DATA_KEY = '_lukeAnimateNodeCode';
   const typeToolPressedKeys = new Set();
   const typeToolRenderStack = [];
+  const nodeCodeActiveObjects = new Set();
 
   function normaliseDirectionsTypeTool(settings){
     const source=settings&&typeof settings==='object'?settings:{};
@@ -4466,6 +4469,105 @@ ctx.fill();</textarea>
     return runtime||null;
   }
 
+  function normaliseNodeCodeSlot(slot,index){
+    const source=slot&&typeof slot==='object'?slot:{};
+    const event=['load','update','unload','tool'].includes(source.event)?source.event:'update';
+    const id=String(source.id||('code-slot-'+(index+1))).trim()||('code-slot-'+(index+1));
+    return {
+      id,
+      name:String(source.name||id).trim()||id,
+      event,
+      enabled:source.enabled!==false,
+      code:String(source.code||''),
+      source:source.source==='type-tool'?'type-tool':'custom',
+      toolId:String(source.toolId||'').trim(),
+      x:Number.isFinite(Number(source.x))?Number(source.x):340+(index%2)*220,
+      y:Number.isFinite(Number(source.y))?Number(source.y):70+Math.floor(index/2)*130
+    };
+  }
+
+  function nodeCodeDocumentForObject(object,create){
+    if(!object||object.type!=='clipinstance')return null;
+    let documentData=object[NODE_CODE_DATA_KEY];
+    if((!documentData||typeof documentData!=='object'||Array.isArray(documentData))&&create){
+      documentData={version:1,slots:[]};object[NODE_CODE_DATA_KEY]=documentData;
+    }
+    if(!documentData||typeof documentData!=='object'||Array.isArray(documentData))return null;
+    if(!Array.isArray(documentData.slots))documentData.slots=[];
+    documentData.version=1;
+    documentData.slots=documentData.slots.map(normaliseNodeCodeSlot);
+    return documentData;
+  }
+
+  function syncTypeToolNodeCodeSlots(object){
+    const tools=typeToolsForObject(object,false);
+    if(!tools)return nodeCodeDocumentForObject(object,false);
+    const documentData=nodeCodeDocumentForObject(object,true);
+    Object.keys(tools).forEach((toolId,index)=>{
+      const settings=normaliseTypeToolSettings(toolId,tools[toolId]);
+      const slotId='type-tool-'+toolId;
+      const existing=documentData.slots.find(slot=>slot.id===slotId);
+      const displayName=toolId.replace(/[_-]+/g,' ').replace(/\b\w/g,letter=>letter.toUpperCase());
+      const code=String(settings&&settings.code||'');
+      const slot=normaliseNodeCodeSlot(Object.assign({},existing||{}, {
+        id:slotId,name:displayName,event:'tool',enabled:settings.enabled!==false,
+        code:code||('// '+displayName+' uses Luke Animate native runtime code.'),source:'type-tool',toolId
+      }),documentData.slots.length+index);
+      if(existing)Object.assign(existing,slot);else documentData.slots.push(slot);
+    });
+    documentData.slots=documentData.slots.filter(slot=>slot.source!=='type-tool'||!!tools[slot.toolId]);
+    return documentData;
+  }
+
+  function nodeCodeRuntimeForObject(object,create){
+    const runtime=typeToolRuntimeForObject(object,create);
+    if(!runtime)return null;
+    if(!runtime.nodeCoder&&create)runtime.nodeCoder={loaded:false,state:Object.create(null),compiled:Object.create(null),errors:Object.create(null),output:Object.create(null)};
+    return runtime.nodeCoder||null;
+  }
+
+  function runNodeCodeSlot(object,slot,eventName,step,eventData){
+    if(!slot||slot.source==='type-tool'||slot.enabled===false||slot.event!==eventName||!String(slot.code||'').trim())return;
+    const nodeRuntime=nodeCodeRuntimeForObject(object,true);
+    let compiled=nodeRuntime.compiled[slot.id];
+    if(!compiled||compiled.source!==slot.code){
+      compiled={source:slot.code,fn:null};
+      try{compiled.fn=new Function('context','"use strict";\n'+slot.code+'\n//# sourceURL=LukeAnimate-NodeCoder-'+slot.id+'.js');delete nodeRuntime.errors[slot.id];}
+      catch(error){nodeRuntime.errors[slot.id]=String(error&&error.message||error);nodeRuntime.compiled[slot.id]=compiled;return;}
+      nodeRuntime.compiled[slot.id]=compiled;
+    }
+    if(!compiled.fn)return;
+    try{
+      const result=compiled.fn({
+        object,state:nodeRuntime.state,values:typeToolRuntimeForObject(object,true).values,
+        event:eventName,eventData:eventData||null,delta:Math.max(0,Number(step)||0),time:t,api:LukeAnimatePluginAPI,
+        readValue:(name,fallback)=>typeToolReadValue(object,name,fallback),
+        writeValue:(name,value)=>typeToolWriteValue(object,name,value)
+      });
+      if(result&&typeof result==='object'){
+        ['x','y','rotation','scale','scaleX','scaleY','opacity','clipStopTime'].forEach(key=>{
+          if(result[key]!==undefined&&Number.isFinite(Number(result[key])))nodeRuntime.output[key]=Number(result[key]);
+        });
+      }
+      delete nodeRuntime.errors[slot.id];
+    }catch(error){nodeRuntime.errors[slot.id]=String(error&&error.message||error);}
+  }
+
+  function runNodeCodeEvent(object,eventName,step,eventData){
+    const documentData=nodeCodeDocumentForObject(object,false);
+    if(!documentData)return;
+    documentData.slots.forEach(slot=>runNodeCodeSlot(object,slot,eventName,step,eventData));
+  }
+
+  function unloadNodeCodeObject(object){
+    const runtime=nodeCodeRuntimeForObject(object,false);
+    if(!runtime||!runtime.loaded)return;
+    runNodeCodeEvent(object,'unload',0,null);
+    runtime.loaded=false;
+    runtime.state=Object.create(null);
+    runtime.output=Object.create(null);
+  }
+
   function runTypeToolCode(object,toolId,source,context){
     const code=String(source||'');
     if(!code.trim())return undefined;
@@ -4538,12 +4640,14 @@ ctx.fill();</textarea>
 
   function resetTypeToolRuntime(){
     visitAllTypeToolObjects(object=>{
+      unloadNodeCodeObject(object);
       const runtime=typeToolRuntimeForObject(object,false);
       const tools=typeToolsForObject(object,false);
       if(tools&&tools.oldtimer){const config=normaliseOldTimerTypeTool(tools.oldtimer);if(config.setCharacterDie)writeOldTimerDeathSignal(object,config,0);}
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;delete runtime.nodeCoder;}
     });
     typeToolPressedKeys.clear();
+    nodeCodeActiveObjects.clear();
   }
 
   function activeTypeToolObjectsAtTime(){
@@ -4789,11 +4893,20 @@ ctx.fill();</textarea>
   }
 
   function tickTypeToolRuntime(deltaSeconds){
-    if(!playing||exportPlayback.active)return;
+    if(!playing||exportPlayback.active){nodeCodeActiveObjects.forEach(unloadNodeCodeObject);nodeCodeActiveObjects.clear();return;}
     // Avoid a large jump after a suspended/background browser tab resumes.
     const step=Math.max(0,Math.min(.05,Number(deltaSeconds)||0));
     if(!step)return;
-    activeTypeToolObjectsAtTime().forEach(object=>{
+    const activeObjects=activeTypeToolObjectsAtTime();
+    const activeSet=new Set(activeObjects);
+    nodeCodeActiveObjects.forEach(object=>{if(!activeSet.has(object)){unloadNodeCodeObject(object);nodeCodeActiveObjects.delete(object);}});
+    activeObjects.forEach(object=>{
+      const nodeDocument=nodeCodeDocumentForObject(object,false);
+      if(nodeDocument){
+        const nodeRuntime=nodeCodeRuntimeForObject(object,true);
+        if(!nodeRuntime.loaded){nodeRuntime.loaded=true;runNodeCodeEvent(object,'load',step,null);}
+        runNodeCodeEvent(object,'update',step,null);nodeCodeActiveObjects.add(object);
+      }
       const tools=typeToolsForObject(object,false);
       if(!tools)return;
       if(tools.oldtimer){
@@ -12420,7 +12533,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=51';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=52';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -12828,7 +12941,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 124,
+    version: 125,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -12963,6 +13076,29 @@ ctx.fill();</textarea>
     },
     getTypeValue(object,name,fallback){ return typeToolReadValue(object,name,fallback); },
     setTypeValue(object,name,value){ return typeToolWriteValue(object,name,value); },
+    getNodeCodeSlots(object){
+      const documentData=syncTypeToolNodeCodeSlots(object)||nodeCodeDocumentForObject(object,false);
+      return documentData?JSON.parse(JSON.stringify(documentData.slots)):[];
+    },
+    setNodeCodeSlot(object,slot){
+      if(!object||object.type!=='clipinstance')throw new Error('Node Coder slots belong to Clip instances.');
+      pushUndo();
+      const documentData=nodeCodeDocumentForObject(object,true),next=normaliseNodeCodeSlot(slot,documentData.slots.length);
+      const index=documentData.slots.findIndex(entry=>entry.id===next.id);
+      if(index>=0)documentData.slots[index]=next;else documentData.slots.push(next);
+      const runtime=nodeCodeRuntimeForObject(object,false);if(runtime){delete runtime.compiled[next.id];delete runtime.errors[next.id];}
+      this.refreshUI();return JSON.parse(JSON.stringify(next));
+    },
+    removeNodeCodeSlot(object,slotId){
+      const documentData=nodeCodeDocumentForObject(object,false);if(!documentData)return false;
+      const index=documentData.slots.findIndex(slot=>slot.id===String(slotId||''));if(index<0)return false;
+      pushUndo();documentData.slots.splice(index,1);
+      const runtime=nodeCodeRuntimeForObject(object,false);if(runtime){delete runtime.compiled[String(slotId||'')];delete runtime.errors[String(slotId||'')];}
+      this.refreshUI();return true;
+    },
+    getNodeCodeError(object,slotId){
+      const runtime=nodeCodeRuntimeForObject(object,false);return runtime&&runtime.errors?String(runtime.errors[String(slotId||'')]||''):'';
+    },
     setTypeTool(object,toolId,settings){
       const id=String(toolId||'').trim().toLowerCase();
       if(!id)throw new Error('A Type Tool id is required.');
@@ -12972,6 +13108,7 @@ ctx.fill();</textarea>
       const tools=typeToolsForObject(object,true);
       if(id==='oldtimer'&&tools[id]){const previous=normaliseOldTimerTypeTool(tools[id]);if(previous.setCharacterDie)writeOldTimerDeathSignal(object,previous,0);}
       tools[id]=normaliseTypeToolSettings(id,settings);
+      syncTypeToolNodeCodeSlots(object);
       const runtime=typeToolRuntimeForObject(object,false);
       if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;}
       if(id==='oldtimer'&&tools[id].setCharacterDie)writeOldTimerDeathSignal(object,tools[id],0);
@@ -12985,6 +13122,7 @@ ctx.fill();</textarea>
       pushUndo();
       if(id==='oldtimer'){const config=normaliseOldTimerTypeTool(tools[id]);if(config.setCharacterDie)writeOldTimerDeathSignal(object,config,0);}
       delete tools[id];
+      syncTypeToolNodeCodeSlots(object);
       const runtime=typeToolRuntimeForObject(object,false);
       if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;}
       this.refreshUI();
@@ -13640,7 +13778,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 158;
+    project.projectVersion = 159;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -18270,6 +18408,10 @@ ctx.fill();</textarea>
             effective.clipStopTime=Math.max(0,Number(runtime.sideRunner.deathClipStopTime));
           }
         }
+      }
+      if(runtime&&runtime.nodeCoder&&runtime.nodeCoder.output){
+        const output=runtime.nodeCoder.output;
+        if(Object.keys(output).length){if(effective===obj)effective=Object.assign({},obj);Object.assign(effective,output);}
       }
     }
 
