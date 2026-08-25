@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v243: lets Life attach directly to selected text, preserves that text's font, and still supports text inside Clips. -->
 <!-- LukeAnimate GPT v242: gives Directions the draggable Dem Bones panel style used by Luke Animate floating tools. -->
 <!-- LukeAnimate GPT v241: lets Life target an actual text object inside a Clip without requiring Wick-style object names. -->
 <!-- LukeAnimate GPT v240: adds Wick-style Publish Game export as standalone HTML or an itch.io-ready ZIP with a clean embedded player. -->
@@ -61,7 +62,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v242</title>
+<title>Luke Animate v243</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4301,7 +4302,8 @@ ctx.fill();</textarea>
   const selectionInspectorSuppressors = new Set();
 
   // ---------------- native Type Tools ----------------
-  // Type Tools are optional behaviours stored on individual Clip instances.
+  // Type Tools are optional behaviours stored on individual Clip instances or,
+  // for text-specific tools such as Life, directly on text objects.
   // Their authored settings are ordinary project data; their live movement is
   // deliberately non-enumerable runtime state, so previewing a Type Tool can
   // never rewrite the Clip's authored transform or leak into project JSON.
@@ -4330,6 +4332,9 @@ ctx.fill();</textarea>
 
   function normaliseLifeTypeTool(settings){
     const source=settings&&typeof settings==='object'?settings:{};
+    const legacyDefaultCode='const value = context.readValue(config.varName, config.defaultValue);\nreturn {\n  value,\n  text: config.prefix + String(value) + config.suffix,\n  fontFamily: config.fontFamily\n};';
+    const fixedDefaultCode='const { config } = context;\nconst value = context.readValue(config.varName, config.defaultValue);\nreturn {\n  value,\n  text: config.prefix + String(value) + config.suffix,\n  fontFamily: config.fontFamily\n};';
+    const sourceCode=String(source.code||'');
     return {
       type:'life',
       version:1,
@@ -4344,7 +4349,9 @@ ctx.fill();</textarea>
       suffix:String(source.suffix||''),
       fontFamily:String(source.fontFamily||'Poppins').trim()||'Poppins',
       showConsole:!!source.showConsole,
-      code:String(source.code||'')
+      // v241 shipped a default snippet that omitted `const { config } =
+      // context`. Repair that exact stock snippet while preserving user edits.
+      code:sourceCode.trim()===legacyDefaultCode.trim()?fixedDefaultCode:sourceCode
     };
   }
 
@@ -4359,7 +4366,7 @@ ctx.fill();</textarea>
   }
 
   function typeToolsForObject(object,create){
-    if(!object||object.type!=='clipinstance')return null;
+    if(!object||(object.type!=='clipinstance'&&object.type!=='text'))return null;
     let tools=object[TYPE_TOOLS_DATA_KEY];
     if((!tools||typeof tools!=='object'||Array.isArray(tools))&&create){
       tools={};
@@ -4525,9 +4532,13 @@ ctx.fill();</textarea>
   }
 
   function lifeTypeToolTextOverride(obj,effective,timeValue){
-    if(!obj||obj.type!=='text'||!typeToolRenderStack.length)return effective;
+    if(!obj||obj.type!=='text')return effective;
+    const owners=[obj];
     for(let index=typeToolRenderStack.length-1;index>=0;index--){
-      const owner=typeToolRenderStack[index].object;
+      const stackedOwner=typeToolRenderStack[index].object;
+      if(stackedOwner&&!owners.includes(stackedOwner))owners.push(stackedOwner);
+    }
+    for(const owner of owners){
       const tools=typeToolsForObject(owner,false);
       if(!tools||!tools.life)continue;
       const config=normaliseLifeTypeTool(tools.life);
@@ -12041,7 +12052,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=45';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=46';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -12449,7 +12460,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 120,
+    version: 121,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -12572,7 +12583,7 @@ ctx.fill();</textarea>
     getTypeTool(object,toolId){
       const tools=typeToolsForObject(object,false);
       const id=String(toolId||'').trim().toLowerCase();
-      return tools&&tools[id] ? JSON.parse(JSON.stringify(tools[id])) : null;
+      return tools&&tools[id] ? JSON.parse(JSON.stringify(normaliseTypeToolSettings(id,tools[id]))) : null;
     },
     getTypeTools(object){
       const tools=typeToolsForObject(object,false);
@@ -12585,9 +12596,10 @@ ctx.fill();</textarea>
     getTypeValue(object,name,fallback){ return typeToolReadValue(object,name,fallback); },
     setTypeValue(object,name,value){ return typeToolWriteValue(object,name,value); },
     setTypeTool(object,toolId,settings){
-      if(!object||object.type!=='clipinstance')throw new Error('Type Tools can only be attached to a Clip instance.');
       const id=String(toolId||'').trim().toLowerCase();
       if(!id)throw new Error('A Type Tool id is required.');
+      const validTarget=object&&(object.type==='clipinstance'||(id==='life'&&object.type==='text'));
+      if(!validTarget)throw new Error(id==='life'?'Life can only be attached to a text object or Clip instance.':'This Type Tool can only be attached to a Clip instance.');
       pushUndo();
       const tools=typeToolsForObject(object,true);
       tools[id]=normaliseTypeToolSettings(id,settings);
@@ -13211,7 +13223,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 151;
+    project.projectVersion = 152;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
