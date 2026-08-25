@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v248: keeps Old Timer text live across Clip drawing frames and makes its optional Side Runner death target independent from the timer display. -->
 <!-- LukeAnimate GPT v247: links Old Timer directly to a chosen Side Runner Clip and installs its numeric Character_Die response in that runner's live loop. -->
 <!-- LukeAnimate GPT v246: adds native Old Timer countdown/countup behaviour, live Clip text display, completion controls and Character_Die output. -->
 <!-- LukeAnimate GPT v245: prevents Side Runner floor contact from being misread as a side collision that throws the character to a Solid edge. -->
@@ -66,7 +67,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v247</title>
+<title>Luke Animate v248</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4403,6 +4404,8 @@ ctx.fill();</textarea>
       endSeconds:Math.max(0,Number(source.endSeconds)||0),
       varName:String(source.varName||'LT_Time').trim()||'LT_Time',
       textObjectId:String(source.textObjectId||'').trim(),
+      textLayerId:String(source.textLayerId||'').trim(),
+      textName:String(source.textName||'').trim(),
       displayMode,
       fontFamily:String(source.fontFamily||'Poppins').trim()||'Poppins',
       loop:!!source.loop,
@@ -4888,7 +4891,7 @@ ctx.fill();</textarea>
       const tools=typeToolsForObject(owner,false);
       if(!tools||!tools.oldtimer)continue;
       const config=normaliseOldTimerTypeTool(tools.oldtimer);
-      if(!config.enabled||!config.textObjectId||String(obj.id||'')!==config.textObjectId)continue;
+      if(!config.enabled||!oldTimerTextTargetMatches(owner,config,obj))continue;
       const runtime=typeToolRuntimeForObject(owner,true);
       const state=runtime.oldTimer||{elapsed:0,value:config.startSeconds,done:false,loopPending:false,clipStopTime:null};
       if(!runtime.oldTimer)evaluateOldTimerOutput(owner,config,state,0,timeValue);
@@ -4899,6 +4902,45 @@ ctx.fill();</textarea>
       return next;
     }
     return effective;
+  }
+
+  function oldTimerTextTargetMatches(owner,config,obj){
+    if(!owner||!config||!obj||obj.type!=='text')return false;
+    if(config.textObjectId&&String(obj.id||'')===config.textObjectId)return true;
+    if(config.textLayerId&&String(obj.timelineLayerId||'')===config.textLayerId)return true;
+    const clip=clips[owner.clipId];
+    if(!clip)return false;
+    let selectedTarget=null;
+    const frameTextCounts=[];
+    const seen=new Set();
+    const visit=value=>{
+      if(!value||typeof value!=='object'||seen.has(value))return;
+      seen.add(value);
+      if(value.type==='text'&&config.textObjectId&&String(value.id||'')===config.textObjectId)selectedTarget=value;
+      if(Array.isArray(value.children))value.children.forEach(visit);
+    };
+    (clip.drawObjects||[]).forEach(visit);
+    (clip.sceneFrames||[]).forEach(frame=>{
+      let count=0;
+      const countText=value=>{
+        if(!value||typeof value!=='object')return;
+        if(value.type==='text')count++;
+        if(Array.isArray(value.children))value.children.forEach(countText);
+      };
+      (frame&&frame.objects||[]).forEach(value=>{visit(value);countText(value);});
+      frameTextCounts.push(count);
+    });
+    (clip.drawingLayers||[]).forEach(layer=>(layer&&layer.frames||[]).forEach(frame=>visit(frame&&frame.object)));
+    if(selectedTarget){
+      const layerId=String(selectedTarget.timelineLayerId||'');
+      if(layerId&&String(obj.timelineLayerId||'')===layerId)return true;
+      const name=String(selectedTarget.name||'').trim();
+      if(name&&String(obj.name||'').trim()===name)return true;
+    }
+    if(config.textName&&String(obj.name||'').trim()===config.textName)return true;
+    // A Clip with one text item per visible frame has one unambiguous timer
+    // display even when duplicated frame objects received new internal IDs.
+    return frameTextCounts.length>0&&frameTextCounts.every(count=>count<=1);
   }
 
   function currentSceneHasKeyboardTypeTool(){
@@ -12374,7 +12416,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=50';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=51';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -13594,7 +13636,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 156;
+    project.projectVersion = 157;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
