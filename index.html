@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v251: gives Node Coder nodes beginner-friendly visual controls while preserving an advanced editable-code view. -->
 <!-- LukeAnimate GPT v250: adds the native Node Coder runtime with persistent named code slots and managed slots for every Type Tool code update. -->
 <!-- LukeAnimate GPT v249: renders live evaluated text and font values so Old Timer and Life visibly update instead of redrawing the authored text every frame. -->
 <!-- LukeAnimate GPT v248: keeps Old Timer text live across Clip drawing frames and makes its optional Side Runner death target independent from the timer display. -->
@@ -69,7 +70,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v250</title>
+<title>Luke Animate v251</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4481,6 +4482,9 @@ ctx.fill();</textarea>
       code:String(source.code||''),
       source:source.source==='type-tool'?'type-tool':'custom',
       toolId:String(source.toolId||'').trim(),
+      ui:source.ui&&typeof source.ui==='object'&&!Array.isArray(source.ui)
+        ? JSON.parse(JSON.stringify(source.ui))
+        : null,
       x:Number.isFinite(Number(source.x))?Number(source.x):340+(index%2)*220,
       y:Number.isFinite(Number(source.y))?Number(source.y):70+Math.floor(index/2)*130
     };
@@ -12533,7 +12537,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=52';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=54';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -12941,7 +12945,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 125,
+    version: 126,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -13778,7 +13782,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 159;
+    project.projectVersion = 160;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
