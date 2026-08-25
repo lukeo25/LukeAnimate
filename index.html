@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v252: constrains rectangle and ellipse drags to uniform squares and circles while Shift is held, and snaps Shift-dragged lines to 45-degree angles. -->
 <!-- LukeAnimate GPT v251: gives Node Coder nodes beginner-friendly visual controls while preserving an advanced editable-code view. -->
 <!-- LukeAnimate GPT v250: adds the native Node Coder runtime with persistent named code slots and managed slots for every Type Tool code update. -->
 <!-- LukeAnimate GPT v249: renders live evaluated text and font values so Old Timer and Life visibly update instead of redrawing the authored text every frame. -->
@@ -70,7 +71,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v251</title>
+<title>Luke Animate v252</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -2426,15 +2427,15 @@
         <img class="draw-tool-icon" src="https://raw.githubusercontent.com/lukeo25/LukeAnimate/main/SVGs/Bucket.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
         <span class="draw-tool-fallback" aria-hidden="true">◆</span><span class="sr-only">Fill</span>
       </button>
-      <button class="draw-tool icon-only" id="tool-line" data-tool="line" title="Straight line" aria-label="Line">
+      <button class="draw-tool icon-only" id="tool-line" data-tool="line" title="Straight line (Shift: constrain angle)" aria-label="Line">
         <svg class="draw-tool-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19L19 5"></path></svg>
         <span class="sr-only">Line</span>
       </button>
-      <button class="draw-tool icon-only" id="tool-rect" data-tool="rect" title="Rectangle" aria-label="Rectangle">
+      <button class="draw-tool icon-only" id="tool-rect" data-tool="rect" title="Rectangle (Shift: square)" aria-label="Rectangle">
         <svg class="draw-tool-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="6" width="15" height="12" rx="1"></rect></svg>
         <span class="sr-only">Rectangle</span>
       </button>
-      <button class="draw-tool icon-only" id="tool-ellipse" data-tool="ellipse" title="Ellipse" aria-label="Ellipse">
+      <button class="draw-tool icon-only" id="tool-ellipse" data-tool="ellipse" title="Ellipse (Shift: circle)" aria-label="Ellipse">
         <img class="draw-tool-icon" src="https://lukeo25.github.io/LukeAnimate/SVGs/Circle.svg" alt="" onerror="this.parentElement.classList.add('icon-missing')">
         <span class="draw-tool-fallback" aria-hidden="true">◯</span><span class="sr-only">Ellipse</span>
       </button>
@@ -8886,6 +8887,28 @@ ctx.fill();</textarea>
     ]);
   });
 
+  function constrainedShapeDragEndpoint(tool,start,point,shiftHeld){
+    if(!shiftHeld || !start || !point) return point;
+    const dx=(Number(point.x)||0)-(Number(start.x)||0);
+    const dy=(Number(point.y)||0)-(Number(start.y)||0);
+    if(tool==='rect' || tool==='ellipse'){
+      const side=Math.max(Math.abs(dx),Math.abs(dy));
+      if(side<=0) return {x:start.x,y:start.y};
+      return {
+        x:start.x+(dx<0?-side:side),
+        y:start.y+(dy<0?-side:side)
+      };
+    }
+    if(tool==='line'){
+      const length=Math.hypot(dx,dy);
+      if(length<=0) return {x:start.x,y:start.y};
+      const angleStep=Math.PI/4;
+      const angle=Math.round(Math.atan2(dy,dx)/angleStep)*angleStep;
+      return {x:start.x+Math.cos(angle)*length,y:start.y+Math.sin(angle)*length};
+    }
+    return point;
+  }
+
   function handleDrawMouseDown(e){
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
     const rawPoint = canvasCoords(e.clientX, e.clientY);
@@ -8939,14 +8962,23 @@ ctx.fill();</textarea>
     }
     // line / rect / ellipse — drag from start to end
     const start = c;
-    pendingDraw = { type: stageTool, x1:start.x, y1:start.y, x2:start.x, y2:start.y, fillColor: style.fillColor, strokeColor: style.strokeColor, strokeWidth: style.strokeWidth, cornerRadius: stageTool === 'rect' ? style.cornerRadius : 0 };
+    const drawTool=stageTool;
+    pendingDraw = { type: drawTool, x1:start.x, y1:start.y, x2:start.x, y2:start.y, fillColor: style.fillColor, strokeColor: style.strokeColor, strokeWidth: style.strokeWidth, cornerRadius: drawTool === 'rect' ? style.cornerRadius : 0 };
     const onMove = (ev)=>{
-      const cc = snapScenePointToGuides(canvasCoords(ev.clientX, ev.clientY));
+      const snapped = snapScenePointToGuides(canvasCoords(ev.clientX, ev.clientY));
+      const cc = constrainedShapeDragEndpoint(drawTool,start,snapped,ev.shiftKey);
       pendingDraw.x2 = cc.x; pendingDraw.y2 = cc.y;
     };
     const onUp = (upEvent)=>{
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+
+      if(pendingDraw&&upEvent){
+        const snapped=snapScenePointToGuides(canvasCoords(upEvent.clientX,upEvent.clientY));
+        const endpoint=constrainedShapeDragEndpoint(drawTool,start,snapped,upEvent.shiftKey);
+        pendingDraw.x2=endpoint.x;
+        pendingDraw.y2=endpoint.y;
+      }
 
       const completedObject=pendingDraw;
 
@@ -13782,7 +13814,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 160;
+    project.projectVersion = 161;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
