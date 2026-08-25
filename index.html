@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v249: renders live evaluated text and font values so Old Timer and Life visibly update instead of redrawing the authored text every frame. -->
 <!-- LukeAnimate GPT v248: keeps Old Timer text live across Clip drawing frames and makes its optional Side Runner death target independent from the timer display. -->
 <!-- LukeAnimate GPT v247: links Old Timer directly to a chosen Side Runner Clip and installs its numeric Character_Die response in that runner's live loop. -->
 <!-- LukeAnimate GPT v246: adds native Old Timer countdown/countup behaviour, live Clip text display, completion controls and Character_Die output. -->
@@ -67,7 +68,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v248</title>
+<title>Luke Animate v249</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -7423,14 +7424,17 @@ ctx.fill();</textarea>
         }
       }
     } else if(obj.type === 'text'){
-      const weight = obj.bold ? '700' : '400';
-      const style = obj.italic ? 'italic ' : '';
-      const fontSize = Math.max(1, Number(obj.fontSize) || 32);
-      const lineHeight = Math.max(fontSize, Number(obj.lineHeight) || fontSize * 1.2);
-      const lines = String(obj.text || '').split(/\r?\n/);
-      ctx.font = `${style}${weight} ${fontSize}px "${obj.fontFamily}", sans-serif`;
+      const weight = (eff.bold !== undefined ? eff.bold : obj.bold) ? '700' : '400';
+      const style = (eff.italic !== undefined ? eff.italic : obj.italic) ? 'italic ' : '';
+      const fontSize = Math.max(1, Number(eff.fontSize !== undefined ? eff.fontSize : obj.fontSize) || 32);
+      const lineHeight = Math.max(fontSize, Number(eff.lineHeight !== undefined ? eff.lineHeight : obj.lineHeight) || fontSize * 1.2);
+      const textValue = eff.text !== undefined ? eff.text : obj.text;
+      const fontFamily = String(eff.fontFamily || obj.fontFamily || 'Roboto');
+      const textAlign = eff.textAlign || obj.textAlign;
+      const lines = String(textValue || '').split(/\r?\n/);
+      ctx.font = `${style}${weight} ${fontSize}px "${fontFamily}", sans-serif`;
       ctx.textBaseline = 'top';
-      ctx.textAlign = ['left','center','right'].includes(obj.textAlign) ? obj.textAlign : 'left';
+      ctx.textAlign = ['left','center','right'].includes(textAlign) ? textAlign : 'left';
       ctx.lineJoin = 'round';
       const fillEnabled = eff.fillEnabled !== undefined ? eff.fillEnabled : obj.fillEnabled !== false;
       const strokeEnabled = eff.strokeEnabled !== undefined ? eff.strokeEnabled : (obj.strokeEnabled !== undefined ? obj.strokeEnabled : Math.max(0, Number(obj.strokeWidth) || 0) > 0);
@@ -13636,7 +13640,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 157;
+    project.projectVersion = 158;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
