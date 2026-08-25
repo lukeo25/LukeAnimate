@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v246: adds native Old Timer countdown/countup behaviour, live Clip text display, completion controls and Character_Die output. -->
 <!-- LukeAnimate GPT v245: prevents Side Runner floor contact from being misread as a side collision that throws the character to a Solid edge. -->
 <!-- LukeAnimate GPT v244: adds native Side Runner physics and Solid Clip collision surfaces with editable settings and state-frame support. -->
 <!-- LukeAnimate GPT v243: lets Life attach directly to selected text, preserves that text's font, and still supports text inside Clips. -->
@@ -64,7 +65,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v245</title>
+<title>Luke Animate v246</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4347,6 +4348,13 @@ ctx.fill();</textarea>
       maxFall:Math.max(0,Math.min(100,Number(source.maxFall)===0?0:(Number(source.maxFall)||12))),
       enableLR:source.enableLR!==false,enableJump:source.enableJump!==false,enableGravity:source.enableGravity!==false,
       selectedFacing:source.selectedFacing==='left'?'left':'right',animateStates:source.animateStates!==false,
+      deathEnabled:!!source.deathEnabled,
+      deathVariable:String(source.deathVariable||'Character_Die').trim()||'Character_Die',
+      deathValue:Number.isFinite(Number(source.deathValue))?Number(source.deathValue):1,
+      deathAction:['goto_frame','destroy','reappear','reset_position'].includes(source.deathAction)?source.deathAction:'goto_frame',
+      deathFrame:Math.max(1,Math.round(Number(source.deathFrame)||1)),
+      reappearDelay:Math.max(0,Math.min(3600,Number(source.reappearDelay)||1)),
+      resetPositionOnReappear:source.resetPositionOnReappear!==false,
       code:String(source.code||'')
     };
   }
@@ -4381,10 +4389,36 @@ ctx.fill();</textarea>
     };
   }
 
+  function normaliseOldTimerTypeTool(settings){
+    const source=settings&&typeof settings==='object'?settings:{};
+    const mode=source.mode==='countup'?'countup':'countdown';
+    const displayMode=['seconds','tenths','hundredths'].includes(source.displayMode)?source.displayMode:'seconds';
+    const gotoRaw=source.gotoFrameOnComplete;
+    const gotoFrame=gotoRaw===null||gotoRaw===undefined||gotoRaw===''?null:Math.max(1,Math.round(Number(gotoRaw)||1));
+    return {
+      type:'oldtimer',version:1,enabled:source.enabled!==false,
+      mode,
+      startSeconds:Math.max(0,Number(source.startSeconds)===0?0:(Number(source.startSeconds)||30)),
+      endSeconds:Math.max(0,Number(source.endSeconds)||0),
+      varName:String(source.varName||'LT_Time').trim()||'LT_Time',
+      textObjectId:String(source.textObjectId||'').trim(),
+      displayMode,
+      fontFamily:String(source.fontFamily||'Poppins').trim()||'Poppins',
+      loop:!!source.loop,
+      stopOnComplete:source.stopOnComplete!==false,
+      gotoFrameOnComplete:gotoFrame,
+      showConsole:!!source.showConsole,
+      setCharacterDie:!!source.setCharacterDie,
+      characterDieValue:Number.isFinite(Number(source.characterDieValue))?Number(source.characterDieValue):1,
+      code:String(source.code||'')
+    };
+  }
+
   function normaliseTypeToolSettings(toolId,settings){
     const id=String(toolId||'').trim().toLowerCase();
     if(id==='directions')return normaliseDirectionsTypeTool(settings);
     if(id==='life')return normaliseLifeTypeTool(settings);
+    if(id==='oldtimer'||id==='old_timer'||id==='old timer')return normaliseOldTimerTypeTool(settings);
     if(id==='siderunner'||id==='side_runner'||id==='side runner')return normaliseSideRunnerTypeTool(settings);
     if(id==='solid')return normaliseSolidTypeTool(settings);
     const clone=JSON.parse(JSON.stringify(settings&&typeof settings==='object'?settings:{}));
@@ -4480,7 +4514,9 @@ ctx.fill();</textarea>
   function resetTypeToolRuntime(){
     visitAllTypeToolObjects(object=>{
       const runtime=typeToolRuntimeForObject(object,false);
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;}
+      const tools=typeToolsForObject(object,false);
+      if(tools&&tools.oldtimer&&normaliseOldTimerTypeTool(tools.oldtimer).setCharacterDie)typeToolWriteValue(object,'Character_Die',0);
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;}
     });
     typeToolPressedKeys.clear();
   }
@@ -4585,10 +4621,46 @@ ctx.fill();</textarea>
     }
   }
 
+  function tickSideRunnerDeath(object,config,state,step){
+    if(!config.deathEnabled)return false;
+    const current=typeToolReadValue(object,config.deathVariable,0);
+    const matches=Number(current)===Number(config.deathValue);
+    if(!matches){
+      state.deathLatched=false;
+      if(config.deathAction==='goto_frame')state.deathClipStopTime=null;
+    }else if(!state.deathLatched){
+      state.deathLatched=true;
+      if(config.deathAction==='goto_frame'){
+        state.deathClipStopTime=(config.deathFrame-1)/Math.max(1,getTimelineFPS());
+      }else if(config.deathAction==='destroy'){
+        state.dead=true;state.reappearRemaining=null;
+      }else if(config.deathAction==='reappear'){
+        state.dead=true;state.reappearRemaining=config.reappearDelay;
+      }else if(config.deathAction==='reset_position'){
+        const runtime=typeToolRuntimeForObject(object,true);runtime.offsetX=0;runtime.offsetY=0;
+        state.vx=0;state.vy=0;
+      }
+    }
+    if(state.dead&&config.deathAction==='reappear'&&Number.isFinite(Number(state.reappearRemaining))){
+      state.reappearRemaining=Math.max(0,Number(state.reappearRemaining)-step);
+      if(state.reappearRemaining<=0){
+        state.dead=false;state.reappearRemaining=null;
+        if(config.resetPositionOnReappear){
+          const runtime=typeToolRuntimeForObject(object,true);runtime.offsetX=0;runtime.offsetY=0;
+        }
+        state.vx=0;state.vy=0;
+      }
+    }
+    return !!state.dead;
+  }
+
   function tickSideRunner(object,config,step){
     const runtime=typeToolRuntimeForObject(object,true),input=sideRunnerInput(),frameScale=step*60;
     if(!runtime.sideRunner)runtime.sideRunner={vx:0,vy:0,grounded:false,jumpHeld:false,facing:config.selectedFacing==='left'?-1:1,moving:false};
     const state=runtime.sideRunner;state.runtime=runtime;
+    if(tickSideRunnerDeath(object,config,state,step)){
+      state.vx=0;state.vy=0;state.moving=false;delete state.runtime;return;
+    }
     const axis=(input.left&&!input.right)?-1:((input.right&&!input.left)?1:0);
     if(axis)state.facing=axis;
     if(config.enableLR){
@@ -4618,6 +4690,79 @@ ctx.fill();</textarea>
     delete state.runtime;
   }
 
+  function formatOldTimerValue(value,displayMode){
+    let next=Math.max(0,Number(value)||0);
+    const precision=displayMode==='hundredths'?2:(displayMode==='tenths'?1:0);
+    const factor=Math.pow(10,precision);
+    next=precision?Math.round(next*factor)/factor:Math.floor(next);
+    let minutes=Math.floor(next/60),seconds=Math.floor(next-minutes*60);
+    let fraction=Math.round((next-Math.floor(next))*factor);
+    if(precision&&fraction>=factor){fraction=0;seconds+=1;}
+    if(seconds>=60){seconds=0;minutes+=1;}
+    const base=String(minutes).padStart(2,'0')+':'+String(seconds).padStart(2,'0');
+    return precision?base+'.'+String(fraction).padStart(precision,'0'):base;
+  }
+
+  function evaluateOldTimerOutput(object,config,state,deltaSeconds,timeValue){
+    const runtime=typeToolRuntimeForObject(object,true);
+    let result={
+      value:state.value,
+      text:formatOldTimerValue(state.value,config.displayMode),
+      fontFamily:config.fontFamily,
+      done:!!state.done,
+      characterDie:config.setCharacterDie&&state.done?config.characterDieValue:0
+    };
+    if(config.code.trim()){
+      const custom=runTypeToolCode(object,'oldtimer',config.code,{
+        object,config,runtime,state,value:state.value,done:!!state.done,delta:deltaSeconds,time:timeValue,
+        api:LukeAnimatePluginAPI,format:value=>formatOldTimerValue(value,config.displayMode),
+        readValue:(name,fallback)=>typeToolReadValue(object,name,fallback),
+        writeValue:(name,value)=>typeToolWriteValue(object,name,value)
+      });
+      if(custom&&typeof custom==='object')result=Object.assign(result,custom);
+    }
+    if(Number.isFinite(Number(result.value)))state.value=Math.max(0,Number(result.value));
+    state.displayText=result.text===undefined?formatOldTimerValue(state.value,config.displayMode):String(result.text);
+    state.fontFamily=String(result.fontFamily||config.fontFamily);
+    typeToolWriteValue(object,config.varName,state.value);
+    if(config.setCharacterDie)typeToolWriteValue(object,'Character_Die',result.characterDie===undefined?(state.done?config.characterDieValue:0):result.characterDie);
+    return result;
+  }
+
+  function tickOldTimer(object,config,step){
+    const runtime=typeToolRuntimeForObject(object,true);
+    if(!runtime.oldTimer){
+      runtime.oldTimer={elapsed:0,value:config.startSeconds,done:false,loopPending:false,clipStopTime:null,lastLogText:''};
+      if(config.setCharacterDie)typeToolWriteValue(object,'Character_Die',0);
+    }
+    const state=runtime.oldTimer;
+    if(state.loopPending){
+      state.elapsed=0;state.value=config.startSeconds;state.done=false;state.loopPending=false;state.clipStopTime=null;
+      if(config.setCharacterDie)typeToolWriteValue(object,'Character_Die',0);
+    }
+    if(!state.done){
+      state.elapsed+=step;
+      if(config.mode==='countup'){
+        state.value=config.startSeconds+state.elapsed;
+        if(config.endSeconds>config.startSeconds&&state.value>=config.endSeconds){state.value=config.endSeconds;state.done=true;}
+      }else{
+        state.value=config.startSeconds-state.elapsed;
+        if(state.value<=config.endSeconds){state.value=config.endSeconds;state.done=true;}
+      }
+      if(state.done){
+        if(config.loop)state.loopPending=true;
+        else if(config.gotoFrameOnComplete!==null||config.stopOnComplete){
+          if(config.gotoFrameOnComplete!==null)state.clipStopTime=(config.gotoFrameOnComplete-1)/Math.max(1,getTimelineFPS());
+          else state.clipStopTime=clipInstanceLocalTime(object,getEffectiveObj(object,t),t);
+        }
+      }
+    }
+    evaluateOldTimerOutput(object,config,state,step,t);
+    if(config.showConsole&&state.lastLogText!==state.displayText){
+      state.lastLogText=state.displayText;console.log('Old Timer:',config.varName+':',state.value,'Text:',state.displayText);
+    }
+  }
+
   function tickTypeToolRuntime(deltaSeconds){
     if(!playing||exportPlayback.active)return;
     // Avoid a large jump after a suspended/background browser tab resumes.
@@ -4626,6 +4771,10 @@ ctx.fill();</textarea>
     activeTypeToolObjectsAtTime().forEach(object=>{
       const tools=typeToolsForObject(object,false);
       if(!tools)return;
+      if(tools.oldtimer){
+        const timerConfig=normaliseOldTimerTypeTool(tools.oldtimer);
+        if(timerConfig.enabled)tickOldTimer(object,timerConfig,step);
+      }
       if(tools.siderunner){
         const sideConfig=normaliseSideRunnerTypeTool(tools.siderunner);
         if(sideConfig.enabled){tickSideRunner(object,sideConfig,step);return;}
@@ -4702,6 +4851,30 @@ ctx.fill();</textarea>
         runtime.lastLifeText=next.text;
         console.log('Life:',config.varName+':',value,'Text:',next.text);
       }
+      return next;
+    }
+    return effective;
+  }
+
+  function oldTimerTypeToolTextOverride(obj,effective,timeValue){
+    if(!obj||obj.type!=='text')return effective;
+    const owners=[];
+    for(let index=typeToolRenderStack.length-1;index>=0;index--){
+      const owner=typeToolRenderStack[index].object;
+      if(owner&&!owners.includes(owner))owners.push(owner);
+    }
+    for(const owner of owners){
+      const tools=typeToolsForObject(owner,false);
+      if(!tools||!tools.oldtimer)continue;
+      const config=normaliseOldTimerTypeTool(tools.oldtimer);
+      if(!config.enabled||!config.textObjectId||String(obj.id||'')!==config.textObjectId)continue;
+      const runtime=typeToolRuntimeForObject(owner,true);
+      const state=runtime.oldTimer||{elapsed:0,value:config.startSeconds,done:false,loopPending:false,clipStopTime:null};
+      if(!runtime.oldTimer)evaluateOldTimerOutput(owner,config,state,0,timeValue);
+      const next=effective===obj?Object.assign({},obj):Object.assign({},effective);
+      next.text=String(state.displayText===undefined?formatOldTimerValue(state.value,config.displayMode):state.displayText);
+      next.fontFamily=String(state.fontFamily||config.fontFamily);
+      ensureGoogleFont(next.fontFamily);
       return next;
     }
     return effective;
@@ -12180,7 +12353,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=48';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=49';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -12588,7 +12761,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 122,
+    version: 123,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -12732,7 +12905,8 @@ ctx.fill();</textarea>
       const tools=typeToolsForObject(object,true);
       tools[id]=normaliseTypeToolSettings(id,settings);
       const runtime=typeToolRuntimeForObject(object,false);
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;}
+      if(id==='oldtimer'&&tools[id].setCharacterDie)typeToolWriteValue(object,'Character_Die',0);
       this.refreshUI();
       return JSON.parse(JSON.stringify(tools[id]));
     },
@@ -12741,9 +12915,10 @@ ctx.fill();</textarea>
       const id=String(toolId||'').trim().toLowerCase();
       if(!tools||!Object.prototype.hasOwnProperty.call(tools,id))return false;
       pushUndo();
+      if(id==='oldtimer'&&normaliseOldTimerTypeTool(tools[id]).setCharacterDie)typeToolWriteValue(object,'Character_Die',0);
       delete tools[id];
       const runtime=typeToolRuntimeForObject(object,false);
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;}
       this.refreshUI();
       return true;
     },
@@ -13351,7 +13526,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 154;
+    project.projectVersion = 155;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -17954,9 +18129,17 @@ ctx.fill();</textarea>
         effective.x=(Number(effective.x)||0)+(Number(runtime.offsetX)||0);
         effective.y=(Number(effective.y)||0)+(Number(runtime.offsetY)||0);
       }
+      if(runtime&&runtime.oldTimer&&runtime.oldTimer.clipStopTime!==null&&runtime.oldTimer.clipStopTime!==undefined&&Number.isFinite(Number(runtime.oldTimer.clipStopTime))){
+        if(effective===obj)effective=Object.assign({},obj);
+        effective.clipStopTime=Math.max(0,Number(runtime.oldTimer.clipStopTime));
+      }
       if(runtime&&runtime.sideRunner){
         const tools=typeToolsForObject(obj,false),config=tools&&tools.siderunner?normaliseSideRunnerTypeTool(tools.siderunner):null;
         if(config&&config.enabled){
+          if(runtime.sideRunner.dead){
+            if(effective===obj)effective=Object.assign({},obj);
+            effective.opacity=0;
+          }
           const stateFrame=config.animateStates?sideRunnerStateFrame(obj,runtime.sideRunner):null;
           if(stateFrame){
             if(effective===obj)effective=Object.assign({},obj);
@@ -17968,11 +18151,18 @@ ctx.fill();</textarea>
             const selectedSign=config.selectedFacing==='left'?-1:1;
             effective.scaleX=Math.abs(authoredScaleX)*selectedSign*(runtime.sideRunner.facing<0?-1:1);
           }
+          if(runtime.sideRunner.deathClipStopTime!==null&&runtime.sideRunner.deathClipStopTime!==undefined&&Number.isFinite(Number(runtime.sideRunner.deathClipStopTime))){
+            if(effective===obj)effective=Object.assign({},obj);
+            effective.clipStopTime=Math.max(0,Number(runtime.sideRunner.deathClipStopTime));
+          }
         }
       }
     }
 
-    if(obj&&obj.type==='text')effective=lifeTypeToolTextOverride(obj,effective,keyframeTime);
+    if(obj&&obj.type==='text'){
+      effective=lifeTypeToolTextOverride(obj,effective,keyframeTime);
+      effective=oldTimerTypeToolTextOverride(obj,effective,keyframeTime);
+    }
 
     /*
       v172 layer exposure fades:
