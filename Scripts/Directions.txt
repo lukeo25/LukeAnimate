@@ -1,5 +1,5 @@
 /*
-  Luke Animate Directions Type Tool v1.2
+  Luke Animate Directions Type Tool v1.3
   Native, opt-in eight-direction movement for selected Clip instances.
 */
 (function(){
@@ -98,7 +98,7 @@ runtime.offsetY += vector.y * distance;`;
           <label class="dt-check"><input data-dt-arrows type="checkbox" checked> Arrow keys</label>
           <label class="dt-check"><input data-dt-diagonal type="checkbox" checked> Allow diagonal movement</label>
           <label class="dt-check"><input data-dt-normalize type="checkbox" checked> Keep diagonal speed even</label>
-          <label class="dt-check dt-muted" title="This option becomes active when the Solid Type Tool is added"><input data-dt-solid type="checkbox" disabled> Collide with Solids (coming with Solid)</label>
+          <label class="dt-check"><input data-dt-solid type="checkbox"> Collide with Solid Clips</label>
         </div>
       </div>
       <details>

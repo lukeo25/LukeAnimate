@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 46,
+  "version": 47,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -94,7 +94,7 @@
           "id": "Side_Runner",
           "label": "Side Runner",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/GameCharacter.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/SideRunner.txt",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/SideRunner.txt?v=1.0",
           "action": "script",
           "F_Screen": 0
         },
@@ -126,7 +126,7 @@
           "id": "Directions",
           "label": "Directions",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Directions.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Directions.txt?v=1.2",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Directions.txt?v=1.3",
           "action": "script",
           "F_Screen": 0
         },
@@ -150,7 +150,7 @@
           "id": "Solid",
           "label": "Solid",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Solid.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Solid.txt",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Solid.txt?v=1.0",
           "action": "script",
           "F_Screen": 0
         },

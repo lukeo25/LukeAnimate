@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v244: adds native Side Runner physics and Solid Clip collision surfaces with editable settings and state-frame support. -->
 <!-- LukeAnimate GPT v243: lets Life attach directly to selected text, preserves that text's font, and still supports text inside Clips. -->
 <!-- LukeAnimate GPT v242: gives Directions the draggable Dem Bones panel style used by Luke Animate floating tools. -->
 <!-- LukeAnimate GPT v241: lets Life target an actual text object inside a Clip without requiring Wick-style object names. -->
@@ -62,7 +63,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v243</title>
+<title>Luke Animate v244</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4330,6 +4331,30 @@ ctx.fill();</textarea>
     };
   }
 
+  function normaliseSideRunnerTypeTool(settings){
+    const source=settings&&typeof settings==='object'?settings:{};
+    return {
+      type:'siderunner',version:1,enabled:source.enabled!==false,
+      speed:Math.max(0,Math.min(100,Number(source.speed)===0?0:(Number(source.speed)||3))),
+      acceleration:Math.max(.05,Math.min(10,Number(source.acceleration)||.35)),
+      friction:Math.max(.01,Math.min(2,Number(source.friction)||.12)),
+      airControl:Math.max(0,Math.min(1,Number(source.airControl)===0?0:(Number(source.airControl)||.35))),
+      jumpStrength:Math.max(0,Math.min(100,Number(source.jumpStrength)===0?0:(Number(source.jumpStrength)||9))),
+      gravity:Math.max(0,Math.min(100,Number(source.gravity)===0?0:(Number(source.gravity)||.6))),
+      riseGravity:Math.max(.05,Math.min(5,Number(source.riseGravity)||.65)),
+      fallGravity:Math.max(.05,Math.min(5,Number(source.fallGravity)||1.35)),
+      maxFall:Math.max(0,Math.min(100,Number(source.maxFall)===0?0:(Number(source.maxFall)||12))),
+      enableLR:source.enableLR!==false,enableJump:source.enableJump!==false,enableGravity:source.enableGravity!==false,
+      selectedFacing:source.selectedFacing==='left'?'left':'right',animateStates:source.animateStates!==false,
+      code:String(source.code||'')
+    };
+  }
+
+  function normaliseSolidTypeTool(settings){
+    const source=settings&&typeof settings==='object'?settings:{};
+    return {type:'solid',version:1,enabled:source.enabled!==false,oneWay:!!source.oneWay};
+  }
+
   function normaliseLifeTypeTool(settings){
     const source=settings&&typeof settings==='object'?settings:{};
     const legacyDefaultCode='const value = context.readValue(config.varName, config.defaultValue);\nreturn {\n  value,\n  text: config.prefix + String(value) + config.suffix,\n  fontFamily: config.fontFamily\n};';
@@ -4359,6 +4384,8 @@ ctx.fill();</textarea>
     const id=String(toolId||'').trim().toLowerCase();
     if(id==='directions')return normaliseDirectionsTypeTool(settings);
     if(id==='life')return normaliseLifeTypeTool(settings);
+    if(id==='siderunner'||id==='side_runner'||id==='side runner')return normaliseSideRunnerTypeTool(settings);
+    if(id==='solid')return normaliseSolidTypeTool(settings);
     const clone=JSON.parse(JSON.stringify(settings&&typeof settings==='object'?settings:{}));
     clone.type=id;
     if(clone.enabled===undefined)clone.enabled=true;
@@ -4452,7 +4479,7 @@ ctx.fill();</textarea>
   function resetTypeToolRuntime(){
     visitAllTypeToolObjects(object=>{
       const runtime=typeToolRuntimeForObject(object,false);
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;}
     });
     typeToolPressedKeys.clear();
   }
@@ -4501,6 +4528,88 @@ ctx.fill();</textarea>
     return {x:dx,y:dy};
   }
 
+  function sideRunnerInput(){
+    const down=key=>typeToolPressedKeys.has(key);
+    return {
+      left:down('arrowleft')||down('a'),right:down('arrowright')||down('d'),
+      jump:down(' ')||down('space')||down('spacebar')||down('arrowup')||down('w')
+    };
+  }
+
+  function sideRunnerSolidObjects(object){
+    return (drawObjects||[]).filter(candidate=>{
+      if(!candidate||candidate===object||candidate.enabled===false||candidate.type!=='clipinstance')return false;
+      const tools=typeToolsForObject(candidate,false);
+      return !!(tools&&tools.solid&&normaliseSolidTypeTool(tools.solid).enabled);
+    });
+  }
+
+  function boundsOverlap(a,b){return !!(a&&b&&a.x2>b.x1&&a.x1<b.x2&&a.y2>b.y1&&a.y1<b.y2);}
+
+  function moveSideRunnerWithSolids(object,state,dx,dy){
+    const solids=sideRunnerSolidObjects(object);
+    if(dx){
+      state.runtime.offsetX+=dx;
+      let bounds=getStandaloneEffectiveBounds(object,t);
+      solids.forEach(solid=>{
+        const config=normaliseSolidTypeTool(typeToolsForObject(solid,false).solid);
+        if(config.oneWay)return;
+        const solidBounds=getStandaloneEffectiveBounds(solid,t);
+        if(!boundsOverlap(bounds,solidBounds))return;
+        state.runtime.offsetX+=dx>0?solidBounds.x1-bounds.x2:solidBounds.x2-bounds.x1;
+        state.vx=0;bounds=getStandaloneEffectiveBounds(object,t);
+      });
+    }
+    state.grounded=false;
+    if(dy){
+      const before=getStandaloneEffectiveBounds(object,t);
+      state.runtime.offsetY+=dy;
+      let bounds=getStandaloneEffectiveBounds(object,t);
+      solids.forEach(solid=>{
+        const config=normaliseSolidTypeTool(typeToolsForObject(solid,false).solid);
+        const solidBounds=getStandaloneEffectiveBounds(solid,t);
+        if(config.oneWay&&(dy<=0||before.y2>solidBounds.y1+Math.max(2,Math.abs(dy)+1)))return;
+        if(!boundsOverlap(bounds,solidBounds))return;
+        if(dy>0){state.runtime.offsetY+=solidBounds.y1-bounds.y2;state.grounded=true;}
+        else if(!config.oneWay)state.runtime.offsetY+=solidBounds.y2-bounds.y1;
+        state.vy=0;bounds=getStandaloneEffectiveBounds(object,t);
+      });
+    }
+  }
+
+  function tickSideRunner(object,config,step){
+    const runtime=typeToolRuntimeForObject(object,true),input=sideRunnerInput(),frameScale=step*60;
+    if(!runtime.sideRunner)runtime.sideRunner={vx:0,vy:0,grounded:false,jumpHeld:false,facing:config.selectedFacing==='left'?-1:1,moving:false};
+    const state=runtime.sideRunner;state.runtime=runtime;
+    const axis=(input.left&&!input.right)?-1:((input.right&&!input.left)?1:0);
+    if(axis)state.facing=axis;
+    if(config.enableLR){
+      const target=axis*config.speed,accel=config.acceleration*(state.grounded?1:config.airControl)*frameScale;
+      if(axis){state.vx=target>state.vx?Math.min(target,state.vx+accel):Math.max(target,state.vx-accel);}
+      else if(state.grounded){const drag=config.friction*frameScale;state.vx=state.vx>0?Math.max(0,state.vx-drag):Math.min(0,state.vx+drag);}
+    }else state.vx=0;
+    const pressed=input.jump&&!state.jumpHeld;state.jumpHeld=input.jump;
+    if(config.enableJump&&pressed&&state.grounded){state.vy=-config.jumpStrength;state.grounded=false;}
+    if(config.enableGravity){
+      const gravityScale=state.vy<0?config.riseGravity:config.fallGravity;
+      state.vy=Math.min(config.maxFall,state.vy+config.gravity*gravityScale*frameScale);
+    }else state.vy=0;
+    if(config.code.trim()){
+      const custom=runTypeToolCode(object,'siderunner',config.code,{
+        object,config,runtime,state,input,delta:step,frameScale,time:t,api:LukeAnimatePluginAPI,
+        velocity:{x:state.vx,y:state.vy},readValue:(name,fallback)=>typeToolReadValue(object,name,fallback),
+        writeValue:(name,value)=>typeToolWriteValue(object,name,value)
+      });
+      if(custom&&typeof custom==='object'){
+        if(Number.isFinite(Number(custom.vx)))state.vx=Number(custom.vx);
+        if(Number.isFinite(Number(custom.vy)))state.vy=Number(custom.vy);
+      }
+    }
+    moveSideRunnerWithSolids(object,state,state.vx*frameScale,state.vy*frameScale);
+    state.moving=Math.abs(state.vx)>.05;
+    delete state.runtime;
+  }
+
   function tickTypeToolRuntime(deltaSeconds){
     if(!playing||exportPlayback.active)return;
     // Avoid a large jump after a suspended/background browser tab resumes.
@@ -4508,11 +4617,17 @@ ctx.fill();</textarea>
     if(!step)return;
     activeTypeToolObjectsAtTime().forEach(object=>{
       const tools=typeToolsForObject(object,false);
-      if(!tools||!tools.directions)return;
+      if(!tools)return;
+      if(tools.siderunner){
+        const sideConfig=normaliseSideRunnerTypeTool(tools.siderunner);
+        if(sideConfig.enabled){tickSideRunner(object,sideConfig,step);return;}
+      }
+      if(!tools.directions)return;
       const config=normaliseDirectionsTypeTool(tools.directions);
       if(!config.enabled)return;
       const vector=directionInputVector(config);
       const runtime=typeToolRuntimeForObject(object,true);
+      const startOffsetX=Number(runtime.offsetX)||0,startOffsetY=Number(runtime.offsetY)||0;
       // Wick's original speed is pixels per update at roughly 60 updates/s.
       if(config.code.trim()){
         runTypeToolCode(object,'directions',config.code,{
@@ -4527,6 +4642,11 @@ ctx.fill();</textarea>
         const distance=config.speed*60*step;
         runtime.offsetX+=vector.x*distance;
         runtime.offsetY+=vector.y*distance;
+      }
+      if(config.solidCollision){
+        const dx=(Number(runtime.offsetX)||0)-startOffsetX,dy=(Number(runtime.offsetY)||0)-startOffsetY;
+        runtime.offsetX=startOffsetX;runtime.offsetY=startOffsetY;
+        moveSideRunnerWithSolids(object,{runtime,vx:dx,vy:dy,grounded:false},dx,dy);
       }
     });
   }
@@ -4579,10 +4699,10 @@ ctx.fill();</textarea>
     return effective;
   }
 
-  function currentSceneHasDirectionsTypeTool(){
+  function currentSceneHasKeyboardTypeTool(){
     return activeTypeToolObjectsAtTime().some(object=>{
       const tools=typeToolsForObject(object,false);
-      return !!(tools&&tools.directions&&normaliseDirectionsTypeTool(tools.directions).enabled);
+      return !!(tools&&((tools.directions&&normaliseDirectionsTypeTool(tools.directions).enabled)||(tools.siderunner&&normaliseSideRunnerTypeTool(tools.siderunner).enabled)));
     });
   }
 
@@ -4593,8 +4713,8 @@ ctx.fill();</textarea>
   window.addEventListener('keydown',event=>{
     if(typeToolKeyboardTargetIsTyping(event.target))return;
     const key=String(event.key||'').toLowerCase();
-    if(!['arrowleft','arrowright','arrowup','arrowdown','w','a','s','d'].includes(key))return;
-    if(!playing||!currentSceneHasDirectionsTypeTool())return;
+    if(!['arrowleft','arrowright','arrowup','arrowdown','w','a','s','d',' ','space','spacebar'].includes(key))return;
+    if(!playing||!currentSceneHasKeyboardTypeTool())return;
     typeToolPressedKeys.add(key);
     event.preventDefault();
   });
@@ -12052,7 +12172,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=46';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=47';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -12460,7 +12580,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 121,
+    version: 122,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -12604,7 +12724,7 @@ ctx.fill();</textarea>
       const tools=typeToolsForObject(object,true);
       tools[id]=normaliseTypeToolSettings(id,settings);
       const runtime=typeToolRuntimeForObject(object,false);
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;}
       this.refreshUI();
       return JSON.parse(JSON.stringify(tools[id]));
     },
@@ -12615,7 +12735,7 @@ ctx.fill();</textarea>
       pushUndo();
       delete tools[id];
       const runtime=typeToolRuntimeForObject(object,false);
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;}
       this.refreshUI();
       return true;
     },
@@ -13223,7 +13343,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 152;
+    project.projectVersion = 153;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -17763,6 +17883,23 @@ ctx.fill();</textarea>
   // Returns obj with any keyframed fields overridden by their interpolated
   // value at `time`; returns obj itself (no keyframes = static, edit the base
   // fields directly) when there's nothing to animate.
+  function sideRunnerStateFrame(object,state){
+    const clip=object&&clips[object.clipId];
+    if(!clip||!state)return null;
+    const facing=state.facing<0?'Left':'Right';
+    const action=!state.grounded?'Jump':(state.moving?'Run':'Idle');
+    const candidates=[facing+'_'+action,facing+' '+action,action+'_'+facing,action+' '+facing];
+    if(action==='Idle')candidates.push(facing);
+    candidates.push(action);
+    const labels=Array.isArray(clip.frameLabels)?clip.frameLabels:[];
+    for(const candidate of candidates){
+      const compact=String(candidate).toLowerCase().replace(/[^a-z0-9]/g,'');
+      const label=labels.find(entry=>String(entry&&entry.name||'').toLowerCase().replace(/[^a-z0-9]/g,'')===compact);
+      if(label)return {time:Math.max(0,Number(label.time)||0),directional:/left|right/i.test(String(label.name||''))};
+    }
+    return null;
+  }
+
   function getEffectiveObj(obj, time){
     let effective = obj;
 
@@ -17808,6 +17945,22 @@ ctx.fill();</textarea>
         if(effective===obj)effective=Object.assign({},obj);
         effective.x=(Number(effective.x)||0)+(Number(runtime.offsetX)||0);
         effective.y=(Number(effective.y)||0)+(Number(runtime.offsetY)||0);
+      }
+      if(runtime&&runtime.sideRunner){
+        const tools=typeToolsForObject(obj,false),config=tools&&tools.siderunner?normaliseSideRunnerTypeTool(tools.siderunner):null;
+        if(config&&config.enabled){
+          const stateFrame=config.animateStates?sideRunnerStateFrame(obj,runtime.sideRunner):null;
+          if(stateFrame){
+            if(effective===obj)effective=Object.assign({},obj);
+            effective.clipStopTime=stateFrame.time;
+          }
+          if(!stateFrame||!stateFrame.directional){
+            if(effective===obj)effective=Object.assign({},obj);
+            const authoredScaleX=Number(effective.scaleX!==undefined?effective.scaleX:obj.scaleX)||1;
+            const selectedSign=config.selectedFacing==='left'?-1:1;
+            effective.scaleX=Math.abs(authoredScaleX)*selectedSign*(runtime.sideRunner.facing<0?-1:1);
+          }
+        }
       }
     }
 
