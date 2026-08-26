@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v254: adds Drag & Drop as a standard Clip Behaviour with correct/wrong targets, effects, scoring and frame actions. -->
 <!-- LukeAnimate GPT v253: adds live pointer input to Node Coder and a visual Drag & Drop node for playable Clip interaction. -->
 <!-- LukeAnimate GPT v252: constrains rectangle and ellipse drags to uniform squares and circles while Shift is held, and snaps Shift-dragged lines to 45-degree angles. -->
 <!-- LukeAnimate GPT v251: gives Node Coder nodes beginner-friendly visual controls while preserving an advanced editable-code view. -->
@@ -72,7 +73,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v253</title>
+<title>Luke Animate v254</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4323,6 +4324,7 @@ ctx.fill();</textarea>
   const typeToolPressedKeys = new Set();
   const typeToolRenderStack = [];
   const nodeCodeActiveObjects = new Set();
+  let activeDragDropObject = null;
   // Node Coder input is kept separate from authored stage transforms. Visual
   // interaction nodes can read this snapshot during playback without turning
   // a game interaction into an editor move or a saved keyframe.
@@ -4359,10 +4361,12 @@ ctx.fill();</textarea>
     for(let index=active.length-1;index>=0;index--){
       const object=active[index];
       const documentData=nodeCodeDocumentForObject(object,false);
-      const hasDrag=documentData&&documentData.slots.some(slot=>
+      const tools=typeToolsForObject(object,false);
+      const hasNativeDrag=!!(tools&&tools.dragdrop&&normaliseDragDropTypeTool(tools.dragdrop).enabled);
+      const hasDrag=hasNativeDrag||(documentData&&documentData.slots.some(slot=>
         slot&&slot.enabled!==false&&slot.source!=='type-tool'&&slot.event==='update'&&
         slot.ui&&slot.ui.kind==='drag'
-      );
+      ));
       if(hasDrag&&pointInBounds(point.x,point.y,getEffectiveBounds(object),0))return object;
     }
     return null;
@@ -4415,6 +4419,42 @@ ctx.fill();</textarea>
   function normaliseSolidTypeTool(settings){
     const source=settings&&typeof settings==='object'?settings:{};
     return {type:'solid',version:1,enabled:source.enabled!==false,oneWay:!!source.oneWay};
+  }
+
+  function normaliseDragDropEffects(value,fallback){
+    const allowed=new Set(['fade','shrink','shake','return','disappear']);
+    const source=Array.isArray(value)?value:fallback;
+    return source.slice(0,8).map(entry=>({
+      effect:allowed.has(String(entry&&entry.effect||''))?String(entry.effect):'fade',
+      duration:Math.max(.05,Math.min(10,Number(entry&&entry.duration)||.5))
+    }));
+  }
+
+  function normaliseDragDropGoto(value){
+    const source=value&&typeof value==='object'?value:{};
+    return {
+      target:['self','drop'].includes(source.target)?source.target:'self',
+      frame:String(source.frame===undefined?'':source.frame).trim()
+    };
+  }
+
+  function normaliseDragDropTypeTool(settings){
+    const source=settings&&typeof settings==='object'?settings:{};
+    return {
+      type:'dragdrop',version:1,enabled:source.enabled!==false,
+      targetId:String(source.targetId||'').trim(),
+      targetName:String(source.targetName||'').trim(),
+      keepGrabOffset:source.keepGrabOffset!==false,
+      scoreVar:String(source.scoreVar||'LT_score').trim()||'LT_score',
+      correctScore:Number.isFinite(Number(source.correctScore))?Number(source.correctScore):10,
+      wrongScoreVar:String(source.wrongScoreVar||source.scoreVar||'LT_score').trim()||'LT_score',
+      wrongScore:Number.isFinite(Number(source.wrongScore))?Math.abs(Number(source.wrongScore)):5,
+      correctEffects:normaliseDragDropEffects(source.correctEffects,[{effect:'shrink',duration:.5},{effect:'fade',duration:.5}]),
+      wrongEffects:normaliseDragDropEffects(source.wrongEffects,[{effect:'shake',duration:.5},{effect:'return',duration:.5}]),
+      correctGoto:normaliseDragDropGoto(source.correctGoto),
+      wrongGoto:normaliseDragDropGoto(source.wrongGoto),
+      code:String(source.code||'')
+    };
   }
 
   function normaliseLifeTypeTool(settings){
@@ -4481,6 +4521,7 @@ ctx.fill();</textarea>
     if(id==='oldtimer'||id==='old_timer'||id==='old timer')return normaliseOldTimerTypeTool(settings);
     if(id==='siderunner'||id==='side_runner'||id==='side runner')return normaliseSideRunnerTypeTool(settings);
     if(id==='solid')return normaliseSolidTypeTool(settings);
+    if(id==='dragdrop'||id==='drag_drop'||id==='drag drop')return normaliseDragDropTypeTool(settings);
     const clone=JSON.parse(JSON.stringify(settings&&typeof settings==='object'?settings:{}));
     clone.type=id;
     if(clone.enabled===undefined)clone.enabled=true;
@@ -4557,7 +4598,7 @@ ctx.fill();</textarea>
       const settings=normaliseTypeToolSettings(toolId,tools[toolId]);
       const slotId='type-tool-'+toolId;
       const existing=documentData.slots.find(slot=>slot.id===slotId);
-      const displayName=toolId.replace(/[_-]+/g,' ').replace(/\b\w/g,letter=>letter.toUpperCase());
+      const displayName=toolId==='dragdrop'?'Drag & Drop':toolId.replace(/[_-]+/g,' ').replace(/\b\w/g,letter=>letter.toUpperCase());
       const code=String(settings&&settings.code||'');
       const slot=normaliseNodeCodeSlot(Object.assign({},existing||{}, {
         id:slotId,name:displayName,event:'tool',enabled:settings.enabled!==false,
@@ -4702,7 +4743,8 @@ ctx.fill();</textarea>
       const runtime=typeToolRuntimeForObject(object,false);
       const tools=typeToolsForObject(object,false);
       if(tools&&tools.oldtimer){const config=normaliseOldTimerTypeTool(tools.oldtimer);if(config.setCharacterDie)writeOldTimerDeathSignal(object,config,0);}
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;delete runtime.nodeCoder;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;delete runtime.dragDrop;delete runtime.nodeCoder;}
+      if(activeDragDropObject===object)activeDragDropObject=null;
     });
     typeToolPressedKeys.clear();
     nodeCodeActiveObjects.clear();
@@ -4950,8 +4992,120 @@ ctx.fill();</textarea>
     }
   }
 
+  function dragDropObjectName(object){
+    if(!object)return '';
+    const clip=object.type==='clipinstance'?clips[object.clipId]:null;
+    return String(object.name||(clip&&clip.name)||object.id||'');
+  }
+
+  function dragDropTargetObject(owner,config){
+    let target=config.targetId?typeToolObjectById(config.targetId):null;
+    if(target&&target!==owner)return target;
+    const wanted=String(config.targetName||'').trim().toLowerCase();
+    if(!wanted)return null;
+    const active=activeTypeToolObjectsAtTime();
+    return active.find(candidate=>candidate!==owner&&dragDropObjectName(candidate).toLowerCase()===wanted)||null;
+  }
+
+  function dragDropBoundsOverlap(a,b){
+    return !!(a&&b&&Math.min(a.x2,b.x2)>Math.max(a.x1,b.x1)&&Math.min(a.y2,b.y2)>Math.max(a.y1,b.y1));
+  }
+
+  function dragDropFrameTime(object,value){
+    const text=String(value===undefined?'':value).trim();
+    if(!text||!object||object.type!=='clipinstance')return null;
+    if(Number.isFinite(Number(text)))return (Math.max(1,Math.round(Number(text)))-1)/Math.max(1,getTimelineFPS());
+    const clip=clips[object.clipId],compact=text.toLowerCase().replace(/[^a-z0-9]/g,'');
+    const label=clip&&Array.isArray(clip.frameLabels)?clip.frameLabels.find(entry=>String(entry&&entry.name||'').toLowerCase().replace(/[^a-z0-9]/g,'')===compact):null;
+    return label?Math.max(0,Number(label.time)||0):null;
+  }
+
+  function applyDragDropGoto(owner,target,gotoConfig){
+    const goto=normaliseDragDropGoto(gotoConfig);
+    const object=goto.target==='drop'?target:owner;
+    const timeValue=dragDropFrameTime(object,goto.frame);
+    if(!object||timeValue===null)return;
+    const runtime=typeToolRuntimeForObject(object,true);
+    if(!runtime.dragDrop)runtime.dragDrop={};
+    runtime.dragDrop.clipStopTime=timeValue;
+  }
+
+  function beginDragDropEffects(state,effects){
+    state.effects=Array.isArray(effects)?effects:[];
+    state.effectIndex=0;state.effectElapsed=0;state.effectStarted=false;
+    state.phase=state.effects.length?'effects':'complete';
+  }
+
+  function tickDragDropEffects(runtime,state,step){
+    if(state.phase!=='effects')return;
+    const effect=state.effects[state.effectIndex];
+    if(!effect){state.phase='complete';return;}
+    if(!state.effectStarted){
+      state.effectStarted=true;state.effectElapsed=0;
+      state.effectStartOffsetX=Number(runtime.offsetX)||0;state.effectStartOffsetY=Number(runtime.offsetY)||0;
+      state.effectStartOpacity=Number.isFinite(Number(state.opacityMultiplier))?Number(state.opacityMultiplier):1;
+      state.effectStartScale=Number.isFinite(Number(state.scaleMultiplier))?Number(state.scaleMultiplier):1;
+    }
+    const duration=Math.max(.05,Number(effect.duration)||.5);
+    state.effectElapsed+=Math.max(0,Number(step)||0);
+    const progress=Math.max(0,Math.min(1,state.effectElapsed/duration));
+    if(effect.effect==='fade')state.opacityMultiplier=state.effectStartOpacity*(1-progress);
+    else if(effect.effect==='shrink')state.scaleMultiplier=state.effectStartScale*(1-progress);
+    else if(effect.effect==='shake')runtime.offsetX=state.effectStartOffsetX+Math.sin(progress*Math.PI*10)*12*(1-progress);
+    else if(effect.effect==='return'){
+      runtime.offsetX=state.effectStartOffsetX+(state.startOffsetX-state.effectStartOffsetX)*progress;
+      runtime.offsetY=state.effectStartOffsetY+(state.startOffsetY-state.effectStartOffsetY)*progress;
+    }else if(effect.effect==='disappear'){state.opacityMultiplier=0;state.effectElapsed=duration;}
+    if(state.effectElapsed>=duration){
+      if(effect.effect==='shake')runtime.offsetX=state.effectStartOffsetX;
+      if(effect.effect==='return'){runtime.offsetX=state.startOffsetX;runtime.offsetY=state.startOffsetY;}
+      state.effectIndex++;state.effectElapsed=0;state.effectStarted=false;
+      if(state.effectIndex>=state.effects.length)state.phase='complete';
+    }
+  }
+
+  function tickDragDrop(object,config,step){
+    const runtime=typeToolRuntimeForObject(object,true);
+    if(!runtime.dragDrop)runtime.dragDrop={dragging:false,phase:'idle',opacityMultiplier:1,scaleMultiplier:1,clipStopTime:null};
+    const state=runtime.dragDrop;
+    const pointer=nodeCodePointer;
+    const bounds=getEffectiveBounds(object);
+    const pointerOver=pointInBounds(pointer.x,pointer.y,bounds,0);
+    if(pointer.pressed&&pointer.button===0&&pointerOver&&(!activeDragDropObject||activeDragDropObject===object)){
+      const effective=getEffectiveObj(object,t);
+      state.dragging=true;state.phase='dragging';activeDragDropObject=object;
+      state.startOffsetX=Number(runtime.offsetX)||0;state.startOffsetY=Number(runtime.offsetY)||0;
+      state.opacityMultiplier=1;state.scaleMultiplier=1;state.clipStopTime=null;
+      state.grabOffsetX=config.keepGrabOffset?(Number(effective.x)||0)-pointer.x:0;
+      state.grabOffsetY=config.keepGrabOffset?(Number(effective.y)||0)-pointer.y:0;
+    }
+    if(state.dragging&&pointer.down){
+      const effective=getEffectiveObj(object,t);
+      const authoredX=(Number(effective.x)||0)-(Number(runtime.offsetX)||0);
+      const authoredY=(Number(effective.y)||0)-(Number(runtime.offsetY)||0);
+      runtime.offsetX=pointer.x+state.grabOffsetX-authoredX;
+      runtime.offsetY=pointer.y+state.grabOffsetY-authoredY;
+    }
+    if(state.dragging&&pointer.released){
+      state.dragging=false;if(activeDragDropObject===object)activeDragDropObject=null;
+      const target=dragDropTargetObject(object,config);
+      const correct=!!(target&&dragDropBoundsOverlap(getEffectiveBounds(object),getEffectiveBounds(target)));
+      const variable=correct?config.scoreVar:config.wrongScoreVar;
+      const amount=correct?config.correctScore:-Math.abs(config.wrongScore);
+      typeToolWriteValue(object,variable,(Number(typeToolReadValue(object,variable,0))||0)+amount);
+      applyDragDropGoto(object,target,correct?config.correctGoto:config.wrongGoto);
+      if(config.code.trim())runTypeToolCode(object,'dragdrop',config.code,{
+        object,target,config,runtime,state,result:correct?'correct':'wrong',delta:step,time:t,api:LukeAnimatePluginAPI,
+        readValue:(name,fallback)=>typeToolReadValue(object,name,fallback),
+        writeValue:(name,value)=>typeToolWriteValue(object,name,value)
+      });
+      beginDragDropEffects(state,correct?config.correctEffects:config.wrongEffects);
+    }
+    tickDragDropEffects(runtime,state,step);
+  }
+
   function tickTypeToolRuntime(deltaSeconds){
-    if(!playing||exportPlayback.active){nodeCodeActiveObjects.forEach(unloadNodeCodeObject);nodeCodeActiveObjects.clear();nodeCodePointer.pressed=false;nodeCodePointer.released=false;return;}
+    if(!playing||exportPlayback.active){nodeCodeActiveObjects.forEach(unloadNodeCodeObject);nodeCodeActiveObjects.clear();activeDragDropObject=null;nodeCodePointer.pressed=false;nodeCodePointer.released=false;return;}
     // Avoid a large jump after a suspended/background browser tab resumes.
     const step=Math.max(0,Math.min(.05,Number(deltaSeconds)||0));
     if(!step){nodeCodePointer.pressed=false;nodeCodePointer.released=false;return;}
@@ -4967,6 +5121,10 @@ ctx.fill();</textarea>
       }
       const tools=typeToolsForObject(object,false);
       if(!tools)return;
+      if(tools.dragdrop){
+        const dragConfig=normaliseDragDropTypeTool(tools.dragdrop);
+        if(dragConfig.enabled)tickDragDrop(object,dragConfig,step);
+      }
       if(tools.oldtimer){
         const timerConfig=normaliseOldTimerTypeTool(tools.oldtimer);
         if(timerConfig.enabled)tickOldTimer(object,timerConfig,step);
@@ -12624,7 +12782,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=55';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=56';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -13032,7 +13190,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 127,
+    version: 128,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -13201,7 +13359,8 @@ ctx.fill();</textarea>
       tools[id]=normaliseTypeToolSettings(id,settings);
       syncTypeToolNodeCodeSlots(object);
       const runtime=typeToolRuntimeForObject(object,false);
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;delete runtime.dragDrop;}
+      if(activeDragDropObject===object)activeDragDropObject=null;
       if(id==='oldtimer'&&tools[id].setCharacterDie)writeOldTimerDeathSignal(object,tools[id],0);
       this.refreshUI();
       return JSON.parse(JSON.stringify(tools[id]));
@@ -13215,7 +13374,8 @@ ctx.fill();</textarea>
       delete tools[id];
       syncTypeToolNodeCodeSlots(object);
       const runtime=typeToolRuntimeForObject(object,false);
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;delete runtime.dragDrop;}
+      if(activeDragDropObject===object)activeDragDropObject=null;
       this.refreshUI();
       return true;
     },
@@ -13869,7 +14029,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 162;
+    project.projectVersion = 163;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -18515,6 +18675,27 @@ ctx.fill();</textarea>
             if(effective===obj)effective=Object.assign({},obj);
             effective.clipStopTime=Math.max(0,Number(runtime.sideRunner.deathClipStopTime));
           }
+        }
+      }
+      if(runtime&&runtime.dragDrop){
+        const dragState=runtime.dragDrop;
+        const opacityMultiplier=Number(dragState.opacityMultiplier);
+        if(Number.isFinite(opacityMultiplier)&&opacityMultiplier!==1){
+          if(effective===obj)effective=Object.assign({},obj);
+          const baseOpacity=Number.isFinite(Number(effective.opacity))?Number(effective.opacity):1;
+          effective.opacity=Math.max(0,Math.min(1,baseOpacity*opacityMultiplier));
+        }
+        const scaleMultiplier=Number(dragState.scaleMultiplier);
+        if(Number.isFinite(scaleMultiplier)&&scaleMultiplier!==1){
+          if(effective===obj)effective=Object.assign({},obj);
+          const baseScaleX=Number.isFinite(Number(effective.scaleX))?Number(effective.scaleX):1;
+          const baseScaleY=Number.isFinite(Number(effective.scaleY))?Number(effective.scaleY):1;
+          effective.scaleX=baseScaleX*scaleMultiplier;
+          effective.scaleY=baseScaleY*scaleMultiplier;
+        }
+        if(dragState.clipStopTime!==null&&dragState.clipStopTime!==undefined&&Number.isFinite(Number(dragState.clipStopTime))){
+          if(effective===obj)effective=Object.assign({},obj);
+          effective.clipStopTime=Math.max(0,Number(dragState.clipStopTime));
         }
       }
       if(runtime&&runtime.nodeCoder&&runtime.nodeCoder.output){
