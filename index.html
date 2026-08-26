@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v255: Drag & Drop can also send another Clip to a frame and set a variable on correct or wrong drops. -->
 <!-- LukeAnimate GPT v254: adds Drag & Drop as a standard Clip Behaviour with correct/wrong targets, effects, scoring and frame actions. -->
 <!-- LukeAnimate GPT v253: adds live pointer input to Node Coder and a visual Drag & Drop node for playable Clip interaction. -->
 <!-- LukeAnimate GPT v252: constrains rectangle and ellipse drags to uniform squares and circles while Shift is held, and snaps Shift-dragged lines to 45-degree angles. -->
@@ -73,7 +74,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v254</title>
+<title>Luke Animate v255</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4438,6 +4439,17 @@ ctx.fill();</textarea>
     };
   }
 
+  function normaliseDragDropAction(value){
+    const source=value&&typeof value==='object'?value:{};
+    return {
+      clipId:String(source.clipId||'').trim(),
+      clipName:String(source.clipName||'').trim(),
+      frame:String(source.frame===undefined?'':source.frame).trim(),
+      variable:String(source.variable||'').trim(),
+      value:String(source.value===undefined?'':source.value)
+    };
+  }
+
   function normaliseDragDropTypeTool(settings){
     const source=settings&&typeof settings==='object'?settings:{};
     return {
@@ -4453,6 +4465,8 @@ ctx.fill();</textarea>
       wrongEffects:normaliseDragDropEffects(source.wrongEffects,[{effect:'shake',duration:.5},{effect:'return',duration:.5}]),
       correctGoto:normaliseDragDropGoto(source.correctGoto),
       wrongGoto:normaliseDragDropGoto(source.wrongGoto),
+      correctAction:normaliseDragDropAction(source.correctAction),
+      wrongAction:normaliseDragDropAction(source.wrongAction),
       code:String(source.code||'')
     };
   }
@@ -5030,6 +5044,31 @@ ctx.fill();</textarea>
     runtime.dragDrop.clipStopTime=timeValue;
   }
 
+  function dragDropActionValue(value){
+    const text=String(value===undefined?'':value).trim();
+    if(/^true$/i.test(text))return true;
+    if(/^false$/i.test(text))return false;
+    if(/^null$/i.test(text))return null;
+    if(text!==''&&Number.isFinite(Number(text)))return Number(text);
+    return String(value===undefined?'':value);
+  }
+
+  function applyDragDropAction(owner,actionConfig){
+    const action=normaliseDragDropAction(actionConfig);
+    let actionClip=action.clipId?typeToolObjectById(action.clipId):null;
+    if(!actionClip&&action.clipName){
+      const wanted=action.clipName.toLowerCase();
+      actionClip=activeTypeToolObjectsAtTime().find(candidate=>candidate!==owner&&dragDropObjectName(candidate).toLowerCase()===wanted)||null;
+    }
+    const frameTime=dragDropFrameTime(actionClip,action.frame);
+    if(actionClip&&frameTime!==null){
+      const runtime=typeToolRuntimeForObject(actionClip,true);
+      if(!runtime.dragDrop)runtime.dragDrop={};
+      runtime.dragDrop.clipStopTime=frameTime;
+    }
+    if(action.variable)typeToolWriteValue(owner,action.variable,dragDropActionValue(action.value));
+  }
+
   function beginDragDropEffects(state,effects){
     state.effects=Array.isArray(effects)?effects:[];
     state.effectIndex=0;state.effectElapsed=0;state.effectStarted=false;
@@ -5094,6 +5133,7 @@ ctx.fill();</textarea>
       const amount=correct?config.correctScore:-Math.abs(config.wrongScore);
       typeToolWriteValue(object,variable,(Number(typeToolReadValue(object,variable,0))||0)+amount);
       applyDragDropGoto(object,target,correct?config.correctGoto:config.wrongGoto);
+      applyDragDropAction(object,correct?config.correctAction:config.wrongAction);
       if(config.code.trim())runTypeToolCode(object,'dragdrop',config.code,{
         object,target,config,runtime,state,result:correct?'correct':'wrong',delta:step,time:t,api:LukeAnimatePluginAPI,
         readValue:(name,fallback)=>typeToolReadValue(object,name,fallback),
@@ -12782,7 +12822,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=56';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=57';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -13190,7 +13230,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 128,
+    version: 129,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -14029,7 +14069,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 163;
+    project.projectVersion = 164;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
