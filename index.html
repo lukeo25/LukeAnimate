@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v257: Play mode hides editor selections/handles and blocks stage editing or Clip entry. -->
 <!-- LukeAnimate GPT v256: Play mode shows only normal/interactive cursors, and Drag & Drop requires 70% target overlap. -->
 <!-- LukeAnimate GPT v255: Drag & Drop can also send another Clip to a frame and set a variable on correct or wrong drops. -->
 <!-- LukeAnimate GPT v254: adds Drag & Drop as a standard Clip Behaviour with correct/wrong targets, effects, scoring and frame actions. -->
@@ -75,7 +76,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v256</title>
+<title>Luke Animate v257</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -7663,7 +7664,7 @@ ctx.fill();</textarea>
 
     if(obj.type === 'clipinstance'){
       renderClipInstance(obj, eff);
-      if(!onionSkinRendering && idx !== undefined && selectedDrawIndices.has(idx)) drawSelectionHighlight(obj);
+      if(!playing && !onionSkinRendering && idx !== undefined && selectedDrawIndices.has(idx)) drawSelectionHighlight(obj);
       return;
     }
 
@@ -7704,7 +7705,7 @@ ctx.fill();</textarea>
     }
     if(customObjectHandled){
       ctx.restore();
-      if(!onionSkinRendering && idx !== undefined && selectedDrawIndices.has(idx)){
+      if(!playing && !onionSkinRendering && idx !== undefined && selectedDrawIndices.has(idx)){
         const isolated = getIsolatedGroupInfo();
         if(isolated && isolated.rootIndex === idx) drawSelectionHighlight(isolated.child);
         else drawSelectionHighlight(obj);
@@ -7840,7 +7841,7 @@ ctx.fill();</textarea>
       });
     }
     ctx.restore();
-    if(!onionSkinRendering && idx !== undefined && selectedDrawIndices.has(idx)){
+    if(!playing && !onionSkinRendering && idx !== undefined && selectedDrawIndices.has(idx)){
       const isolated = getIsolatedGroupInfo();
       if(isolated && isolated.rootIndex === idx) drawSelectionHighlight(isolated.child);
       else drawSelectionHighlight(obj);
@@ -8043,7 +8044,7 @@ ctx.fill();</textarea>
     return px >= b.x1-pad && px <= b.x2+pad && py >= b.y1-pad && py <= b.y2+pad;
   }
   function drawSelectionHighlight(obj){
-    if(exportPlayback.active) return;
+    if(exportPlayback.active || playing) return;
     const eff=getEffectiveObj(obj,t);
     const lt=getLiveTransform(obj,eff);
     const byKey=Object.fromEntries(getTransformedCorners(lt).map(point=>[point.key,point]));
@@ -11856,7 +11857,7 @@ ctx.fill();</textarea>
 
   function renderTransformHandles(){
     overlay.querySelectorAll('.xform-handle, .xform-axis-handle, .xform-rotate-handle, .shape-point-handle, .bezier-anchor-handle, .bezier-control-handle, .bezier-handle-line, .pen-edit-anchor, .pen-edit-control, .pen-edit-bend, .pen-edit-width, .pen-edit-line').forEach(e=>e.remove());
-    if(exportPlayback.active) return;
+    if(exportPlayback.active || playing) return;
     if(activeOffstageProxyGroupKey){
       const proxyTarget=offstageProxyTargets.get(activeOffstageProxyGroupKey);
       if(proxyTarget && proxyTarget.kind!=='object' && proxyTargetStillSelected(proxyTarget)) return;
@@ -13249,7 +13250,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 130,
+    version: 131,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -14088,7 +14089,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 165;
+    project.projectVersion = 166;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -14634,13 +14635,19 @@ ctx.fill();</textarea>
     window.addEventListener('blur',onCancel,{once:true});
   }
 
+  overlay.addEventListener('contextmenu',event=>{
+    if(!playing)return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  },true);
+
   overlay.addEventListener('mousedown', (e)=>{
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
 
-    // During playback, a visual Drag & Drop node owns the pointer over its
-    // Clip. Do not let the editor's selection/transform drag rewrite the
-    // authored object underneath the live game interaction.
-    if(playing&&nodeCodeDragTargetAtPoint(canvasCoords(e.clientX,e.clientY))){
+    // Play is interaction-only. The global pointer snapshot still reaches
+    // behaviours such as Drag & Drop, but no editor tool may select, draw,
+    // transform, isolate or otherwise rewrite stage content.
+    if(playing){
       e.preventDefault();
       e.stopPropagation();
       return;
@@ -14878,6 +14885,11 @@ ctx.fill();</textarea>
   });
   overlay.addEventListener('dblclick', (e)=>{
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
+    if(playing){
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const clickPos = canvasCoords(e.clientX, e.clientY);
 
     // In Bezier Curve mode, double-clicking directly on the selected curve
@@ -18193,17 +18205,20 @@ ctx.fill();</textarea>
     playing = true;
     lastFrame = performance.now();
     syncPlaybackCursorMode();
+    renderTransformHandles();
     playAudioIfLoaded();
   });
   document.getElementById('btn-transport-pause').addEventListener('click', ()=>{
     playing = false;
     syncPlaybackCursorMode();
+    renderTransformHandles();
     typeToolPressedKeys.clear();
     pauseAudioIfLoaded();
   });
   document.getElementById('btn-transport-stop').addEventListener('click', ()=>{
     playing = false;
     syncPlaybackCursorMode();
+    renderTransformHandles();
     t = 0;
     resetTypeToolRuntime();
     stopAudioIfLoaded();
