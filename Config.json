@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 56,
+  "version": 57,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -142,7 +142,7 @@
           "id": "Drag Drop",
           "label": "Drag Drop",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Drag.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DragDrop.txt?v=1.0",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DragDrop.txt?v=1.1",
           "action": "script",
           "F_Screen": 0
         },
