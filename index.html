@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v262: empty clips and projects show no content row until a frame owns an object. -->
 <!-- LukeAnimate GPT v261: clip/project frames own arrays of artwork; objects never create timeline layers of their own. -->
 <!-- LukeAnimate GPT v260: Boolean results stay in the first selected object's frame/layer and remove empty operand layers. -->
 <!-- LukeAnimate GPT v259: Boolean results replace shapes only on the active frame and preserve their layers on every other frame. -->
@@ -80,7 +81,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v261</title>
+<title>Luke Animate v262</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -14092,7 +14093,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 170;
+    project.projectVersion = 171;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -17251,6 +17252,7 @@ ctx.fill();</textarea>
 
   function renderIndependentFrameTrack(tracksEl){
     normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
+    if(!sceneFrames.some(frame=>Array.isArray(frame.objects) && frame.objects.length>0)) return;
     const info = getTimelineFrameInfo();
     const totalCells = info.totalFrames + 1;
     const currentIndex = frameIndexForTime(t, timelineDuration);
