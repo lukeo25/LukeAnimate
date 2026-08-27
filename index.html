@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v266: frame keys have a large visible right-edge grip for extending their owned artwork across frames. -->
 <!-- LukeAnimate GPT v265: frames are the only artwork timeline rows; blank gaps and individual object layers are never rendered. -->
 <!-- LukeAnimate GPT v264: new blank/duplicate keys start one frame wide and extend safely by dragging their hold. -->
 <!-- LukeAnimate GPT v263: Blank Key materialises the first visible frame; automatic empty spans remain hidden. -->
@@ -84,7 +85,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v265</title>
+<title>Luke Animate v266</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -1224,12 +1225,17 @@
     font-size:9px; line-height:14px; color:#18352f; pointer-events:none;
   }
   .timeline-scene-frame-hold{
-    position:absolute; right:-4px; top:-1px; bottom:-1px; width:9px;
-    cursor:ew-resize; z-index:5; touch-action:none; user-select:none;
+    position:absolute; right:-7px; top:-3px; bottom:-3px; width:16px;
+    cursor:ew-resize; z-index:8; touch-action:none; user-select:none;
   }
   .timeline-scene-frame-hold::after{
-    content:""; position:absolute; right:3px; top:3px; bottom:3px; width:2px;
-    border-radius:2px; background:rgba(13,38,34,.75);
+    content:""; position:absolute; right:6px; top:3px; bottom:3px; width:3px;
+    border-radius:3px; background:var(--accent); border:1px solid rgba(8,88,76,.9);
+    box-shadow:0 0 0 1px rgba(255,255,255,.75);
+  }
+  .timeline-scene-frame:hover .timeline-scene-frame-hold::after,
+  .timeline-scene-frame-hold:hover::after{
+    width:5px; right:5px; background:#12b89d;
   }
   .timeline-key-dot{
     position:absolute; top:5px; width:10px; height:10px; margin-left:-5px;
@@ -14112,7 +14118,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 174;
+    project.projectVersion = 175;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
