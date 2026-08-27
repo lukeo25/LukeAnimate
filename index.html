@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v261: clip/project frames own arrays of artwork; objects never create timeline layers of their own. -->
 <!-- LukeAnimate GPT v260: Boolean results stay in the first selected object's frame/layer and remove empty operand layers. -->
 <!-- LukeAnimate GPT v259: Boolean results replace shapes only on the active frame and preserve their layers on every other frame. -->
 <!-- LukeAnimate GPT v258: new artwork belongs only to the selected clip/project frame instead of automatically spanning the remaining timeline. -->
@@ -79,7 +80,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v260</title>
+<title>Luke Animate v261</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -9035,22 +9036,9 @@ ctx.fill();</textarea>
     const resultPoints=contour.map(point=>({x:point.x/scale,y:point.y/scale})),booleanBezier=makeBooleanClosedBezier(resultPoints);
     const style=drawStyle(),base=objects[0],baseEffective=getEffectiveObj(base,t),result=ensureDrawObjectMetadata({type:'freehand',name:'Boolean '+operation,points:resultPoints,bezierHandles:booleanBezier.handles,bezierModes:booleanBezier.modes,closedPath:true,fillEnabled:(baseEffective.fillEnabled!==undefined?baseEffective.fillEnabled:base.fillEnabled)!==false,strokeEnabled:(baseEffective.strokeEnabled!==undefined?baseEffective.strokeEnabled:base.strokeEnabled)!==false,fillColor:baseEffective.fillColor||base.fillColor||style.fillColor,strokeColor:baseEffective.strokeColor||base.strokeColor||style.strokeColor,strokeWidth:Math.max(0,Number(baseEffective.strokeWidth!==undefined?baseEffective.strokeWidth:base.strokeWidth)||0),opacity:1,tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,keyframes:[]});
     pushUndo();
-    const booleanFrame=typeof wickCurrentFrameIndex==='function'?wickCurrentFrameIndex():Math.max(0,Math.round(t*getTimelineFPS()));
-    const replacedFrames=objects.map(object=>{const layer=object&&object.timelineLayerId&&typeof wickLayerById==='function'?wickLayerById(object.timelineLayerId):null;const frame=layer&&typeof wickFrameAt==='function'?wickFrameAt(layer,booleanFrame):null;return layer&&frame&&frame.object===object?{layer,frame}:null;}).filter(Boolean);
-    const firstOwner=replacedFrames[0]||null;
-    if(firstOwner){
-      const resultFrame=wickInsertLayerFrame(firstOwner.layer,booleanFrame,'blank');
-      resultFrame.blank=false;resultFrame.object=result;
-      result.timelineLayerId=firstOwner.layer.id;result.timelineLayerOrder=firstOwner.layer.order;result.frameLinkId=resultFrame.id;result.frameLinkStart=resultFrame.startFrame;result.frameLinkEnd=resultFrame.endFrame;
-      replacedFrames.slice(1).forEach(({layer})=>wickInsertLayerFrame(layer,booleanFrame,'blank'));
-      const emptyLayerIds=new Set(replacedFrames.slice(1).map(({layer})=>layer).filter(layer=>(layer.frames||[]).every(frame=>frame.blank||!frame.object)).map(layer=>String(layer.id)));
-      if(emptyLayerIds.size)wickDrawingLayers.splice(0,wickDrawingLayers.length,...wickDrawingLayers.filter(layer=>!emptyLayerIds.has(String(layer.id))));
-      wickActiveDrawingLayerId=firstOwner.layer.id;wickSelectedDrawingFrameId=resultFrame.id;wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);syncActiveSceneFrameForTime(t,false);
-      selectedDrawIndices.clear();const resultIndex=drawObjects.findIndex(object=>object&&String(object.frameLinkId)===String(resultFrame.id));if(resultIndex>=0)selectedDrawIndices.add(resultIndex);updateSelectedCountUI();renderLayerList();updateInspector();renderTimeline();renderTransformHandles();
-    }else{
-      for(let index=indices.length-1;index>=0;index--)drawObjects.splice(indices[index],1);
-      selectedDrawIndices.clear();suppressCommitDrawUndo=true;try{commitDrawObject(result);}finally{suppressCommitDrawUndo=false;}
-    }
+    ensureFrameOwnedDrawingForMutation();
+    for(let index=indices.length-1;index>=0;index--)drawObjects.splice(indices[index],1);
+    drawObjects.push(result);selectedDrawIndices.clear();selectedDrawIndices.add(drawObjects.length-1);updateSelectedCountUI();renderLayerList();updateInspector();renderTimeline();renderTransformHandles();
     logToSandbox('Boolean '+operation+' created an editable vector result.');return true;
   }
 
@@ -14104,7 +14092,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 169;
+    project.projectVersion = 170;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -21192,6 +21180,7 @@ ctx.fill();</textarea>
     return syncActiveSceneFrameForTime(t,false);
   };
 
+  const frameOwnedEnsureFrameOwnedDrawingForMutation=ensureFrameOwnedDrawingForMutation;
   ensureFrameOwnedDrawingForMutation = function(){
     return syncActiveSceneFrameForTime(t,false);
   };
@@ -21325,6 +21314,7 @@ ctx.fill();</textarea>
     renderPoints();
   }
 
+  const frameOwnedInsertIndependentSceneFrame=insertIndependentSceneFrame,frameOwnedClearActiveIndependentSceneFrame=clearActiveIndependentSceneFrame;
   insertIndependentSceneFrame = function(mode, requestedFrame){
     wickEnsureCurrentDrawingLayers();
     const targetFrame=Math.max(0,Math.min(wickTotalFrameIndex(timelineDuration),Math.round(requestedFrame!==undefined?Number(requestedFrame):wickCurrentFrameIndex())||0));
@@ -21370,6 +21360,7 @@ ctx.fill();</textarea>
     return target;
   }
 
+  const frameOwnedSetIndependentSceneFrameEnd=setIndependentSceneFrameEnd;
   setIndependentSceneFrameEnd = function(_frame, requestedEnd){
     const layer=wickLayerById(wickActiveDrawingLayerId) || wickLayerById(wickSelectedLayerIds()[0]);
     const frame=layer ? wickFrameAt(layer,wickCurrentFrameIndex()) : null;
@@ -22364,6 +22355,7 @@ ctx.fill();</textarea>
 
   // The old project-wide frame row is deliberately removed. Wick frames belong
   // to individual layers, so each layer row remains available at every frame.
+  const frameOwnedRenderIndependentFrameTrack=renderIndependentFrameTrack;
   renderIndependentFrameTrack = function(){};
 
   const wickRenderTimelineBase=renderTimeline;
@@ -22537,8 +22529,6 @@ ctx.fill();</textarea>
     const wickPluginAddDrawObjectBase=LukeAnimatePluginAPI.addDrawObject;
     LukeAnimatePluginAPI.addDrawObject=function(object,panelId){
       const result=wickPluginAddDrawObjectBase.call(this,object,panelId);
-      wickRegisterObjectLayer(result,wickCurrentFrameIndex(),wickTotalFrameIndex(timelineDuration));
-      syncActiveSceneFrameForTime(t,false);
       renderTimeline();
       return result;
     };
@@ -22548,6 +22538,32 @@ ctx.fill();</textarea>
   wickMainDrawingLayers=wickMigrateSceneFrames(sceneFrames,drawObjects,timelineDuration);
   wickDrawingLayers=wickMainDrawingLayers;
   wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);
+
+  // v261: frames, not objects, own artwork. The Wick per-object layer model is
+  // retained above only as a migration reader for older projects. From this
+  // point onward the canonical sceneFrames[].objects array owns every shape.
+  normalizeSceneFrameList=wickNormalizeSceneFrameListBase;
+  ensureClipSceneFrames=wickEnsureClipSceneFramesBase;
+  ensureFrameOwnedDrawingForMutation=frameOwnedEnsureFrameOwnedDrawingForMutation;
+  insertIndependentSceneFrame=frameOwnedInsertIndependentSceneFrame;
+  clearActiveIndependentSceneFrame=frameOwnedClearActiveIndependentSceneFrame;
+  setIndependentSceneFrameEnd=frameOwnedSetIndependentSceneFrameEnd;
+  commitDrawObject=wickCommitDrawObjectBase;
+  renderLayerList=wickRenderLayerListBase;
+  selectDrawObject=wickSelectDrawObjectBase;
+  deleteDrawObject=wickDeleteDrawObjectBase;
+  deleteSelectedDrawObjects=wickDeleteSelectedDrawObjectsBase;
+  renderIndependentFrameTrack=frameOwnedRenderIndependentFrameTrack;
+  renderTimeline=wickRenderTimelineBase;
+  captureMainSceneAsContext=wickCaptureMainSceneAsContextBase;
+  applyContext=wickApplyContextBase;
+  saveCurrentClipEditingContext=wickSaveCurrentClipEditingContextBase;
+  makeClip=wickMakeClipBase;
+  snapshotState=wickSnapshotStateBase;
+  restoreState=wickRestoreStateBase;
+  const removeObjectTimelineMetadata=object=>{if(!object)return;delete object.timelineLayerId;delete object.timelineLayerOrder;delete object.frameLinkId;delete object.frameLinkStart;delete object.frameLinkEnd;delete object.frameFadeInFrames;delete object.frameFadeOutFrames;};
+  sceneFrames.forEach(frame=>(frame.objects||[]).forEach(removeObjectTimelineMetadata));
+  wickDrawingLayers.splice(0,wickDrawingLayers.length);
 
 
 
