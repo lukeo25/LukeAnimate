@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v263: Blank Key materialises the first visible frame; automatic empty spans remain hidden. -->
 <!-- LukeAnimate GPT v262: empty clips and projects show no content row until a frame owns an object. -->
 <!-- LukeAnimate GPT v261: clip/project frames own arrays of artwork; objects never create timeline layers of their own. -->
 <!-- LukeAnimate GPT v260: Boolean results stay in the first selected object's frame/layer and remove empty operand layers. -->
@@ -81,7 +82,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v262</title>
+<title>Luke Animate v263</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3691,7 +3692,10 @@ ctx.fill();</textarea>
     }).filter(Boolean).sort((a,b)=>a.startFrame-b.startFrame || a.endFrame-b.endFrame);
 
     if(candidates.length === 0){
-      candidates.push(makeIndependentSceneFrame(0, totalFrames, Array.isArray(fallbackObjects) ? fallbackObjects : []));
+      const initialObjects = Array.isArray(fallbackObjects) ? fallbackObjects : [];
+      candidates.push(makeIndependentSceneFrame(0, totalFrames, initialObjects, {
+        explicitKey: initialObjects.length > 0
+      }));
     }
 
     const normalized = [];
@@ -14093,7 +14097,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 171;
+    project.projectVersion = 172;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -17252,7 +17256,10 @@ ctx.fill();</textarea>
 
   function renderIndependentFrameTrack(tracksEl){
     normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
-    if(!sceneFrames.some(frame=>Array.isArray(frame.objects) && frame.objects.length>0)) return;
+    // Automatic empty coverage is structural only and has no timeline row.
+    // A user-created Blank Key is explicit and must remain visible so artwork
+    // can be added to it and its held duration can be resized.
+    if(!sceneFrames.some(frame=>frame.explicitKey !== false || (Array.isArray(frame.objects) && frame.objects.length>0))) return;
     const info = getTimelineFrameInfo();
     const totalCells = info.totalFrames + 1;
     const currentIndex = frameIndexForTime(t, timelineDuration);
