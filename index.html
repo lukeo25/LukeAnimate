@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v259: Boolean results replace shapes only on the active frame and preserve their layers on every other frame. -->
 <!-- LukeAnimate GPT v258: new artwork belongs only to the selected clip/project frame instead of automatically spanning the remaining timeline. -->
 <!-- LukeAnimate GPT v257: Play mode hides editor selections/handles and blocks stage editing or Clip entry. -->
 <!-- LukeAnimate GPT v256: Play mode shows only normal/interactive cursors, and Drag & Drop requires 70% target overlap. -->
@@ -77,7 +78,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v258</title>
+<title>Luke Animate v259</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -9033,9 +9034,10 @@ ctx.fill();</textarea>
     const resultPoints=contour.map(point=>({x:point.x/scale,y:point.y/scale})),booleanBezier=makeBooleanClosedBezier(resultPoints);
     const style=drawStyle(),base=objects[0],baseEffective=getEffectiveObj(base,t),result=ensureDrawObjectMetadata({type:'freehand',name:'Boolean '+operation,points:resultPoints,bezierHandles:booleanBezier.handles,bezierModes:booleanBezier.modes,closedPath:true,fillEnabled:(baseEffective.fillEnabled!==undefined?baseEffective.fillEnabled:base.fillEnabled)!==false,strokeEnabled:(baseEffective.strokeEnabled!==undefined?baseEffective.strokeEnabled:base.strokeEnabled)!==false,fillColor:baseEffective.fillColor||base.fillColor||style.fillColor,strokeColor:baseEffective.strokeColor||base.strokeColor||style.strokeColor,strokeWidth:Math.max(0,Number(baseEffective.strokeWidth!==undefined?baseEffective.strokeWidth:base.strokeWidth)||0),opacity:1,tx:0,ty:0,tscale:1,tscaleX:1,tscaleY:1,trotation:0,keyframes:[]});
     pushUndo();
-    const replacedLayerIds=objects.map(object=>object&&object.timelineLayerId).filter(Boolean);
+    const booleanFrame=typeof wickCurrentFrameIndex==='function'?wickCurrentFrameIndex():Math.max(0,Math.round(t*getTimelineFPS()));
+    const replacedFrames=objects.map(object=>{const layer=object&&object.timelineLayerId&&typeof wickLayerById==='function'?wickLayerById(object.timelineLayerId):null;const frame=layer&&typeof wickFrameAt==='function'?wickFrameAt(layer,booleanFrame):null;return layer&&frame&&frame.object===object?{layer,frame}:null;}).filter(Boolean);
     for(let index=indices.length-1;index>=0;index--)drawObjects.splice(indices[index],1);
-    if(replacedLayerIds.length&&typeof wickRemoveLayersByIds==='function')wickRemoveLayersByIds(replacedLayerIds);
+    replacedFrames.forEach(({layer})=>wickInsertLayerFrame(layer,booleanFrame,'blank'));
     selectedDrawIndices.clear();suppressCommitDrawUndo=true;try{commitDrawObject(result);}finally{suppressCommitDrawUndo=false;}
     logToSandbox('Boolean '+operation+' created an editable vector result.');return true;
   }
@@ -14090,7 +14092,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 167;
+    project.projectVersion = 168;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -21541,6 +21543,7 @@ ctx.fill();</textarea>
     if(!active || active.object!==object){
       wickRegisterObjectLayer(object,currentFrame,currentFrame);
     }
+    wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);
     syncActiveSceneFrameForTime(t,false);
     selectedDrawIndices.clear();
     const index=drawObjects.findIndex(item=>item===object || (item && object && item.frameLinkId===object.frameLinkId));
