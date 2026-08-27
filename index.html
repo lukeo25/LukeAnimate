@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v265: frames are the only artwork timeline rows; blank gaps and individual object layers are never rendered. -->
 <!-- LukeAnimate GPT v264: new blank/duplicate keys start one frame wide and extend safely by dragging their hold. -->
 <!-- LukeAnimate GPT v263: Blank Key materialises the first visible frame; automatic empty spans remain hidden. -->
 <!-- LukeAnimate GPT v262: empty clips and projects show no content row until a frame owns an object. -->
@@ -83,7 +84,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v264</title>
+<title>Luke Animate v265</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -1207,12 +1208,15 @@
     box-sizing:border-box;
   }
   .timeline-scene-frame.blank{
-    background:repeating-linear-gradient(135deg,rgba(110,120,135,.18) 0,rgba(110,120,135,.18) 4px,rgba(255,255,255,.45) 4px,rgba(255,255,255,.45) 8px);
-    border-color:rgba(110,120,135,.55);
+    background:transparent;
+    border:1px dashed rgba(110,120,135,.72);
   }
   .timeline-scene-frame.active{
     outline:2px solid var(--accent); outline-offset:1px;
     background:rgba(14,156,134,.48);
+  }
+  .timeline-scene-frame.blank.active{
+    background:transparent;
   }
   .timeline-scene-frame-label{
     position:absolute; left:5px; top:1px; max-width:calc(100% - 14px);
@@ -1221,7 +1225,7 @@
   }
   .timeline-scene-frame-hold{
     position:absolute; right:-4px; top:-1px; bottom:-1px; width:9px;
-    cursor:ew-resize; z-index:5;
+    cursor:ew-resize; z-index:5; touch-action:none; user-select:none;
   }
   .timeline-scene-frame-hold::after{
     content:""; position:absolute; right:3px; top:3px; bottom:3px; width:2px;
@@ -12390,7 +12394,8 @@ ctx.fill();</textarea>
     const insertIndex=indices[0];
     indices.slice().reverse().forEach(index=>drawObjects.splice(index,1));
     drawObjects.splice(insertIndex,0,group);
-    wickRebuildCanonicalFromCurrentComposite();
+    // The group replaces objects inside this frame; it does not create or
+    // rebuild per-object timeline layers.
     selectedDrawIndices.clear();selectedDrawIndices.add(insertIndex);
     isolatedGroupEdit=null;
     updateSelectedCountUI();renderLayerList();renderTimeline();renderTransformHandles();
@@ -12610,7 +12615,8 @@ ctx.fill();</textarea>
     idxs.slice().reverse().forEach(i => drawObjects.splice(i,1));
     const clipInstance = ensureDrawObjectMetadata({ type:'clipinstance', clipId:clip.id, name:clip.name, x:cx, y:cy, scale:1, scaleX:1, scaleY:1, rotation:0, timeOffset:0, opacity:1, keyframes:[] });
     drawObjects.push(clipInstance);
-    wickRebuildCanonicalFromCurrentComposite();
+    // The Clip instance replaces objects inside this frame; it does not create
+    // or rebuild per-object timeline layers.
 
     selectedDrawIndices.clear();
     selectedDrawIndices.add(drawObjects.length - 1);
@@ -14106,7 +14112,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 173;
+    project.projectVersion = 174;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -16323,11 +16329,9 @@ ctx.fill();</textarea>
     });
 
     const isolatedLayerInfo=getIsolatedGroupInfo();
-    const objectLayerEntries=isolatedLayerInfo
-      ? [{obj:isolatedLayerInfo.child,idx:isolatedLayerInfo.rootIndex,isolated:true}]
-      : drawObjects
-          .map((obj,idx)=>({obj,idx,isolated:false}))
-          .reverse();
+    // Artwork belongs to the selected frame, never to an object layer.
+    // Effects remain real scene-level layers and are rendered above.
+    const objectLayerEntries=[];
     objectLayerEntries.forEach(entry=>{
       const obj=entry.obj,idx=entry.idx;
       ensureDrawObjectMetadata(obj);
@@ -17187,6 +17191,10 @@ ctx.fill();</textarea>
     let historyPushed = false;
 
     function onMove(moveEvent){
+      if((Number(moveEvent.buttons)||0)===0){
+        onUp();
+        return;
+      }
       const fraction = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / Math.max(1, rect.width)));
       const requestedEnd = Math.max(frame.startFrame, Math.min(info.totalFrames, Math.round(fraction * (info.totalFrames + 1) - 1)));
       if(requestedEnd === frame.endFrame) return;
@@ -17200,10 +17208,24 @@ ctx.fill();</textarea>
     function onUp(){
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('blur', onUp);
+      window.removeEventListener('mousedown', onOtherMouseDown, true);
+      document.documentElement.style.userSelect = '';
       syncActiveSceneFrameForTime(t, true);
     }
+    function onOtherMouseDown(downEvent){
+      if(downEvent.target !== event.currentTarget) onUp();
+    }
+    document.documentElement.style.userSelect = 'none';
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    window.addEventListener('blur', onUp);
+    window.addEventListener('mousedown', onOtherMouseDown, true);
   }
 
   function startObjectFrameExposureDrag(event, frame, track, objectIndex){
@@ -17284,7 +17306,8 @@ ctx.fill();</textarea>
     track.className = 'timeline-track';
     track.title = 'Double-click to insert a blank independent keyframe';
 
-    sceneFrames.forEach(frame=>{
+    // Implicit empty coverage is storage only. It must never look like content.
+    sceneFrames.filter(frame=>frame.explicitKey !== false).forEach(frame=>{
       const block = document.createElement('div');
       const blank = !frame.objects || frame.objects.length === 0;
       block.className = 'timeline-scene-frame' + (blank ? ' blank' : '') + (frame.explicitKey === false ? ' implicit' : ' key') + (active && active.id === frame.id ? ' active' : '');
@@ -17432,9 +17455,8 @@ ctx.fill();</textarea>
 
     normalizeAllDrawObjects();
     const isolatedTimelineInfo=getIsolatedGroupInfo();
-    const timelineObjectEntries=isolatedTimelineInfo
-      ? [{obj:isolatedTimelineInfo.child,idx:isolatedTimelineInfo.rootIndex,isolated:true}]
-      : drawObjects.map((obj,idx)=>({obj,idx,isolated:false}));
+    // Individual shapes are owned by the frame and never get timeline rows.
+    const timelineObjectEntries=[];
     timelineObjectEntries.forEach(entry=>{
       const obj=entry.obj,idx=entry.idx;
       const row = document.createElement('div');
@@ -21133,6 +21155,10 @@ ctx.fill();</textarea>
     return frameIndexForTime(t,timelineDuration);
   }
 
+  const frameOwnedSyncActiveSceneFrameForTime=syncActiveSceneFrameForTime;
+  const frameOwnedEnsureCurrentSceneFrames=ensureCurrentSceneFrames;
+  const frameOwnedActiveIndependentSceneFrame=activeIndependentSceneFrame;
+
   syncActiveSceneFrameForTime = function(timeValue, refreshUI){
     wickEnsureCurrentDrawingLayers();
     const selectedLayerIds = wickSelectedLayerIds();
@@ -22562,6 +22588,9 @@ ctx.fill();</textarea>
   // point onward the canonical sceneFrames[].objects array owns every shape.
   normalizeSceneFrameList=wickNormalizeSceneFrameListBase;
   ensureClipSceneFrames=wickEnsureClipSceneFramesBase;
+  syncActiveSceneFrameForTime=frameOwnedSyncActiveSceneFrameForTime;
+  ensureCurrentSceneFrames=frameOwnedEnsureCurrentSceneFrames;
+  activeIndependentSceneFrame=frameOwnedActiveIndependentSceneFrame;
   ensureFrameOwnedDrawingForMutation=frameOwnedEnsureFrameOwnedDrawingForMutation;
   insertIndependentSceneFrame=frameOwnedInsertIndependentSceneFrame;
   clearActiveIndependentSceneFrame=frameOwnedClearActiveIndependentSceneFrame;
@@ -26119,12 +26148,14 @@ ctx.fill();</textarea>
   function nativeDecorateLayerFollowLinks(){
     const list=document.getElementById('layer-list');
     if(!list || typeof wickEnsureCurrentDrawingLayers!=='function') return;
+    const objectRows=Array.from(list.querySelectorAll('.layer-row.object-layer'));
+    if(!objectRows.length) return;
     const model=wickEnsureCurrentDrawingLayers();
     const isolated=getIsolatedGroupInfo();
     const entries=isolated
       ?[{obj:isolated.child,idx:isolated.rootIndex}]
       :drawObjects.map((obj,idx)=>({obj,idx})).reverse();
-    Array.from(list.querySelectorAll('.layer-row.object-layer')).forEach((row,pos)=>{
+    objectRows.forEach((row,pos)=>{
       const entry=entries[pos];
       const childLayer=entry&&entry.obj?wickLayerById(entry.obj.timelineLayerId):null;
       if(!childLayer || row.querySelector('.native-layer-follow-select')) return;
