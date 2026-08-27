@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v258: new artwork belongs only to the selected clip/project frame instead of automatically spanning the remaining timeline. -->
 <!-- LukeAnimate GPT v257: Play mode hides editor selections/handles and blocks stage editing or Clip entry. -->
 <!-- LukeAnimate GPT v256: Play mode shows only normal/interactive cursors, and Drag & Drop requires 70% target overlap. -->
 <!-- LukeAnimate GPT v255: Drag & Drop can also send another Clip to a frame and set a variable on correct or wrong drops. -->
@@ -76,7 +77,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v257</title>
+<title>Luke Animate v258</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -14089,7 +14090,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 166;
+    project.projectVersion = 167;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -21538,7 +21539,7 @@ ctx.fill();</textarea>
     let layer=object&&object.timelineLayerId?wickLayerById(object.timelineLayerId):null;
     let active=layer?wickFrameAt(layer,currentFrame):null;
     if(!active || active.object!==object){
-      wickRegisterObjectLayer(object,currentFrame,wickTotalFrameIndex(timelineDuration));
+      wickRegisterObjectLayer(object,currentFrame,currentFrame);
     }
     syncActiveSceneFrameForTime(t,false);
     selectedDrawIndices.clear();
@@ -21563,7 +21564,7 @@ ctx.fill();</textarea>
         ensureDrawObjectMetadata(object);
         let layer=object.timelineLayerId ? wickLayerById(object.timelineLayerId) : null;
         if(!layer){
-          if(!wickClaimSelectedBlankFrameForObject(object,frameIndex))wickRegisterObjectLayer(object,frameIndex,wickTotalFrameIndex(timelineDuration));
+          if(!wickClaimSelectedBlankFrameForObject(object,frameIndex))wickRegisterObjectLayer(object,frameIndex,frameIndex);
           changed=true;
           return;
         }
@@ -21604,7 +21605,7 @@ ctx.fill();</textarea>
           : null;
 
         if(!layer){
-          wickRegisterObjectLayer(object,frameIndex,totalFrames);
+          wickRegisterObjectLayer(object,frameIndex,frameIndex);
           return;
         }
 
