@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v260: Boolean results stay in the first selected object's frame/layer and remove empty operand layers. -->
 <!-- LukeAnimate GPT v259: Boolean results replace shapes only on the active frame and preserve their layers on every other frame. -->
 <!-- LukeAnimate GPT v258: new artwork belongs only to the selected clip/project frame instead of automatically spanning the remaining timeline. -->
 <!-- LukeAnimate GPT v257: Play mode hides editor selections/handles and blocks stage editing or Clip entry. -->
@@ -78,7 +79,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v259</title>
+<title>Luke Animate v260</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -9036,9 +9037,20 @@ ctx.fill();</textarea>
     pushUndo();
     const booleanFrame=typeof wickCurrentFrameIndex==='function'?wickCurrentFrameIndex():Math.max(0,Math.round(t*getTimelineFPS()));
     const replacedFrames=objects.map(object=>{const layer=object&&object.timelineLayerId&&typeof wickLayerById==='function'?wickLayerById(object.timelineLayerId):null;const frame=layer&&typeof wickFrameAt==='function'?wickFrameAt(layer,booleanFrame):null;return layer&&frame&&frame.object===object?{layer,frame}:null;}).filter(Boolean);
-    for(let index=indices.length-1;index>=0;index--)drawObjects.splice(indices[index],1);
-    replacedFrames.forEach(({layer})=>wickInsertLayerFrame(layer,booleanFrame,'blank'));
-    selectedDrawIndices.clear();suppressCommitDrawUndo=true;try{commitDrawObject(result);}finally{suppressCommitDrawUndo=false;}
+    const firstOwner=replacedFrames[0]||null;
+    if(firstOwner){
+      const resultFrame=wickInsertLayerFrame(firstOwner.layer,booleanFrame,'blank');
+      resultFrame.blank=false;resultFrame.object=result;
+      result.timelineLayerId=firstOwner.layer.id;result.timelineLayerOrder=firstOwner.layer.order;result.frameLinkId=resultFrame.id;result.frameLinkStart=resultFrame.startFrame;result.frameLinkEnd=resultFrame.endFrame;
+      replacedFrames.slice(1).forEach(({layer})=>wickInsertLayerFrame(layer,booleanFrame,'blank'));
+      const emptyLayerIds=new Set(replacedFrames.slice(1).map(({layer})=>layer).filter(layer=>(layer.frames||[]).every(frame=>frame.blank||!frame.object)).map(layer=>String(layer.id)));
+      if(emptyLayerIds.size)wickDrawingLayers.splice(0,wickDrawingLayers.length,...wickDrawingLayers.filter(layer=>!emptyLayerIds.has(String(layer.id))));
+      wickActiveDrawingLayerId=firstOwner.layer.id;wickSelectedDrawingFrameId=resultFrame.id;wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);syncActiveSceneFrameForTime(t,false);
+      selectedDrawIndices.clear();const resultIndex=drawObjects.findIndex(object=>object&&String(object.frameLinkId)===String(resultFrame.id));if(resultIndex>=0)selectedDrawIndices.add(resultIndex);updateSelectedCountUI();renderLayerList();updateInspector();renderTimeline();renderTransformHandles();
+    }else{
+      for(let index=indices.length-1;index>=0;index--)drawObjects.splice(indices[index],1);
+      selectedDrawIndices.clear();suppressCommitDrawUndo=true;try{commitDrawObject(result);}finally{suppressCommitDrawUndo=false;}
+    }
     logToSandbox('Boolean '+operation+' created an editable vector result.');return true;
   }
 
@@ -14092,7 +14104,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 168;
+    project.projectVersion = 169;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
