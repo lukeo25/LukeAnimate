@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v264: new blank/duplicate keys start one frame wide and extend safely by dragging their hold. -->
 <!-- LukeAnimate GPT v263: Blank Key materialises the first visible frame; automatic empty spans remain hidden. -->
 <!-- LukeAnimate GPT v262: empty clips and projects show no content row until a frame owns an object. -->
 <!-- LukeAnimate GPT v261: clip/project frames own arrays of artwork; objects never create timeline layers of their own. -->
@@ -82,7 +83,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v263</title>
+<title>Luke Animate v264</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3844,19 +3845,27 @@ ctx.fill();</textarea>
     let target = source;
     const newObjects = mode === 'duplicate' ? cloneIndependentFrameObjects(source.objects) : [];
 
+    const oldEnd = source.endFrame;
     if(frameIndex > source.startFrame){
-      const oldEnd = source.endFrame;
       source.endFrame = frameIndex - 1;
-      target = makeIndependentSceneFrame(frameIndex, oldEnd, newObjects);
+      target = makeIndependentSceneFrame(frameIndex, frameIndex, newObjects);
       const sourceIndex = sceneFrames.indexOf(source);
       sceneFrames.splice(sourceIndex + 1, 0, target);
+      if(frameIndex < oldEnd){
+        sceneFrames.splice(sourceIndex + 2, 0, makeIndependentSceneFrame(frameIndex + 1, oldEnd, [], { explicitKey:false }));
+      }
     }else{
-      // A key already begins here. Replacing its owned content is the correct
-      // Wick-style operation; the surrounding frames remain untouched.
+      // A newly inserted key owns one frame. Its following cells stay empty
+      // until the user deliberately drags the key's hold edge across them.
       source.objects = newObjects;
+      source.endFrame = frameIndex;
       source.explicitKey = true;
       source.frameOnly = true;
       target = source;
+      if(frameIndex < oldEnd){
+        const sourceIndex = sceneFrames.indexOf(source);
+        sceneFrames.splice(sourceIndex + 1, 0, makeIndependentSceneFrame(frameIndex + 1, oldEnd, [], { explicitKey:false }));
+      }
     }
 
     activeSceneFrameId = target.id;
@@ -14097,7 +14106,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 172;
+    project.projectVersion = 173;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
