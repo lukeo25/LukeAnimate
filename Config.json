@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 58,
+  "version": 59,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -67,11 +67,20 @@
           "F_Screen": 0
         },
         {
+          "id": "Stop",
+          "label": "Stop",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Stop.svg",
+          "iconText": "■",
+          "action": "script-marker",
+          "markerType": "stop",
+          "F_Screen": 0
+        },
+        {
           "id": "Rando",
           "label": "Rando",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Rando.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Rando.txt",
-          "action": "script",
+          "action": "script-marker",
+          "markerType": "rando",
           "F_Screen": 0
         },
         {
@@ -304,4 +313,5 @@
     }
   ]
 }
+
 
