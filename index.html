@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v283: adds two-click capture fallback for Script-marker Node Coder handoff. -->
+<!-- LukeAnimate GPT v284: adds two-click capture fallback for Script-marker Node Coder handoff. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
 <!-- LukeAnimate GPT v273: standardises the Script Behaviour panel, removes duplicate add controls and uses frame-centred icon-only Script keys. -->
@@ -95,7 +95,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v283</title>
+<title>Luke Animate v284</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -20420,6 +20420,7 @@ ctx.fill();</textarea>
         element.ondblclick=event=>{event.preventDefault();event.stopPropagation();LukeAnimatePluginAPI.focusNodeCoderTimelineMarker(layer.id,marker.id);};
         element.oncontextmenu=event=>{selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;openKeyframeContextMenu(event,{deleteKey:()=>deleteScriptMarker(layer,marker,true),deleteKeyHint:'Delete this script marker'});};
         element.onpointerdown=event=>{
+          if(event.pointerType==='mouse')return;
           if(event.button!==0)return;event.preventDefault();event.stopPropagation();
           if(event.detail>=2){LukeAnimatePluginAPI.focusNodeCoderTimelineMarker(layer.id,marker.id);return;}
           selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;
@@ -20441,6 +20442,16 @@ ctx.fill();</textarea>
           };
           document.addEventListener('pointermove',move,true);document.addEventListener('pointerup',finish,true);document.addEventListener('pointercancel',finish,true);
         };
+        element.addEventListener('mousedown',event=>{
+          if(event.button!==0)return;event.preventDefault();event.stopPropagation();
+          selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;
+          document.querySelectorAll('.script-frame-marker.selected').forEach(node=>node.classList.remove('selected'));
+          element.classList.add('selected');row.classList.add('active');openScriptBehaviourPanel();
+          const rect=track.getBoundingClientRect(),startFrame=marker.frame;let moved=false,history=false;
+          const move=moveEvent=>{const next=Math.max(0,Math.min(info.totalFrames,Math.round(((moveEvent.clientX-rect.left)/Math.max(1,rect.width))*Math.max(1,info.totalFrames))));if(next===marker.frame)return;if(!history){pushUndo();history=true;}moved=true;marker.frame=next;element.style.left=timelineFrameCenterPercent(next,info)+'%';};
+          const finish=()=>{document.removeEventListener('mousemove',move,true);document.removeEventListener('mouseup',finish,true);if(moved){layer.markers.sort((a,b)=>a.frame-b.frame);renderTimeline();renderScriptBehaviourPanel();}};
+          document.addEventListener('mousemove',move,true);document.addEventListener('mouseup',finish,true);
+        });
         track.appendChild(element);
       });
       name.onclick=()=>{selectedScriptLayerId=layer.id;selectedScriptMarkerId=null;document.getElementById('script-behaviour-panel').classList.remove('open');renderTimeline();};
