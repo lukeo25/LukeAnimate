@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v278: opens Node Coder through its visible configured tool button on Script-marker double-click. -->
+<!-- LukeAnimate GPT v279: handles Script-marker double-click at pointer detail so drag handlers cannot swallow it. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
 <!-- LukeAnimate GPT v273: standardises the Script Behaviour panel, removes duplicate add controls and uses frame-centred icon-only Script keys. -->
@@ -95,7 +95,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v278</title>
+<title>Luke Animate v279</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -20423,6 +20423,7 @@ ctx.fill();</textarea>
         element.oncontextmenu=event=>{selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;openKeyframeContextMenu(event,{deleteKey:()=>deleteScriptMarker(layer,marker,true),deleteKeyHint:'Delete this script marker'});};
         element.onpointerdown=event=>{
           if(event.button!==0)return;event.preventDefault();event.stopPropagation();
+          if(event.detail>=2){LukeAnimatePluginAPI.focusNodeCoderTimelineMarker(layer.id,marker.id);return;}
           selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;
           document.querySelectorAll('.script-frame-marker.selected').forEach(node=>node.classList.remove('selected'));
           element.classList.add('selected');row.classList.add('active');openScriptBehaviourPanel();
