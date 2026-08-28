@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v285: adds two-click capture fallback for Script-marker Node Coder handoff. -->
+<!-- LukeAnimate GPT v286: adds two-click capture fallback for Script-marker Node Coder handoff. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
 <!-- LukeAnimate GPT v273: standardises the Script Behaviour panel, removes duplicate add controls and uses frame-centred icon-only Script keys. -->
@@ -95,7 +95,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v285</title>
+<title>Luke Animate v286</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -4799,12 +4799,13 @@ ctx.fill();</textarea>
   function nodeCodeRuntimeForObject(object,create){
     const runtime=typeToolRuntimeForObject(object,create);
     if(!runtime)return null;
-    if(!runtime.nodeCoder&&create)runtime.nodeCoder={loaded:false,state:Object.create(null),compiled:Object.create(null),errors:Object.create(null),output:Object.create(null)};
+    if(!runtime.nodeCoder&&create)runtime.nodeCoder={loaded:false,lastFrame:-1,state:Object.create(null),compiled:Object.create(null),errors:Object.create(null),output:Object.create(null)};
     return runtime.nodeCoder||null;
   }
 
   function runNodeCodeSlot(object,slot,eventName,step,eventData){
     if(!slot||slot.source==='type-tool'||slot.enabled===false||slot.event!==eventName||!String(slot.code||'').trim())return;
+    if(eventName==='frame'&&Number.isFinite(Number(slot.frame))&&Number(slot.frame)!==Number(eventData&&eventData.frame))return;
     const nodeRuntime=nodeCodeRuntimeForObject(object,true);
     let compiled=nodeRuntime.compiled[slot.id];
     if(!compiled||compiled.source!==slot.code){
@@ -4849,6 +4850,7 @@ ctx.fill();</textarea>
     if(!runtime||!runtime.loaded)return;
     runNodeCodeEvent(object,'unload',0,null);
     runtime.loaded=false;
+    runtime.lastFrame=-1;
     runtime.state=Object.create(null);
     runtime.output=Object.create(null);
   }
@@ -5294,6 +5296,7 @@ ctx.fill();</textarea>
       state.opacityMultiplier=1;state.scaleMultiplier=1;state.clipStopTime=null;
       state.grabOffsetX=config.keepGrabOffset?(Number(effective.x)||0)-pointer.x:0;
       state.grabOffsetY=config.keepGrabOffset?(Number(effective.y)||0)-pointer.y:0;
+      runNodeCodeEvent(object,'dragstart',step,{pointer:{x:pointer.x,y:pointer.y}});
     }
     if(state.dragging&&pointer.down){
       const effective=getEffectiveObj(object,t);
@@ -5301,11 +5304,14 @@ ctx.fill();</textarea>
       const authoredY=(Number(effective.y)||0)-(Number(runtime.offsetY)||0);
       runtime.offsetX=pointer.x+state.grabOffsetX-authoredX;
       runtime.offsetY=pointer.y+state.grabOffsetY-authoredY;
+      runNodeCodeEvent(object,'drag',step,{pointer:{x:pointer.x,y:pointer.y}});
     }
     if(state.dragging&&pointer.released){
       state.dragging=false;if(activeDragDropObject===object)activeDragDropObject=null;
       const target=dragDropTargetObject(object,config);
       const correct=!!(target&&dragDropBoundsOverlap(getEffectiveBounds(object),getEffectiveBounds(target)));
+      runNodeCodeEvent(object,'drop',step,{target,correct});
+      runNodeCodeEvent(object,correct?'correctDrop':'incorrectDrop',step,{target,correct});
       const variable=correct?config.scoreVar:config.wrongScoreVar;
       const amount=correct?config.correctScore:-Math.abs(config.wrongScore);
       typeToolWriteValue(object,variable,(Number(typeToolReadValue(object,variable,0))||0)+amount);
@@ -5334,6 +5340,11 @@ ctx.fill();</textarea>
       if(nodeDocument){
         const nodeRuntime=nodeCodeRuntimeForObject(object,true);
         if(!nodeRuntime.loaded){nodeRuntime.loaded=true;runNodeCodeEvent(object,'load',step,null);}
+        const pointerOver=pointInBounds(nodeCodePointer.x,nodeCodePointer.y,getEffectiveBounds(object),0);
+        if(nodeCodePointer.pressed&&pointerOver)runNodeCodeEvent(object,'pointerdown',step,{button:nodeCodePointer.button});
+        if(nodeCodePointer.released&&pointerOver){runNodeCodeEvent(object,'pointerup',step,{button:nodeCodePointer.button});runNodeCodeEvent(object,'click',step,{button:nodeCodePointer.button});}
+        const currentNodeFrame=frameIndexForTime(t,timelineDuration);
+        if(nodeRuntime.lastFrame!==currentNodeFrame){nodeRuntime.lastFrame=currentNodeFrame;runNodeCodeEvent(object,'frame',step,{frame:currentNodeFrame});}
         runNodeCodeEvent(object,'update',step,null);nodeCodeActiveObjects.add(object);
       }
       const tools=typeToolsForObject(object,false);
