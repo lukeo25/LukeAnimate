@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v277: fixes Script-marker double-click handoff to Node Coder. -->
+<!-- LukeAnimate GPT v278: opens Node Coder through its visible configured tool button on Script-marker double-click. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
 <!-- LukeAnimate GPT v273: standardises the Script Behaviour panel, removes duplicate add controls and uses frame-centred icon-only Script keys. -->
@@ -95,7 +95,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v277</title>
+<title>Luke Animate v278</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -13689,6 +13689,8 @@ ctx.fill();</textarea>
     focusNodeCoderTimelineMarker(layerId,markerId){
       nodeCoderTimelineFocus={layerId:String(layerId||''),markerId:String(markerId||'')};
       document.getElementById('script-behaviour-panel')?.classList.remove('open');
+      const button=document.querySelector('.config-script-button[data-config-group="tools"][data-config-item="Node_Coder"]');
+      if(button){button.click();return true;}
       const open=()=>this.openConfiguredTool('tools','Node_Coder');
       return lukeAnimateConfig ? open() : loadLukeAnimateConfig(false).then(open);
     },
