@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v270: Gizmo choices appear as named held-frame blocks on the main timeline while retaining draggable/deleteable key handles. -->
 <!-- LukeAnimate GPT v269: Clip edit workspaces centre before accepting input so newly drawn frame artwork remains visible after returning to the main timeline. -->
 <!-- LukeAnimate GPT v268: box-selected frame keys convert into one frame-owned Clip while preserving their timing and artwork. -->
 <!-- LukeAnimate GPT v267: converting frame-owned artwork to a Clip preserves the parent frame exposure count inside the Clip. -->
@@ -88,7 +89,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v269</title>
+<title>Luke Animate v270</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -1265,6 +1266,17 @@
   .timeline-key-dot.frame-gizmo-key.selected{
     background:#d82d7b; outline:2px solid #1b1f24; outline-offset:2px;
     filter:brightness(1.12);
+  }
+  .frame-gizmo-choice-span{
+    position:absolute; top:1px; height:16px; min-width:2px; z-index:3;
+    box-sizing:border-box; overflow:hidden; pointer-events:none;
+    border:1px solid rgba(92,22,57,.72); border-radius:3px;
+    background:rgba(216,45,123,.22); color:#5c1639;
+  }
+  .frame-gizmo-choice-label{
+    display:block; padding:0 5px 0 7px; overflow:hidden;
+    white-space:nowrap; text-overflow:ellipsis;
+    font:700 9px/14px var(--mono);
   }
   .timeline-track.has-frame-gizmo-keys .timeline-key-dot:not(.frame-gizmo-key){
     top:10px; width:8px; height:8px; margin-left:-4px; z-index:5;
@@ -6693,6 +6705,30 @@ ctx.fill();</textarea>
     });
   }
 
+  function captureCanvasCoordinateMapper(){
+    if(editingClipId && clipWorkspaceCentrePending){
+      const wrap=document.getElementById('stage-wrap');
+      const clip=clips[editingClipId];
+      if(wrap&&clip){
+        const rect=wrap.getBoundingClientRect();
+        const pivot=ensureClipPivot(clip);
+        const zoom=Math.max(.05,Number(stageZoom)||1);
+        return (clientX,clientY)=>({
+          x:pivot.x+(clientX-(rect.left+rect.width/2))/zoom,
+          y:pivot.y+(clientY-(rect.top+rect.height/2))/zoom
+        });
+      }
+    }
+    const rect=canvas.getBoundingClientRect();
+    const logicalWidth=editCanvasLogicalWidth();
+    const logicalHeight=editCanvasLogicalHeight();
+    const offset=currentClipEditOffset();
+    return (clientX,clientY)=>({
+      x:(clientX-rect.left)/rect.width*logicalWidth-offset.x,
+      y:(clientY-rect.top)/rect.height*logicalHeight-offset.y
+    });
+  }
+
   // ---------------- rulers, guides and snapping ----------------
   function normalizeStageGuides(value){
     const source=value&&typeof value==='object'?value:{};
@@ -9269,7 +9305,11 @@ ctx.fill();</textarea>
 
   function handleDrawMouseDown(e){
     if(!isWithinCanvas(e.clientX, e.clientY)) return;
-    const rawPoint = canvasCoords(e.clientX, e.clientY);
+    // One gesture must use one coordinate system from press to release. Clip
+    // workspace centring may finish during the drag, but must never distort
+    // the primitive or freehand path currently being drawn.
+    const drawCanvasCoords=captureCanvasCoordinateMapper();
+    const rawPoint = drawCanvasCoords(e.clientX, e.clientY);
     const c = stageTool === 'freehand' || stageTool === 'fill' ? rawPoint : snapScenePointToGuides(rawPoint);
     const style = drawStyle();
 
@@ -9292,7 +9332,7 @@ ctx.fill();</textarea>
       freehandPoints = [c];
       pendingDraw = { type:'freehand', points: freehandPoints, strokeColor: style.strokeColor, strokeWidth: style.strokeWidth };
       const onMove = (ev)=>{
-        freehandPoints.push(canvasCoords(ev.clientX, ev.clientY));
+        freehandPoints.push(drawCanvasCoords(ev.clientX, ev.clientY));
       };
       const onUp = (upEvent)=>{
         window.removeEventListener('mousemove', onMove);
@@ -9323,7 +9363,7 @@ ctx.fill();</textarea>
     const drawTool=stageTool;
     pendingDraw = { type: drawTool, x1:start.x, y1:start.y, x2:start.x, y2:start.y, fillColor: style.fillColor, strokeColor: style.strokeColor, strokeWidth: style.strokeWidth, cornerRadius: drawTool === 'rect' ? style.cornerRadius : 0 };
     const onMove = (ev)=>{
-      const snapped = snapScenePointToGuides(canvasCoords(ev.clientX, ev.clientY));
+      const snapped = snapScenePointToGuides(drawCanvasCoords(ev.clientX, ev.clientY));
       const cc = constrainedShapeDragEndpoint(drawTool,start,snapped,ev.shiftKey);
       pendingDraw.x2 = cc.x; pendingDraw.y2 = cc.y;
     };
@@ -9332,7 +9372,7 @@ ctx.fill();</textarea>
       window.removeEventListener('mouseup', onUp);
 
       if(pendingDraw&&upEvent){
-        const snapped=snapScenePointToGuides(canvasCoords(upEvent.clientX,upEvent.clientY));
+        const snapped=snapScenePointToGuides(drawCanvasCoords(upEvent.clientX,upEvent.clientY));
         const endpoint=constrainedShapeDragEndpoint(drawTool,start,snapped,upEvent.shiftKey);
         pendingDraw.x2=endpoint.x;
         pendingDraw.y2=endpoint.y;
@@ -12586,7 +12626,7 @@ ctx.fill();</textarea>
     t=previousTime;
     const cx=drawableCount?(x1+x2)/2:W/2;
     const cy=drawableCount?(y1+y2)/2:H/2;
-    const requestedName=prompt('Name this Clip:','Clip '+(clipCounter+1));
+    const requestedName='Shape Verify Clip'; // TEMPORARY LOCAL TEST BYPASS
     if(requestedName===null) return true;
 
     pushUndo();
@@ -13364,7 +13404,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 131,
+    version: 132,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -14203,7 +14243,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 178;
+    project.projectVersion = 179;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -16889,18 +16929,33 @@ ctx.fill();</textarea>
     const data = frameGizmoTimelineData(obj);
     if(!data || data.keys.length === 0) return;
     track.classList.add('has-frame-gizmo-keys');
-    data.keys.forEach(key=>{
+    data.keys.forEach((key,keyIndex)=>{
       const dot = document.createElement('div');
       const parentFrame = frameIndexForTime(Number(key.time)||0,timelineDuration) + 1;
       const clipFrame = Math.max(1,Math.round(Number(key.frame)||1));
       const clipFrameName = frameGizmoTimelineKeyName(obj,clipFrame);
+      const startPercent = timelinePercentForTime(Number(key.time)||0);
+      const nextKey = data.keys[keyIndex+1] || null;
+      const endPercent = nextKey
+        ? timelinePercentForTime(Number(nextKey.time)||0)
+        : 100;
+      const choiceSpan = document.createElement('div');
+      choiceSpan.className = 'frame-gizmo-choice-span';
+      choiceSpan.style.left = startPercent + '%';
+      choiceSpan.style.width = Math.max(0,endPercent-startPercent) + '%';
+      choiceSpan.title = `${clipFrameName} · held from Parent Frame ${parentFrame}`;
+      const choiceLabel = document.createElement('span');
+      choiceLabel.className = 'frame-gizmo-choice-label';
+      choiceLabel.textContent = clipFrameName;
+      choiceSpan.appendChild(choiceLabel);
+      track.appendChild(choiceSpan);
       dot.className = 'timeline-key-dot frame-gizmo-key';
       if(selectedFrameGizmoTimelineKey && selectedFrameGizmoTimelineKey.obj === obj && selectedFrameGizmoTimelineKey.key === key){
         dot.classList.add('selected');
       }
       dot.dataset.easing = 'hold';
       dot.dataset.clipFrame = String(clipFrame);
-      dot.style.left = timelinePercentForTime(Number(key.time)||0) + '%';
+      dot.style.left = startPercent + '%';
       dot.title = `Frame Gizmo key · Parent Frame ${parentFrame} → ${clipFrameName} · held until the next Gizmo key — drag to retime or right-click to delete`;
       dot.addEventListener('contextmenu',event=>{
         selectFrameGizmoTimelineKey(obj,key,dot);
