@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v284: adds two-click capture fallback for Script-marker Node Coder handoff. -->
+<!-- LukeAnimate GPT v285: adds two-click capture fallback for Script-marker Node Coder handoff. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
 <!-- LukeAnimate GPT v273: standardises the Script Behaviour panel, removes duplicate add controls and uses frame-centred icon-only Script keys. -->
@@ -95,7 +95,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v284</title>
+<title>Luke Animate v285</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -20414,6 +20414,7 @@ ctx.fill();</textarea>
       const track=document.createElement('div');track.className='timeline-track';track.title='Double-click a frame to add a Stop marker. Select the layer to choose Stop or Rando in the Script Behaviour panel.';
       layer.markers.forEach(marker=>{
         const element=document.createElement('div');element.className='script-frame-marker'+(selectedScriptMarkerId===marker.id?' selected':'');element.style.left=timelineFrameCenterPercent(marker.frame,info)+'%';element.dataset.scriptMarkerId=marker.id;
+        element.draggable=true;
         const image=document.createElement('img');image.src='https://lukeo25.github.io/LukeAnimate/SVGs/'+(marker.type==='rando'?'Rando.svg':'Stop.svg');image.alt=marker.type==='rando'?'Rando':'Stop';element.appendChild(image);
         const text=document.createElement('span');text.className='script-frame-marker-label';text.textContent=marker.type==='rando'?'Rando':'Stop';element.appendChild(text);
         element.title=(marker.type==='rando'?'Rando':'Stop')+' script · Frame '+(marker.frame+1)+' · drag to retime · right-click to delete';
@@ -20452,6 +20453,8 @@ ctx.fill();</textarea>
           const finish=()=>{document.removeEventListener('mousemove',move,true);document.removeEventListener('mouseup',finish,true);if(moved){layer.markers.sort((a,b)=>a.frame-b.frame);renderTimeline();renderScriptBehaviourPanel();}};
           document.addEventListener('mousemove',move,true);document.addEventListener('mouseup',finish,true);
         });
+        element.addEventListener('dragstart',event=>{event.stopPropagation();event.dataTransfer.effectAllowed='move';element.dataset.draggingScriptMarker='1';});
+        element.addEventListener('dragend',event=>{event.stopPropagation();const rect=track.getBoundingClientRect(),next=Math.max(0,Math.min(info.totalFrames,Math.round(((event.clientX-rect.left)/Math.max(1,rect.width))*Math.max(1,info.totalFrames))));if(next!==marker.frame){pushUndo();marker.frame=next;layer.markers.sort((a,b)=>a.frame-b.frame);renderTimeline();renderScriptBehaviourPanel();}delete element.dataset.draggingScriptMarker;});
         track.appendChild(element);
       });
       name.onclick=()=>{selectedScriptLayerId=layer.id;selectedScriptMarkerId=null;document.getElementById('script-behaviour-panel').classList.remove('open');renderTimeline();};
