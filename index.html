@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v279: handles Script-marker double-click at pointer detail so drag handlers cannot swallow it. -->
+<!-- LukeAnimate GPT v280: captures Script-marker double-click at document level before timeline handlers. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
 <!-- LukeAnimate GPT v273: standardises the Script Behaviour panel, removes duplicate add controls and uses frame-centred icon-only Script keys. -->
@@ -95,7 +95,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v279</title>
+<title>Luke Animate v280</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -20444,6 +20444,14 @@ ctx.fill();</textarea>
   document.getElementById('btn-script-layer-add').addEventListener('click',addScriptLayer);
   document.getElementById('btn-script-panel-close').addEventListener('click',()=>document.getElementById('script-behaviour-panel').classList.remove('open'));
   registerFloatingPanel(document.getElementById('script-behaviour-panel'));
+  document.addEventListener('dblclick',event=>{
+    const markerElement=event.target instanceof Element&&event.target.closest('.script-frame-marker');
+    if(!markerElement)return;
+    const markerId=markerElement.dataset.scriptMarkerId;
+    const layer=scriptLayers.find(entry=>Array.isArray(entry.markers)&&entry.markers.some(marker=>String(marker.id)===String(markerId)));
+    const marker=layer&&layer.markers.find(entry=>String(entry.id)===String(markerId));
+    if(layer&&marker){event.preventDefault();event.stopPropagation();LukeAnimatePluginAPI.focusNodeCoderTimelineMarker(layer.id,marker.id);}
+  },true);
   document.addEventListener('keydown',event=>{
     const targetIsEditor=event.target instanceof Element&&!!event.target.closest('input,textarea,select,[contenteditable="true"]');
     if((event.key==='Delete'||event.key==='Backspace')&&!targetIsEditor){
