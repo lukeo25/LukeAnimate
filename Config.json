@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 61,
+  "version": 62,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -281,7 +281,7 @@
           "id": "Node_Coder",
           "label": "Node Coder",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Node.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Nodecoder.txt?v=2.7",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/Nodecoder.txt?v=2.8",
           "action": "tool",
           "F_Screen": 1
         },
