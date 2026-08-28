@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v277: fixes Script-marker double-click handoff to Node Coder. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
 <!-- LukeAnimate GPT v273: standardises the Script Behaviour panel, removes duplicate add controls and uses frame-centred icon-only Script keys. -->
@@ -94,7 +95,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v276</title>
+<title>Luke Animate v277</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -20416,7 +20417,7 @@ ctx.fill();</textarea>
         const image=document.createElement('img');image.src='https://lukeo25.github.io/LukeAnimate/SVGs/'+(marker.type==='rando'?'Rando.svg':'Stop.svg');image.alt=marker.type==='rando'?'Rando':'Stop';element.appendChild(image);
         const text=document.createElement('span');text.className='script-frame-marker-label';text.textContent=marker.type==='rando'?'Rando':'Stop';element.appendChild(text);
         element.title=(marker.type==='rando'?'Rando':'Stop')+' script · Frame '+(marker.frame+1)+' · drag to retime · right-click to delete';
-        element.ondblclick=event=>{event.preventDefault();event.stopPropagation();focusNodeCoderTimelineMarker(layer.id,marker.id);};
+        element.ondblclick=event=>{event.preventDefault();event.stopPropagation();LukeAnimatePluginAPI.focusNodeCoderTimelineMarker(layer.id,marker.id);};
         element.oncontextmenu=event=>{selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;openKeyframeContextMenu(event,{deleteKey:()=>deleteScriptMarker(layer,marker,true),deleteKeyHint:'Delete this script marker'});};
         element.onpointerdown=event=>{
           if(event.button!==0)return;event.preventDefault();event.stopPropagation();
