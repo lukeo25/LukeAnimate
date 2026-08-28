@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v275: makes Script keys use the full Stop/Rando artwork instead of square-looking indicators. -->
+<!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
 <!-- LukeAnimate GPT v273: standardises the Script Behaviour panel, removes duplicate add controls and uses frame-centred icon-only Script keys. -->
 <!-- LukeAnimate GPT v272: exposes Stop and timeline Rando in Behaviours Tools and places their markers on the current frame. -->
@@ -94,7 +94,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v275</title>
+<title>Luke Animate v276</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3587,6 +3587,7 @@ ctx.fill();</textarea>
   let scriptMarkerCounter = 0;
   let selectedScriptLayerId = null;
   let selectedScriptMarkerId = null;
+  let nodeCoderTimelineFocus = null;
   const scriptRuntimeVariables = Object.create(null);
   const scriptRuntimeState = { lastFrame:null, executedOnce:new Set() };
   let pendingDraw = null; // in-progress shape being dragged out, for live preview
@@ -13684,6 +13685,13 @@ ctx.fill();</textarea>
       selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;renderTimeline();openScriptBehaviourPanel();return true;
     },
     runTimelineAction(target,action,value){applyScriptAction(target||'timeline',action||'none',value);return true;},
+    focusNodeCoderTimelineMarker(layerId,markerId){
+      nodeCoderTimelineFocus={layerId:String(layerId||''),markerId:String(markerId||'')};
+      document.getElementById('script-behaviour-panel')?.classList.remove('open');
+      const open=()=>this.openConfiguredTool('tools','Node_Coder');
+      return lukeAnimateConfig ? open() : loadLukeAnimateConfig(false).then(open);
+    },
+    consumeNodeCoderTimelineFocus(){const focus=nodeCoderTimelineFocus;nodeCoderTimelineFocus=null;return focus;},
     getNodeCodeSlots(object){
       const documentData=syncTypeToolNodeCodeSlots(object)||nodeCodeDocumentForObject(object,false);
       return documentData?JSON.parse(JSON.stringify(documentData.slots)):[];
@@ -20408,6 +20416,7 @@ ctx.fill();</textarea>
         const image=document.createElement('img');image.src='https://lukeo25.github.io/LukeAnimate/SVGs/'+(marker.type==='rando'?'Rando.svg':'Stop.svg');image.alt=marker.type==='rando'?'Rando':'Stop';element.appendChild(image);
         const text=document.createElement('span');text.className='script-frame-marker-label';text.textContent=marker.type==='rando'?'Rando':'Stop';element.appendChild(text);
         element.title=(marker.type==='rando'?'Rando':'Stop')+' script · Frame '+(marker.frame+1)+' · drag to retime · right-click to delete';
+        element.ondblclick=event=>{event.preventDefault();event.stopPropagation();focusNodeCoderTimelineMarker(layer.id,marker.id);};
         element.oncontextmenu=event=>{selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;openKeyframeContextMenu(event,{deleteKey:()=>deleteScriptMarker(layer,marker,true),deleteKeyHint:'Delete this script marker'});};
         element.onpointerdown=event=>{
           if(event.button!==0)return;event.preventDefault();event.stopPropagation();
