@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v271: adds persistent Script timeline layers with draggable frame markers and native Stop/Rando behaviours. -->
 <!-- LukeAnimate GPT v270: Gizmo choices appear as named held-frame blocks on the main timeline while retaining draggable/deleteable key handles. -->
 <!-- LukeAnimate GPT v269: Clip edit workspaces centre before accepting input so newly drawn frame artwork remains visible after returning to the main timeline. -->
 <!-- LukeAnimate GPT v268: box-selected frame keys convert into one frame-owned Clip while preserving their timing and artwork. -->
@@ -89,7 +90,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v270</title>
+<title>Luke Animate v271</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -1281,6 +1282,53 @@
   .timeline-track.has-frame-gizmo-keys .timeline-key-dot:not(.frame-gizmo-key){
     top:10px; width:8px; height:8px; margin-left:-4px; z-index:5;
   }
+  .timeline-track-row.script-timeline-layer .timeline-track-name{
+    color:#694079; font-weight:700; cursor:pointer;
+  }
+  .timeline-track-row.script-timeline-layer.active .timeline-track-name{
+    color:#8d2f75; background:#f6e9f2; border-radius:4px;
+  }
+  .script-frame-marker{
+    position:absolute; top:1px; height:16px; min-width:18px; max-width:96px;
+    transform:translateX(-8px); z-index:9; display:flex; align-items:center; gap:3px;
+    padding:0 5px 0 3px; box-sizing:border-box; overflow:hidden;
+    border:1px solid #694079; border-radius:4px; background:#f4d9eb;
+    color:#5c214b; cursor:ew-resize; user-select:none; touch-action:none;
+    box-shadow:0 1px 2px rgba(0,0,0,.18);
+    font:700 9px/14px var(--mono);
+  }
+  .script-frame-marker.selected{outline:2px solid var(--accent);outline-offset:1px;background:#ffd9ee;}
+  .script-frame-marker img{width:12px;height:12px;display:block;pointer-events:none;}
+  .script-frame-marker.icon-missing img{display:none;}
+  .script-frame-marker-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none;}
+  .script-frame-marker-fallback{display:none;line-height:1;pointer-events:none;}
+  .script-frame-marker.icon-missing .script-frame-marker-fallback{display:inline;}
+  #script-behaviour-panel{
+    position:fixed; top:84px; right:336px; z-index:calc(var(--floating-panel-z) + 5);
+    width:360px; max-height:calc(100vh - 110px); display:none;
+    background:rgba(255,255,255,.98); border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 14px 38px rgba(0,0,0,.24); backdrop-filter:blur(8px);
+    overflow:hidden; isolation:isolate; pointer-events:auto;
+  }
+  #script-behaviour-panel.open{display:flex;flex-direction:column;}
+  #script-behaviour-header{
+    display:flex;align-items:center;justify-content:space-between;gap:8px;
+    padding:9px 10px 9px 12px;border-bottom:1px solid var(--line);
+    background:var(--panel-2);cursor:move;user-select:none;font-size:12px;font-weight:700;
+  }
+  #script-behaviour-body{padding:10px 12px 12px;overflow:auto;}
+  .script-panel-row{display:flex;align-items:center;gap:8px;margin-bottom:9px;font-size:11.5px;color:var(--text-dim);}
+  .script-panel-row>label{flex:0 0 92px;}
+  .script-panel-row input[type=text],.script-panel-row input[type=number],.script-panel-row select{
+    min-width:0;flex:1;background:var(--panel-2);color:var(--text);border:1px solid var(--line);
+    border-radius:6px;padding:6px 7px;font-family:inherit;font-size:11.5px;
+  }
+  .script-panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:9px;}
+  .script-panel-card{border:1px solid var(--line);border-radius:8px;padding:9px;background:var(--panel-2);margin-bottom:9px;}
+  .script-panel-card h4{margin:0 0 8px;font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim);}
+  .script-panel-checks{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:9px;font-size:11px;color:var(--text-dim);}
+  .script-panel-checks label{display:flex;align-items:center;gap:5px;}
+  .script-panel-help{font-size:10.5px;line-height:1.4;color:var(--text-dim);margin:0 0 9px;}
   .keyframe-context-menu{
     position:fixed; z-index:5000; min-width:238px; padding:7px; border-radius:10px;
     background:#f7f8fa; border:1px solid #aeb8c5; box-shadow:0 12px 32px rgba(16,24,40,.28);
@@ -3369,6 +3417,14 @@ ctx.fill();</textarea>
 </div><!-- /sidebar-column -->
 </div><!-- /main-row -->
 
+<div id="script-behaviour-panel" aria-label="Script Behaviour">
+  <div id="script-behaviour-header" data-floating-panel-drag>
+    <span>⌘ Script Behaviour</span>
+    <button class="btn small" id="btn-script-panel-close" type="button" aria-label="Close Script Behaviour">×</button>
+  </div>
+  <div id="script-behaviour-body"></div>
+</div>
+
 <div id="timeline-dock">
   <div id="timeline-resize-handle" title="Drag upward to reveal more timeline layers. Double-click to reset the timeline height."></div>
   <div id="transport-bar">
@@ -3386,6 +3442,7 @@ ctx.fill();</textarea>
     <button class="btn small" id="btn-frame-blank" type="button" title="Insert a blank independent keyframe at the playhead (F7)">+ Blank Key</button>
     <button class="btn small" id="btn-frame-duplicate" type="button" title="Insert an independent copy of the held frame at the playhead (F6)">Duplicate Key</button>
     <button class="btn small danger" id="btn-frame-clear" type="button" title="Clear the active frame without changing its hold length">Clear Key</button>
+    <button class="btn small" id="btn-script-layer-add" type="button" title="Add a Script layer. Double-click its timeline to add a behaviour marker.">+ Script Layer</button>
     <div class="timeline-zoom-controls" title="Adjust timeline frame width. Ctrl/Cmd + mouse wheel over the timeline also zooms.">
       <button type="button" id="btn-timeline-zoom-out" aria-label="Zoom timeline out">−</button>
       <input type="range" id="timeline-frame-zoom" min="6" max="40" step="1" value="12" aria-label="Timeline frame width">
@@ -3505,6 +3562,13 @@ ctx.fill();</textarea>
   let sceneFrames = [];   // Wick-style held frames: {id,startFrame,endFrame,objects[]}
   let sceneFrameCounter = 0;
   let activeSceneFrameId = null;
+  let scriptLayers = [];  // frame-triggered timeline scripts, shared by the stage/Clip context switch
+  let scriptLayerCounter = 0;
+  let scriptMarkerCounter = 0;
+  let selectedScriptLayerId = null;
+  let selectedScriptMarkerId = null;
+  const scriptRuntimeVariables = Object.create(null);
+  const scriptRuntimeState = { lastFrame:null, executedOnce:new Set() };
   let pendingDraw = null; // in-progress shape being dragged out, for live preview
   let freehandPoints = null;
   let penDraft = null;
@@ -6267,6 +6331,9 @@ ctx.fill();</textarea>
       guidesVisible,
       drawObjects: JSON.parse(JSON.stringify(drawObjects)),
       sceneFrames: JSON.parse(JSON.stringify(sceneFrames)),
+      scriptLayers: JSON.parse(JSON.stringify(scriptLayers)),
+      scriptLayerCounter,
+      scriptMarkerCounter,
       frameModelVersion: 2,
       sceneFrameCounter,
       activeSceneFrameId,
@@ -6347,6 +6414,16 @@ ctx.fill();</textarea>
     sceneFrames = snap.sceneFrames
       ? JSON.parse(JSON.stringify(snap.sceneFrames))
       : [];
+    scriptLayers = Array.isArray(snap.scriptLayers) ? JSON.parse(JSON.stringify(snap.scriptLayers)) : [];
+    scriptLayerCounter = Math.max(Number(snap.scriptLayerCounter)||0, ...scriptLayers.map(layer=>{
+      const match=String(layer&&layer.id||'').match(/script-layer-(\d+)/);return match?Number(match[1])||0:0;
+    }), 0);
+    scriptMarkerCounter = Math.max(Number(snap.scriptMarkerCounter)||0, ...scriptLayers.flatMap(layer=>(layer&&layer.markers||[]).map(marker=>{
+      const match=String(marker&&marker.id||'').match(/script-marker-(\d+)/);return match?Number(match[1])||0:0;
+    })), 0);
+    selectedScriptLayerId = null;
+    selectedScriptMarkerId = null;
+    resetScriptLayerRuntime();
     normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
     activeSceneFrameId = snap.activeSceneFrameId || null;
     syncActiveSceneFrameForTime(t, false);
@@ -8186,6 +8263,7 @@ ctx.fill();</textarea>
       pivotX: 0,
       pivotY: 0,
       frameLabels: [],
+      scriptLayers: [],
       timelineDuration: 3,
       loopTimeline: true
     };
@@ -8502,7 +8580,7 @@ ctx.fill();</textarea>
 
   function captureMainSceneAsContext(){
     saveActivePathEditor();
-    return { points, closed, targetPoints, layers, drawObjects, sceneFrames, activeSceneFrameId, timelineDuration, loopTimeline, activeIndex, t };
+    return { points, closed, targetPoints, layers, drawObjects, sceneFrames, scriptLayers, activeSceneFrameId, timelineDuration, loopTimeline, activeIndex, t };
   }
 
   // Persistent context switch used while actively EDITING a clip (not just
@@ -8515,6 +8593,7 @@ ctx.fill();</textarea>
     layers = data.layers;
     drawObjects = Array.isArray(data.drawObjects) ? data.drawObjects : [];
     sceneFrames = Array.isArray(data.sceneFrames) ? data.sceneFrames : [];
+    scriptLayers = Array.isArray(data.scriptLayers) ? data.scriptLayers : [];
     activeSceneFrameId = data.activeSceneFrameId || null;
     timelineDuration = data.timelineDuration; loopTimeline = data.loopTimeline;
     activeIndex = layers.length
@@ -8550,6 +8629,7 @@ ctx.fill();</textarea>
       points: clip.points, closed: clip.closed, targetPoints: clip.targetPoints,
       layers: clip.layers, drawObjects: clip.drawObjects,
       sceneFrames: ensureClipSceneFrames(clip), activeSceneFrameId:null,
+      scriptLayers: Array.isArray(clip.scriptLayers) ? clip.scriptLayers : (clip.scriptLayers=[]),
       timelineDuration: clip.timelineDuration, loopTimeline: clip.loopTimeline,
       activeIndex: 0, t: 0
     });
@@ -8574,6 +8654,7 @@ ctx.fill();</textarea>
     clip.targetPoints = targetPoints;
     clip.layers = layers;
     clip.sceneFrames = sceneFrames;
+    clip.scriptLayers = scriptLayers;
     normalizeSceneFrameList(clip.sceneFrames, timelineDuration, drawObjects);
     clip.drawObjects = clip.sceneFrames.length ? clip.sceneFrames[0].objects : [];
     clip.timelineDuration = timelineDuration;
@@ -13404,7 +13485,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 132,
+    version: 133,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -13428,6 +13509,7 @@ ctx.fill();</textarea>
     get isPlaying(){ return !!playing; },
     get onionSkinEnabled(){ return onionSkinEnabled; },
     get isExporting(){ return exportPlayback.active; },
+    get scriptVariables(){ return scriptRuntimeVariables; },
     get onionSkinBeforeFrames(){ return onionSkinBeforeFrames; },
     get onionSkinAfterFrames(){ return onionSkinAfterFrames; },
     setOnionSkin(enabled){ setOnionSkin(enabled); },
@@ -14237,13 +14319,16 @@ ctx.fill();</textarea>
     behaviourCounter = Math.max(behaviourCounter, ...behaviours.map(behaviour=>{
       const match=String(behaviour && behaviour.id || '').match(/behaviour-(\d+)/); return match ? Number(match[1])||0 : 0;
     }), 0);
+    const allScriptLayers=(Array.isArray(scriptLayers)?scriptLayers:[]).concat(...Object.values(clips).map(clip=>Array.isArray(clip&&clip.scriptLayers)?clip.scriptLayers:[]));
+    scriptLayerCounter=Math.max(scriptLayerCounter,...allScriptLayers.map(layer=>{const match=String(layer&&layer.id||'').match(/script-layer-(\d+)/);return match?Number(match[1])||0:0;}),0);
+    scriptMarkerCounter=Math.max(scriptMarkerCounter,...allScriptLayers.flatMap(layer=>(layer&&layer.markers||[]).map(marker=>{const match=String(marker&&marker.id||'').match(/script-marker-(\d+)/);return match?Number(match[1])||0:0;})),0);
     normalizeAllDrawObjects();
   }
 
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 179;
+    project.projectVersion = 180;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -14299,8 +14384,10 @@ ctx.fill();</textarea>
     if(!Array.isArray(project.layers)) project.layers=[];
     if(!Array.isArray(project.drawObjects)) project.drawObjects=[];
     if(!Array.isArray(project.sceneFrames)) project.sceneFrames=[];
+    if(!Array.isArray(project.scriptLayers)) project.scriptLayers=[];
     if(!Array.isArray(project.behaviours)) project.behaviours=[];
     if(!project.clips || typeof project.clips !== 'object') project.clips={};
+    Object.values(project.clips).forEach(clip=>{if(clip&&!Array.isArray(clip.scriptLayers))clip.scriptLayers=[];});
     if(project.bgMode === 'green' && !project.stageColor){ project.bgMode='color'; project.stageColor='#00ff00'; }
     return project;
   }
@@ -18434,6 +18521,7 @@ ctx.fill();</textarea>
     renderTransformHandles();
     t = 0;
     resetTypeToolRuntime();
+    resetScriptLayerRuntime();
     stopAudioIfLoaded();
   });
 
@@ -18986,6 +19074,17 @@ ctx.fill();</textarea>
         if(dragState.clipStopTime!==null&&dragState.clipStopTime!==undefined&&Number.isFinite(Number(dragState.clipStopTime))){
           if(effective===obj)effective=Object.assign({},obj);
           effective.clipStopTime=Math.max(0,Number(dragState.clipStopTime));
+        }
+      }
+      if(runtime&&runtime.scriptLayer){
+        const scriptState=runtime.scriptLayer;
+        if(scriptState.clipStopTime!==null&&scriptState.clipStopTime!==undefined&&Number.isFinite(Number(scriptState.clipStopTime))){
+          if(effective===obj)effective=Object.assign({},obj);
+          effective.clipStopTime=Math.max(0,Number(scriptState.clipStopTime));
+        }
+        if(scriptState.output&&Object.keys(scriptState.output).length){
+          if(effective===obj)effective=Object.assign({},obj);
+          Object.assign(effective,scriptState.output);
         }
       }
       if(runtime&&runtime.nodeCoder&&runtime.nodeCoder.output){
@@ -19969,6 +20068,292 @@ ctx.fill();</textarea>
     }
   }
 
+  // ---------------- frame Script layers: Stop + Rando ----------------
+  function scriptEscape(value){
+    return String(value===undefined?'':value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  }
+
+  function scriptLayerById(id){return scriptLayers.find(layer=>String(layer&&layer.id||'')===String(id||''))||null;}
+  function scriptMarkerById(layer,id){return layer&&Array.isArray(layer.markers)?layer.markers.find(marker=>String(marker&&marker.id||'')===String(id||''))||null:null;}
+  function selectedScriptLayer(){return scriptLayerById(selectedScriptLayerId);}
+  function selectedScriptMarker(){const layer=selectedScriptLayer();return scriptMarkerById(layer,selectedScriptMarkerId);}
+
+  function defaultScriptRule(){return {op:'==',compare:'0',target:'timeline',action:'none',value:'1'};}
+  function makeScriptLayer(){
+    scriptLayerCounter++;
+    return {id:'script-layer-'+scriptLayerCounter,name:'Script '+scriptLayerCounter,markers:[]};
+  }
+  function makeScriptMarker(type,frame){
+    scriptMarkerCounter++;
+    const marker={id:'script-marker-'+scriptMarkerCounter,frame:Math.max(0,Math.round(Number(frame)||0)),type:type==='rando'?'rando':'stop'};
+    if(marker.type==='rando')marker.config={varName:'rng'+scriptMarkerCounter,min:0,max:10,integer:true,runOnce:false,store:true,rules:[defaultScriptRule()]};
+    else marker.config={action:'stop',target:'timeline',frame:'1'};
+    return marker;
+  }
+  function normaliseScriptMarker(marker){
+    if(!marker||typeof marker!=='object')return null;
+    marker.frame=Math.max(0,Math.min(wickTotalFrameIndex(timelineDuration),Math.round(Number(marker.frame)||0)));
+    marker.type=marker.type==='rando'?'rando':'stop';
+    marker.config=marker.config&&typeof marker.config==='object'?marker.config:{};
+    if(marker.type==='rando'){
+      marker.config.varName=String(marker.config.varName||'rng').replace(/[^a-zA-Z0-9_]/g,'_')||'rng';
+      marker.config.min=Number.isFinite(Number(marker.config.min))?Number(marker.config.min):0;
+      marker.config.max=Number.isFinite(Number(marker.config.max))?Number(marker.config.max):10;
+      marker.config.integer=marker.config.integer!==false;
+      marker.config.runOnce=!!marker.config.runOnce;
+      marker.config.store=marker.config.store!==false;
+      marker.config.rules=Array.isArray(marker.config.rules)?marker.config.rules:[defaultScriptRule()];
+    }else{
+      marker.config.action=['stop','gotoStop','clipStop','clipGotoStop'].includes(marker.config.action)?marker.config.action:'stop';
+      marker.config.target=String(marker.config.target||'timeline');
+      marker.config.frame=String(marker.config.frame||'1');
+    }
+    return marker;
+  }
+  function normaliseScriptLayers(){
+    if(!Array.isArray(scriptLayers))scriptLayers=[];
+    scriptLayers.forEach(layer=>{
+      if(!Array.isArray(layer.markers))layer.markers=[];
+      layer.markers=layer.markers.map(normaliseScriptMarker).filter(Boolean).sort((a,b)=>a.frame-b.frame);
+    });
+  }
+
+  function activeScriptClipTargets(){
+    const seen=new Set();
+    return activeTypeToolObjectsAtTime().filter(object=>{
+      if(!object||object.type!=='clipinstance'||seen.has(object))return false;
+      seen.add(object);return true;
+    }).map(object=>({id:String(object.id||''),name:dragDropObjectName(object)||'Clip'}));
+  }
+  function scriptTargetOptions(selected,includeTimeline){
+    let html=includeTimeline?'<option value="timeline"'+(selected==='timeline'?' selected':'')+'>This timeline</option>':'';
+    activeScriptClipTargets().forEach(target=>{html+='<option value="'+scriptEscape(target.id)+'"'+(String(selected)===target.id?' selected':'')+'>'+scriptEscape(target.name)+'</option>';});
+    return html;
+  }
+  function scriptFrameFromValue(target,value){
+    const text=String(value===undefined?'':value).trim();
+    if(target==='timeline')return Math.max(0,Math.min(wickTotalFrameIndex(timelineDuration),Math.round(Number(text)||1)-1));
+    const object=typeToolObjectById(target);
+    const timeValue=dragDropFrameTime(object,text);
+    return timeValue===null?0:Math.max(0,timeValue);
+  }
+
+  function resetScriptLayerRuntime(){
+    scriptRuntimeState.lastFrame=null;
+    scriptRuntimeState.executedOnce.clear();
+    Object.keys(scriptRuntimeVariables).forEach(key=>delete scriptRuntimeVariables[key]);
+    visitAllTypeToolObjects(object=>{
+      const runtime=typeToolRuntimeForObject(object,false);
+      if(runtime)delete runtime.scriptLayer;
+    });
+  }
+  function scriptClipRuntime(targetId){
+    const object=typeToolObjectById(targetId);
+    if(!object||object.type!=='clipinstance')return null;
+    const runtime=typeToolRuntimeForObject(object,true);
+    if(!runtime.scriptLayer)runtime.scriptLayer={clipStopTime:null,output:{}};
+    return {object,state:runtime.scriptLayer};
+  }
+  function applyScriptAction(target,action,value){
+    target=String(target||'timeline');action=String(action||'none');
+    if(action==='none')return;
+    if(target==='timeline'){
+      const frame=Math.max(0,Math.min(wickTotalFrameIndex(timelineDuration),Math.round(Number(value)||1)-1));
+      if(action==='gotoStop'||action==='gotoPlay')t=frame/getTimelineFPS();
+      else if(action==='next')t=Math.min(timelineDuration,(frameIndexForTime(t,timelineDuration)+1)/getTimelineFPS());
+      else if(action==='prev')t=Math.max(0,(frameIndexForTime(t,timelineDuration)-1)/getTimelineFPS());
+      if(action==='stop'||action==='gotoStop')playing=false;
+      if(action==='play'||action==='gotoPlay')playing=true;
+      return;
+    }
+    const targetRuntime=scriptClipRuntime(target);if(!targetRuntime)return;
+    const {object,state}=targetRuntime;
+    if(action==='stop')state.clipStopTime=clipInstanceLocalTime(object,getEffectiveObj(object,t),t);
+    else if(action==='gotoStop')state.clipStopTime=scriptFrameFromValue(target,value);
+    else if(action==='play')state.clipStopTime=null;
+    else if(action==='gotoPlay'){
+      state.clipStopTime=null;
+      object.timeOffset=scriptFrameFromValue(target,value)-t;
+    }else if(action==='next'||action==='prev'){
+      const current=clipInstanceLocalTime(object,getEffectiveObj(object,t),t);
+      state.clipStopTime=Math.max(0,current+(action==='next'?1:-1)/getTimelineFPS());
+    }else if(['opacity','x','y'].includes(action)){
+      const numeric=Number(value);if(Number.isFinite(numeric))state.output[action]=numeric;
+    }
+  }
+  function scriptCompare(left,operator,right){
+    if(operator==='!=')return left!==right;if(operator==='<')return left<right;if(operator==='>')return left>right;
+    if(operator==='<=')return left<=right;if(operator==='>=')return left>=right;return left===right;
+  }
+  function runScriptMarker(marker){
+    marker=normaliseScriptMarker(marker);if(!marker)return;
+    if(marker.type==='stop'){
+      const config=marker.config;
+      if(config.action==='gotoStop')applyScriptAction('timeline','gotoStop',config.frame);
+      else if(config.action==='clipStop')applyScriptAction(config.target,'stop',config.frame);
+      else if(config.action==='clipGotoStop')applyScriptAction(config.target,'gotoStop',config.frame);
+      else applyScriptAction('timeline','stop',config.frame);
+      return;
+    }
+    const config=marker.config;
+    if(config.runOnce&&scriptRuntimeState.executedOnce.has(marker.id))return;
+    let min=Number(config.min)||0,max=Number(config.max)||0;if(min>max){const swap=min;min=max;max=swap;}
+    const integerMin=Math.ceil(min),integerMax=Math.floor(max);
+    const value=config.integer
+      ?(integerMax>=integerMin?Math.floor(Math.random()*(integerMax-integerMin+1))+integerMin:Math.round(min))
+      :+(min+Math.random()*(max-min)).toFixed(4);
+    if(config.store){scriptRuntimeVariables[config.varName]=value;try{window[config.varName]=value;}catch(_error){}}
+    (config.rules||[]).forEach(rule=>{
+      const raw=String(rule.compare===undefined?'':rule.compare).trim();
+      const compareValue=raw!==''&&Number.isFinite(Number(raw))?Number(raw):raw;
+      if(scriptCompare(value,String(rule.op||'=='),compareValue))applyScriptAction(rule.target||'timeline',rule.action||'none',rule.value);
+    });
+    if(config.runOnce)scriptRuntimeState.executedOnce.add(marker.id);
+  }
+  function runScriptMarkersAtFrame(frame){
+    normaliseScriptLayers();
+    for(const layer of scriptLayers){
+      for(const marker of layer.markers){
+        if(marker.frame===frame){runScriptMarker(marker);if(!playing&&!exportPlayback.active)return;}
+      }
+    }
+  }
+  function tickScriptLayerRuntime(){
+    if(!playing&&!exportPlayback.active){scriptRuntimeState.lastFrame=null;return;}
+    const frame=frameIndexForTime(t,timelineDuration),last=scriptRuntimeState.lastFrame,total=wickTotalFrameIndex(timelineDuration);
+    if(last===null)runScriptMarkersAtFrame(frame);
+    else if(frame!==last){
+      if(frame>last){for(let index=last+1;index<=frame;index++){runScriptMarkersAtFrame(index);if(!playing&&!exportPlayback.active)break;}}
+      else{for(let index=last+1;index<=total;index++){runScriptMarkersAtFrame(index);if(!playing&&!exportPlayback.active)break;}if(playing||exportPlayback.active){for(let index=0;index<=frame;index++){runScriptMarkersAtFrame(index);if(!playing&&!exportPlayback.active)break;}}}
+    }
+    scriptRuntimeState.lastFrame=frameIndexForTime(t,timelineDuration);
+  }
+
+  function deleteScriptMarker(layer,marker,recordHistory){
+    if(!layer||!marker)return false;if(recordHistory!==false)pushUndo();
+    layer.markers=layer.markers.filter(entry=>entry!==marker);
+    if(selectedScriptMarkerId===marker.id)selectedScriptMarkerId=null;
+    renderTimeline();renderScriptBehaviourPanel();return true;
+  }
+  function addScriptMarker(layer,type,frame){
+    if(!layer)return null;pushUndo();
+    const marker=makeScriptMarker(type,frame);
+    layer.markers.push(marker);layer.markers.sort((a,b)=>a.frame-b.frame);
+    selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;
+    renderTimeline();openScriptBehaviourPanel();return marker;
+  }
+  function addScriptLayer(){
+    pushUndo();const layer=makeScriptLayer();scriptLayers.push(layer);
+    selectedScriptLayerId=layer.id;selectedScriptMarkerId=null;
+    renderTimeline();openScriptBehaviourPanel();
+  }
+
+  function renderScriptBehaviourPanel(){
+    const panel=document.getElementById('script-behaviour-panel'),body=document.getElementById('script-behaviour-body');
+    if(!panel||!body)return;
+    const layer=selectedScriptLayer(),marker=selectedScriptMarker();
+    if(!layer){body.innerHTML='<p class="script-panel-help">Add or select a Script layer on the timeline.</p>';return;}
+    if(!marker){
+      body.innerHTML='<div class="script-panel-card"><h4>'+scriptEscape(layer.name)+'</h4><p class="script-panel-help">Add a behaviour marker at Frame '+(frameIndexForTime(t,timelineDuration)+1)+'. Double-clicking the Script track does the same.</p><div class="script-panel-grid"><button class="btn small primary" data-script-add="stop">Add Stop</button><button class="btn small primary" data-script-add="rando">Add Rando</button></div></div>';
+      body.querySelectorAll('[data-script-add]').forEach(button=>button.onclick=()=>addScriptMarker(layer,button.dataset.scriptAdd,frameIndexForTime(t,timelineDuration)));
+      return;
+    }
+    normaliseScriptMarker(marker);
+    const frameNumber=marker.frame+1;
+    let html='<div class="script-panel-row"><label>Layer</label><input type="text" data-script-layer-name value="'+scriptEscape(layer.name)+'"></div>'+
+      '<div class="script-panel-row"><label>Marker frame</label><input type="number" min="1" max="'+(wickTotalFrameIndex(timelineDuration)+1)+'" data-script-marker-frame value="'+frameNumber+'"></div>'+
+      '<div class="script-panel-row"><label>Behaviour</label><select data-script-marker-type><option value="stop"'+(marker.type==='stop'?' selected':'')+'>Stop</option><option value="rando"'+(marker.type==='rando'?' selected':'')+'>Rando</option></select></div>';
+    if(marker.type==='stop'){
+      const config=marker.config,targetNeeded=config.action==='clipStop'||config.action==='clipGotoStop',frameNeeded=config.action==='gotoStop'||config.action==='clipGotoStop';
+      html+='<div class="script-panel-card"><h4>Stop behaviour</h4><div class="script-panel-row"><label>Do</label><select data-stop-action><option value="stop"'+(config.action==='stop'?' selected':'')+'>Stop this timeline</option><option value="gotoStop"'+(config.action==='gotoStop'?' selected':'')+'>Go to frame and stop</option><option value="clipStop"'+(config.action==='clipStop'?' selected':'')+'>Tell Clip to stop</option><option value="clipGotoStop"'+(config.action==='clipGotoStop'?' selected':'')+'>Tell Clip: go to and stop</option></select></div>'+
+        (targetNeeded?'<div class="script-panel-row"><label>Clip</label><select data-stop-target>'+scriptTargetOptions(config.target,false)+'</select></div>':'')+
+        (frameNeeded?'<div class="script-panel-row"><label>Frame / label</label><input type="text" data-stop-frame value="'+scriptEscape(config.frame)+'"></div>':'')+
+        '<p class="script-panel-help">This marker runs when playback reaches Frame '+frameNumber+'. Stop.svg is used automatically when that asset becomes available.</p></div>';
+    }else{
+      const config=marker.config;
+      html+='<div class="script-panel-card"><h4>Rando</h4><div class="script-panel-row"><label>Variable</label><input type="text" data-rando-field="varName" value="'+scriptEscape(config.varName)+'"></div><div class="script-panel-grid"><div><label>Minimum</label><input type="number" step="any" data-rando-field="min" value="'+config.min+'"></div><div><label>Maximum</label><input type="number" step="any" data-rando-field="max" value="'+config.max+'"></div></div><div class="script-panel-checks"><label><input type="checkbox" data-rando-check="integer"'+(config.integer?' checked':'')+'> Integer</label><label><input type="checkbox" data-rando-check="runOnce"'+(config.runOnce?' checked':'')+'> Run once</label><label><input type="checkbox" data-rando-check="store"'+(config.store?' checked':'')+'> Store variable</label></div><p class="script-panel-help">Rando chooses a value at this marker, then runs every matching IF / THEN rule.</p></div>';
+      (config.rules||[]).forEach((rule,index)=>{
+        const needsValue=['gotoStop','gotoPlay','opacity','x','y'].includes(rule.action);
+        html+='<div class="script-panel-card" data-rando-rule="'+index+'"><h4>IF / THEN Rule '+(index+1)+'</h4><div class="script-panel-grid"><select data-rule-field="op"><option'+(rule.op==='=='?' selected':'')+'>==</option><option'+(rule.op==='!='?' selected':'')+'>!=</option><option'+(rule.op==='<'?' selected':'')+'>&lt;</option><option'+(rule.op==='>'?' selected':'')+'>&gt;</option><option'+(rule.op==='<='?' selected':'')+'>&lt;=</option><option'+(rule.op==='>='?' selected':'')+'>&gt;=</option></select><input type="text" data-rule-field="compare" value="'+scriptEscape(rule.compare)+'" placeholder="value"></div><div class="script-panel-row"><label>Target</label><select data-rule-field="target">'+scriptTargetOptions(rule.target,true)+'</select></div><div class="script-panel-row"><label>Then</label><select data-rule-field="action"><option value="none"'+(rule.action==='none'?' selected':'')+'>Do nothing</option><option value="stop"'+(rule.action==='stop'?' selected':'')+'>Stop</option><option value="gotoStop"'+(rule.action==='gotoStop'?' selected':'')+'>Go to and stop</option><option value="play"'+(rule.action==='play'?' selected':'')+'>Play</option><option value="gotoPlay"'+(rule.action==='gotoPlay'?' selected':'')+'>Go to and play</option><option value="next"'+(rule.action==='next'?' selected':'')+'>Next frame</option><option value="prev"'+(rule.action==='prev'?' selected':'')+'>Previous frame</option><option value="opacity"'+(rule.action==='opacity'?' selected':'')+'>Set opacity</option><option value="x"'+(rule.action==='x'?' selected':'')+'>Set X</option><option value="y"'+(rule.action==='y'?' selected':'')+'>Set Y</option></select></div>'+(needsValue?'<div class="script-panel-row"><label>Frame / value</label><input type="text" data-rule-field="value" value="'+scriptEscape(rule.value)+'"></div>':'')+'<button class="btn small danger" data-rule-remove="'+index+'">Remove rule</button></div>';
+      });
+      html+='<button class="btn small" data-rule-add>+ Add IF / THEN rule</button>';
+    }
+    html+='<div class="btn-row" style="margin-top:10px"><button class="btn small danger" data-script-delete>Delete marker</button></div>';
+    body.innerHTML=html;
+    const commit=(mutate,rebuild)=>{pushUndo();mutate();normaliseScriptMarker(marker);renderTimeline();if(rebuild)renderScriptBehaviourPanel();};
+    body.querySelector('[data-script-layer-name]').onchange=event=>commit(()=>{layer.name=String(event.target.value||'Script');},false);
+    const markerFrameInput=body.querySelector('[data-script-marker-frame]');
+    let markerFrameHistory=false;
+    markerFrameInput.oninput=event=>{
+      if(!markerFrameHistory){pushUndo();markerFrameHistory=true;}
+      marker.frame=Math.max(0,Math.min(wickTotalFrameIndex(timelineDuration),Math.round(Number(event.target.value)||1)-1));
+      renderTimeline();
+    };
+    markerFrameInput.onchange=()=>{layer.markers.sort((a,b)=>a.frame-b.frame);markerFrameHistory=false;renderTimeline();renderScriptBehaviourPanel();};
+    body.querySelector('[data-script-marker-type]').onchange=event=>commit(()=>{const replacement=makeScriptMarker(event.target.value,marker.frame);marker.type=replacement.type;marker.config=replacement.config;},true);
+    const stopAction=body.querySelector('[data-stop-action]');if(stopAction)stopAction.onchange=event=>commit(()=>{marker.config.action=event.target.value;},true);
+    const stopTarget=body.querySelector('[data-stop-target]');if(stopTarget)stopTarget.onchange=event=>commit(()=>{marker.config.target=event.target.value;},false);
+    const stopFrame=body.querySelector('[data-stop-frame]');if(stopFrame)stopFrame.onchange=event=>commit(()=>{marker.config.frame=event.target.value;},false);
+    body.querySelectorAll('[data-rando-field]').forEach(input=>input.onchange=event=>commit(()=>{const field=event.target.dataset.randoField;marker.config[field]=field==='min'||field==='max'?Number(event.target.value):event.target.value;},false));
+    body.querySelectorAll('[data-rando-check]').forEach(input=>input.onchange=event=>commit(()=>{marker.config[event.target.dataset.randoCheck]=event.target.checked;},false));
+    body.querySelectorAll('[data-rando-rule]').forEach(card=>card.querySelectorAll('[data-rule-field]').forEach(input=>input.onchange=event=>commit(()=>{marker.config.rules[Number(card.dataset.randoRule)][event.target.dataset.ruleField]=event.target.value;},event.target.dataset.ruleField==='action')));
+    body.querySelectorAll('[data-rule-remove]').forEach(button=>button.onclick=()=>commit(()=>{marker.config.rules.splice(Number(button.dataset.ruleRemove),1);},true));
+    const addRule=body.querySelector('[data-rule-add]');if(addRule)addRule.onclick=()=>commit(()=>marker.config.rules.push(defaultScriptRule()),true);
+    body.querySelector('[data-script-delete]').onclick=()=>deleteScriptMarker(layer,marker,true);
+  }
+  function openScriptBehaviourPanel(){
+    const panel=document.getElementById('script-behaviour-panel');if(!panel)return;
+    panel.classList.add('open');bringFloatingPanelToFront(panel);renderScriptBehaviourPanel();requestAnimationFrame(()=>clampFloatingPanelToViewport(panel));
+  }
+
+  function buildScriptLayerRows(tracksElement){
+    normaliseScriptLayers();const info=wickTimelineInfo();
+    scriptLayers.slice().reverse().forEach(layer=>{
+      const row=document.createElement('div');row.className='timeline-track-row script-timeline-layer'+(selectedScriptLayerId===layer.id?' active':'');row.dataset.timelineKind='script-layer';
+      const name=document.createElement('div');name.className='timeline-track-name';
+      const del=document.createElement('button');del.type='button';del.className='wick-layer-delete-button';del.textContent='×';del.title='Delete '+layer.name;
+      del.onclick=event=>{event.stopPropagation();pushUndo();scriptLayers=scriptLayers.filter(entry=>entry!==layer);if(selectedScriptLayerId===layer.id){selectedScriptLayerId=null;selectedScriptMarkerId=null;}renderTimeline();renderScriptBehaviourPanel();};
+      const label=document.createElement('span');label.className='wick-layer-name-text';label.textContent='⌘ '+layer.name;name.append(del,label);
+      const track=document.createElement('div');track.className='timeline-track';track.title='Double-click a frame to add a Stop marker. Select the layer to choose Stop or Rando in the Script Behaviour panel.';
+      layer.markers.forEach(marker=>{
+        const element=document.createElement('div');element.className='script-frame-marker'+(selectedScriptMarkerId===marker.id?' selected':'');element.style.left=timelineFrameCenterPercent(marker.frame,info)+'%';element.dataset.scriptMarkerId=marker.id;
+        if(marker.type==='stop'){
+          const image=document.createElement('img');image.src='https://lukeo25.github.io/LukeAnimate/SVGs/Stop.svg';image.alt='';image.onerror=()=>element.classList.add('icon-missing');element.appendChild(image);
+        }
+        const fallback=document.createElement('span');fallback.className='script-frame-marker-fallback';fallback.textContent=marker.type==='rando'?'⚄':'■';if(marker.type==='rando')fallback.style.display='inline';
+        const text=document.createElement('span');text.className='script-frame-marker-label';text.textContent=marker.type==='rando'?'Rando':'Stop';element.append(fallback,text);
+        element.title=(marker.type==='rando'?'Rando':'Stop')+' script · Frame '+(marker.frame+1)+' · drag to retime · right-click to delete';
+        element.oncontextmenu=event=>{selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;openKeyframeContextMenu(event,{deleteKey:()=>deleteScriptMarker(layer,marker,false),deleteKeyHint:'Delete this script marker'});};
+        element.onpointerdown=event=>{
+          if(event.button!==0)return;event.preventDefault();event.stopPropagation();
+          selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;
+          document.querySelectorAll('.script-frame-marker.selected').forEach(node=>node.classList.remove('selected'));
+          element.classList.add('selected');row.classList.add('active');openScriptBehaviourPanel();
+          const startX=event.clientX,startFrame=marker.frame,pointerId=event.pointerId;let moved=false,history=false;
+          try{element.setPointerCapture(pointerId);}catch(_error){}
+          const move=moveEvent=>{if(moveEvent.pointerId!==pointerId)return;const delta=Math.round((moveEvent.clientX-startX)/Math.max(1,info.frameWidth));if(!delta)return;if(!history){pushUndo();history=true;}moved=true;marker.frame=Math.max(0,Math.min(info.totalFrames,startFrame+delta));element.style.left=timelineFrameCenterPercent(marker.frame,info)+'%';};
+          const finish=finishEvent=>{if(finishEvent.pointerId!==pointerId)return;element.removeEventListener('pointermove',move);element.removeEventListener('pointerup',finish);element.removeEventListener('pointercancel',finish);if(moved){layer.markers.sort((a,b)=>a.frame-b.frame);renderTimeline();renderScriptBehaviourPanel();}};
+          element.addEventListener('pointermove',move);element.addEventListener('pointerup',finish);element.addEventListener('pointercancel',finish);
+        };
+        track.appendChild(element);
+      });
+      name.onclick=()=>{selectedScriptLayerId=layer.id;selectedScriptMarkerId=null;openScriptBehaviourPanel();renderTimeline();};
+      track.onclick=event=>{if(event.target.closest('.script-frame-marker'))return;selectedScriptLayerId=layer.id;selectedScriptMarkerId=null;t=wickFrameFromTrackClientX(track,event.clientX,info)/getTimelineFPS();playing=false;syncActiveSceneFrameForTime(t,false);openScriptBehaviourPanel();renderTimeline();};
+      track.ondblclick=event=>{if(event.target.closest('.script-frame-marker'))return;event.preventDefault();event.stopPropagation();addScriptMarker(layer,'stop',wickFrameFromTrackClientX(track,event.clientX,info));};
+      row.append(name,track);tracksElement.insertBefore(row,tracksElement.firstChild);
+    });
+  }
+
+  document.getElementById('btn-script-layer-add').addEventListener('click',addScriptLayer);
+  document.getElementById('btn-script-panel-close').addEventListener('click',()=>document.getElementById('script-behaviour-panel').classList.remove('open'));
+  registerFloatingPanel(document.getElementById('script-behaviour-panel'));
+  document.addEventListener('keydown',event=>{
+    const targetIsEditor=event.target instanceof Element&&!!event.target.closest('input,textarea,select,[contenteditable="true"]');
+    if((event.key==='Delete'||event.key==='Backspace')&&!targetIsEditor){
+      const layer=selectedScriptLayer(),marker=selectedScriptMarker();if(layer&&marker){event.preventDefault();deleteScriptMarker(layer,marker,true);}
+    }
+  });
+
   // ---------------- main render loop ----------------
   function render(now){
     // v180: playback time must follow REAL elapsed time, not renderer speed.
@@ -20031,6 +20416,8 @@ ctx.fill();</textarea>
     syncActiveSceneFrameForTime(t, false);
     if(document.body.classList.contains('playback-active')!==!!playing)syncPlaybackCursorMode();
     tickTypeToolRuntime(dt);
+    tickScriptLayerRuntime();
+    syncActiveSceneFrameForTime(t, false);
 
     const playhead = document.getElementById('timeline-playhead');
     const frameInfo = getTimelineFrameInfo();
@@ -25947,6 +26334,11 @@ ctx.fill();</textarea>
   const nativeLockRenderTimelineBase=renderTimeline;
   renderTimeline=function(){
     const result=nativeLockRenderTimelineBase();
+    const tracks=document.getElementById('timeline-tracks');
+    if(tracks){
+      tracks.querySelectorAll('[data-timeline-kind="script-layer"]').forEach(row=>row.remove());
+      buildScriptLayerRows(tracks);
+    }
     nativeDecorateTimelineLocks();
     return result;
   };
