@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v269: Clip edit workspaces centre before accepting input so newly drawn frame artwork remains visible after returning to the main timeline. -->
 <!-- LukeAnimate GPT v268: box-selected frame keys convert into one frame-owned Clip while preserving their timing and artwork. -->
 <!-- LukeAnimate GPT v267: converting frame-owned artwork to a Clip preserves the parent frame exposure count inside the Clip. -->
 <!-- LukeAnimate GPT v266: frame keys have a large visible right-edge grip for extending their owned artwork across frames. -->
@@ -87,7 +88,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v268</title>
+<title>Luke Animate v269</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -3576,6 +3577,8 @@ ctx.fill();</textarea>
   const contextStack = []; // for entering/exiting "editing a clip" sessions
   let editingClipId = null; // null = editing the main scene
   let clipEditViewOffset = { x:0, y:0 }; // screen-space view offset used only while editing inside a Clip
+  let clipWorkspaceCentrePending = false;
+  let clipWorkspaceCentreRequest = 0;
   let clipFrameNameListSignature = '';
   let selectShapesMode = false; // active in Animate only while the Select tool is chosen
   let shapePointEditMode = false; // edit the actual vector outline of one selected shape
@@ -4038,16 +4041,38 @@ ctx.fill();</textarea>
 
   function centreClipWorkspaceScroll(){
     if(!editingClipId)return;
-    requestAnimationFrame(()=>{
+    const request=++clipWorkspaceCentreRequest;
+    const centre=()=>{
       const wrap=document.getElementById('stage-wrap');
-      const workspace=document.getElementById('stage-workspace');
-      if(!wrap||!workspace)return;
-      const maxLeft=Math.max(0,workspace.scrollWidth-wrap.clientWidth);
-      const maxTop=Math.max(0,workspace.scrollHeight-wrap.clientHeight);
+      if(!wrap)return;
+      // Force the final Clip canvas layout before drawing can begin.
+      const maxLeft=Math.max(0,wrap.scrollWidth-wrap.clientWidth);
+      const maxTop=Math.max(0,wrap.scrollHeight-wrap.clientHeight);
       wrap.scrollLeft=maxLeft/2;
       wrap.scrollTop=maxTop/2;
-      requestAnimationFrame(updateRulersAndGuides);
-    });
+    };
+    centre();
+    const settle=attempt=>{
+      if(request!==clipWorkspaceCentreRequest)return;
+      centre();
+      const wrap=document.getElementById('stage-wrap');
+      const shell=document.getElementById('canvas-shell');
+      const maxLeft=wrap?Math.max(0,wrap.scrollWidth-wrap.clientWidth):0;
+      const maxTop=wrap?Math.max(0,wrap.scrollHeight-wrap.clientHeight):0;
+      const extentReady=!!(wrap&&shell&&
+        wrap.scrollWidth>=shell.offsetWidth-1&&
+        wrap.scrollHeight>=shell.offsetHeight-1);
+      const centred=!!(extentReady&&
+        Math.abs(wrap.scrollLeft-maxLeft/2)<1&&
+        Math.abs(wrap.scrollTop-maxTop/2)<1);
+      if(centred){
+        clipWorkspaceCentrePending=false;
+        requestAnimationFrame(updateRulersAndGuides);
+      }else{
+        requestAnimationFrame(()=>settle(attempt+1));
+      }
+    };
+    requestAnimationFrame(()=>settle(0));
   }
 
   function syncClipEditCanvasExtent(recentre){
@@ -6646,6 +6671,21 @@ ctx.fill();</textarea>
   }
 
   function canvasCoords(clientX, clientY){
+    if(editingClipId && clipWorkspaceCentrePending){
+      // During the context-switch paint, map input against the final centred
+      // Clip viewport rather than the canvas's transient pre-scroll rectangle.
+      const wrap=document.getElementById('stage-wrap');
+      const clip=clips[editingClipId];
+      if(wrap&&clip){
+        const rect=wrap.getBoundingClientRect();
+        const pivot=ensureClipPivot(clip);
+        const zoom=Math.max(.05,Number(stageZoom)||1);
+        return {
+          x:pivot.x+(clientX-(rect.left+rect.width/2))/zoom,
+          y:pivot.y+(clientY-(rect.top+rect.height/2))/zoom
+        };
+      }
+    }
     const rect = canvas.getBoundingClientRect();
     return stageToScenePoint({
       x: (clientX - rect.left) / rect.width * editCanvasLogicalWidth(),
@@ -8464,6 +8504,9 @@ ctx.fill();</textarea>
     if(!clip) return;
     contextStack.push({ data: captureMainSceneAsContext(), clipId: editingClipId, viewOffset:{ x:clipEditViewOffset.x, y:clipEditViewOffset.y } });
     editingClipId = clipId;
+    clipWorkspaceCentrePending = true;
+    // Apply focused Clip layout before measuring and centring the workspace.
+    syncClipEditingWorkspaceMode();
     ensureClipPivot(clip);
     syncClipEditCanvasExtent(true);
     centreClipEditView(clip);
@@ -8475,6 +8518,10 @@ ctx.fill();</textarea>
       activeIndex: 0, t: 0
     });
     updateClipBreadcrumb();
+    // applyContext() refreshes several panels and can change the workspace
+    // extent. Re-centre again synchronously after that final layout work so an
+    // immediate first drawing gesture uses stable Clip coordinates.
+    centreClipWorkspaceScroll();
     renderClipLibrary();
     renderTimeline();
     renderClipFrameNameList();
@@ -8558,10 +8605,7 @@ ctx.fill();</textarea>
       Keep the ruler/guide paint and layout in sync whenever the edit context
       changes. requestAnimationFrame avoids reflow jitter while switching.
     */
-    requestAnimationFrame(()=>{
-      updateRulersAndGuides();
-  syncClipEditingWorkspaceMode();
-    });
+    requestAnimationFrame(updateRulersAndGuides);
   }
 
   function updateClipBreadcrumb(){
@@ -14159,7 +14203,7 @@ ctx.fill();</textarea>
   async function buildCompleteProjectDocument(){
     const project = snapshotState();
     project.format = 'LukeAnimateProject';
-    project.projectVersion = 177;
+    project.projectVersion = 178;
     project.savedAt = new Date().toISOString();
     project.timelineFramePixelWidth = timelineFramePixelWidth;
     project.currentTime = Math.max(0,Number(t)||0);
@@ -22696,7 +22740,6 @@ ctx.fill();</textarea>
     addDrawingFrame:(mode,frame)=>insertIndependentSceneFrame(mode||'duplicate',frame),
     setFramePixelWidth:value=>setTimelineFramePixelWidth(value,true)
   };
-
   // ---------------- compact timeline zoom ----------------
   function initialiseTimelineFrameZoom(){
     try{
