@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
 <!-- LukeAnimate GPT v273: standardises the Script Behaviour panel, removes duplicate add controls and uses frame-centred icon-only Script keys. -->
 <!-- LukeAnimate GPT v272: exposes Stop and timeline Rando in Behaviours Tools and places their markers on the current frame. -->
 <!-- LukeAnimate GPT v271: adds persistent Script timeline layers with draggable frame markers and native Stop/Rando behaviours. -->
@@ -92,7 +93,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v273</title>
+<title>Luke Animate v274</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -1310,18 +1311,9 @@
     filter:brightness(0) invert(1); box-shadow:0 1px 2px rgba(0,0,0,.22);
   }
   .script-frame-marker.selected img{outline:2px solid var(--accent);outline-offset:1px;background:#e45aa0;}
-  .script-frame-marker.icon-missing img{display:none;}
   .script-frame-marker-label{
     display:none;
   }
-  .script-frame-marker-fallback{
-    position:absolute; left:0; top:2px; width:16px; height:16px; display:none;
-    align-items:center; justify-content:center; box-sizing:border-box; pointer-events:none;
-    border:1px solid #4f2044; border-radius:4px; background:#c64488; color:#fff;
-    font:700 10px/1 sans-serif; box-shadow:0 1px 2px rgba(0,0,0,.22);
-  }
-  .script-frame-marker.icon-missing .script-frame-marker-fallback{display:flex;}
-  .script-frame-marker.selected .script-frame-marker-fallback{outline:2px solid var(--accent);outline-offset:1px;background:#e45aa0;}
   #script-behaviour-panel{
     position:fixed; left:28px; top:18px; z-index:calc(var(--floating-panel-z) + 5);
     width:374px; max-width:calc(100vw - 16px); height:min(720px,calc(100vh - 36px)); display:none;
@@ -3444,7 +3436,7 @@ ctx.fill();</textarea>
 
 <div id="script-behaviour-panel" aria-label="Script Behaviour">
   <div id="script-behaviour-header" data-floating-panel-drag>
-    <img src="https://lukeo25.github.io/LukeAnimate/SVGs/Behaviours.svg" alt="">
+    <img id="script-behaviour-icon" src="https://lukeo25.github.io/LukeAnimate/SVGs/Stop.svg" alt="">
     <div class="script-panel-title"><strong>Script Behaviour</strong><span>Timeline Control · Frame Actions</span></div>
     <button id="btn-script-panel-close" type="button" aria-label="Close Script Behaviour">×</button>
   </div>
@@ -13104,7 +13096,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=59';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=60';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -13656,6 +13648,41 @@ ctx.fill();</textarea>
     },
     getTypeValue(object,name,fallback){ return typeToolReadValue(object,name,fallback); },
     setTypeValue(object,name,value){ return typeToolWriteValue(object,name,value); },
+    getTimelineScriptMarkers(){
+      normaliseScriptLayers();
+      return scriptLayers.flatMap(layer=>layer.markers.map(marker=>Object.assign({layerId:layer.id,layerName:layer.name},JSON.parse(JSON.stringify(marker)))));
+    },
+    addTimelineScriptMarker(type,options){
+      const settings=options&&typeof options==='object'?options:{};pushUndo();
+      let layer=scriptLayerById(settings.layerId)||selectedScriptLayer()||scriptLayers[0];
+      if(!layer){layer=makeScriptLayer();scriptLayers.push(layer);}
+      const marker=makeScriptMarker(String(type).toLowerCase()==='rando'?'rando':'stop',settings.frame===undefined?frameIndexForTime(t,timelineDuration):settings.frame);
+      if(settings.config&&typeof settings.config==='object')marker.config=Object.assign({},marker.config,settings.config);
+      if(Number.isFinite(Number(settings.nodeX)))marker.nodeX=Number(settings.nodeX);
+      if(Number.isFinite(Number(settings.nodeY)))marker.nodeY=Number(settings.nodeY);
+      normaliseScriptMarker(marker);layer.markers.push(marker);layer.markers.sort((a,b)=>a.frame-b.frame);
+      selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;renderTimeline();
+      if(settings.openEditor)openScriptBehaviourPanel();
+      return Object.assign({layerId:layer.id,layerName:layer.name},JSON.parse(JSON.stringify(marker)));
+    },
+    setTimelineScriptMarker(layerId,markerId,patch){
+      const layer=scriptLayerById(layerId),marker=scriptMarkerById(layer,markerId);if(!marker)return false;pushUndo();
+      const next=patch&&typeof patch==='object'?patch:{};
+      if(next.frame!==undefined)marker.frame=Number(next.frame);
+      if(next.type!==undefined)marker.type=String(next.type);
+      if(next.config&&typeof next.config==='object')marker.config=Object.assign({},marker.config,next.config);
+      if(next.nodeX!==undefined&&Number.isFinite(Number(next.nodeX)))marker.nodeX=Number(next.nodeX);
+      if(next.nodeY!==undefined&&Number.isFinite(Number(next.nodeY)))marker.nodeY=Number(next.nodeY);
+      normaliseScriptMarker(marker);layer.markers.sort((a,b)=>a.frame-b.frame);renderTimeline();return true;
+    },
+    removeTimelineScriptMarker(layerId,markerId){
+      const layer=scriptLayerById(layerId),marker=scriptMarkerById(layer,markerId);return !!(layer&&marker&&deleteScriptMarker(layer,marker,true));
+    },
+    openTimelineScriptMarker(layerId,markerId){
+      const layer=scriptLayerById(layerId),marker=scriptMarkerById(layer,markerId);if(!layer||!marker)return false;
+      selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;renderTimeline();openScriptBehaviourPanel();return true;
+    },
+    runTimelineAction(target,action,value){applyScriptAction(target||'timeline',action||'none',value);return true;},
     getNodeCodeSlots(object){
       const documentData=syncTypeToolNodeCodeSlots(object)||nodeCodeDocumentForObject(object,false);
       return documentData?JSON.parse(JSON.stringify(documentData.slots)):[];
@@ -20144,7 +20171,7 @@ ctx.fill();</textarea>
       marker.config.store=marker.config.store!==false;
       marker.config.rules=Array.isArray(marker.config.rules)?marker.config.rules:[defaultScriptRule()];
     }else{
-      marker.config.action=['stop','gotoStop','clipStop','clipGotoStop'].includes(marker.config.action)?marker.config.action:'stop';
+      marker.config.action=['stop','gotoStop','play','gotoPlay','clipStop','clipGotoStop','clipPlay','clipGotoPlay'].includes(marker.config.action)?marker.config.action:'stop';
       marker.config.target=String(marker.config.target||'timeline');
       marker.config.frame=String(marker.config.frame||'1');
     }
@@ -20230,8 +20257,12 @@ ctx.fill();</textarea>
     if(marker.type==='stop'){
       const config=marker.config;
       if(config.action==='gotoStop')applyScriptAction('timeline','gotoStop',config.frame);
+      else if(config.action==='play')applyScriptAction('timeline','play',config.frame);
+      else if(config.action==='gotoPlay')applyScriptAction('timeline','gotoPlay',config.frame);
       else if(config.action==='clipStop')applyScriptAction(config.target,'stop',config.frame);
       else if(config.action==='clipGotoStop')applyScriptAction(config.target,'gotoStop',config.frame);
+      else if(config.action==='clipPlay')applyScriptAction(config.target,'play',config.frame);
+      else if(config.action==='clipGotoPlay')applyScriptAction(config.target,'gotoPlay',config.frame);
       else applyScriptAction('timeline','stop',config.frame);
       return;
     }
@@ -20312,13 +20343,15 @@ ctx.fill();</textarea>
     const layer=selectedScriptLayer(),marker=selectedScriptMarker();
     if(!layer||!marker){panel.classList.remove('open');body.replaceChildren();return;}
     normaliseScriptMarker(marker);
+    const headerIcon=document.getElementById('script-behaviour-icon');
+    if(headerIcon)headerIcon.src='https://lukeo25.github.io/LukeAnimate/SVGs/'+(marker.type==='rando'?'Rando.svg':'Stop.svg');
     const frameNumber=marker.frame+1;
     let html='<div class="script-panel-row"><label>Layer</label><input type="text" data-script-layer-name value="'+scriptEscape(layer.name)+'"></div>'+
       '<div class="script-panel-row"><label>Marker frame</label><input type="number" min="1" max="'+(wickTotalFrameIndex(timelineDuration)+1)+'" data-script-marker-frame value="'+frameNumber+'"></div>'+
       '<div class="script-panel-row"><label>Behaviour</label><select data-script-marker-type><option value="stop"'+(marker.type==='stop'?' selected':'')+'>Stop</option><option value="rando"'+(marker.type==='rando'?' selected':'')+'>Rando</option></select></div>';
     if(marker.type==='stop'){
-      const config=marker.config,targetNeeded=config.action==='clipStop'||config.action==='clipGotoStop',frameNeeded=config.action==='gotoStop'||config.action==='clipGotoStop';
-      html+='<div class="script-panel-card"><h4>Stop behaviour</h4><div class="script-panel-row"><label>Do</label><select data-stop-action><option value="stop"'+(config.action==='stop'?' selected':'')+'>Stop this timeline</option><option value="gotoStop"'+(config.action==='gotoStop'?' selected':'')+'>Go to frame and stop</option><option value="clipStop"'+(config.action==='clipStop'?' selected':'')+'>Tell Clip to stop</option><option value="clipGotoStop"'+(config.action==='clipGotoStop'?' selected':'')+'>Tell Clip: go to and stop</option></select></div>'+
+      const config=marker.config,targetNeeded=['clipStop','clipGotoStop','clipPlay','clipGotoPlay'].includes(config.action),frameNeeded=['gotoStop','gotoPlay','clipGotoStop','clipGotoPlay'].includes(config.action);
+      html+='<div class="script-panel-card"><h4>Stop / Play</h4><div class="script-panel-row"><label>Do</label><select data-stop-action><option value="stop"'+(config.action==='stop'?' selected':'')+'>Stop this timeline</option><option value="gotoStop"'+(config.action==='gotoStop'?' selected':'')+'>Go to frame and stop</option><option value="play"'+(config.action==='play'?' selected':'')+'>Play this timeline</option><option value="gotoPlay"'+(config.action==='gotoPlay'?' selected':'')+'>Go to frame and play</option><option value="clipStop"'+(config.action==='clipStop'?' selected':'')+'>Tell Clip to stop</option><option value="clipGotoStop"'+(config.action==='clipGotoStop'?' selected':'')+'>Tell Clip: go to and stop</option><option value="clipPlay"'+(config.action==='clipPlay'?' selected':'')+'>Tell Clip to play</option><option value="clipGotoPlay"'+(config.action==='clipGotoPlay'?' selected':'')+'>Tell Clip: go to and play</option></select></div>'+
         (targetNeeded?'<div class="script-panel-row"><label>Clip</label><select data-stop-target>'+scriptTargetOptions(config.target,false)+'</select></div>':'')+
         (frameNeeded?'<div class="script-panel-row"><label>Frame / label</label><input type="text" data-stop-frame value="'+scriptEscape(config.frame)+'"></div>':'')+
         '<p class="script-panel-help">This marker runs when playback reaches Frame '+frameNumber+'. Stop.svg is used automatically when that asset becomes available.</p></div>';
@@ -20371,9 +20404,8 @@ ctx.fill();</textarea>
       const track=document.createElement('div');track.className='timeline-track';track.title='Double-click a frame to add a Stop marker. Select the layer to choose Stop or Rando in the Script Behaviour panel.';
       layer.markers.forEach(marker=>{
         const element=document.createElement('div');element.className='script-frame-marker'+(selectedScriptMarkerId===marker.id?' selected':'');element.style.left=timelineFrameCenterPercent(marker.frame,info)+'%';element.dataset.scriptMarkerId=marker.id;
-        const image=document.createElement('img');image.src='https://lukeo25.github.io/LukeAnimate/SVGs/'+(marker.type==='rando'?'Rando.svg':'Stop.svg');image.alt='';image.onerror=()=>element.classList.add('icon-missing');element.appendChild(image);
-        const fallback=document.createElement('span');fallback.className='script-frame-marker-fallback';fallback.textContent=marker.type==='rando'?'⚄':'■';
-        const text=document.createElement('span');text.className='script-frame-marker-label';text.textContent=marker.type==='rando'?'Rando':'Stop';element.append(fallback,text);
+        const image=document.createElement('img');image.src='https://lukeo25.github.io/LukeAnimate/SVGs/'+(marker.type==='rando'?'Rando.svg':'Stop.svg');image.alt=marker.type==='rando'?'Rando':'Stop';element.appendChild(image);
+        const text=document.createElement('span');text.className='script-frame-marker-label';text.textContent=marker.type==='rando'?'Rando':'Stop';element.appendChild(text);
         element.title=(marker.type==='rando'?'Rando':'Stop')+' script · Frame '+(marker.frame+1)+' · drag to retime · right-click to delete';
         element.oncontextmenu=event=>{selectedScriptLayerId=layer.id;selectedScriptMarkerId=marker.id;openKeyframeContextMenu(event,{deleteKey:()=>deleteScriptMarker(layer,marker,true),deleteKeyHint:'Delete this script marker'});};
         element.onpointerdown=event=>{
