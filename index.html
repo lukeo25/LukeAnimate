@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v280: captures Script-marker double-click at document level before timeline handlers. -->
+<!-- LukeAnimate GPT v281: adds two-click capture fallback for Script-marker Node Coder handoff. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
 <!-- LukeAnimate GPT v273: standardises the Script Behaviour panel, removes duplicate add controls and uses frame-centred icon-only Script keys. -->
@@ -95,7 +95,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v280</title>
+<title>Luke Animate v281</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -20451,6 +20451,14 @@ ctx.fill();</textarea>
     const layer=scriptLayers.find(entry=>Array.isArray(entry.markers)&&entry.markers.some(marker=>String(marker.id)===String(markerId)));
     const marker=layer&&layer.markers.find(entry=>String(entry.id)===String(markerId));
     if(layer&&marker){event.preventDefault();event.stopPropagation();LukeAnimatePluginAPI.focusNodeCoderTimelineMarker(layer.id,marker.id);}
+  },true);
+  document.addEventListener('click',event=>{
+    if(event.detail<2)return;
+    const markerElement=event.target instanceof Element&&event.target.closest('.script-frame-marker');
+    if(!markerElement)return;
+    const markerId=markerElement.dataset.scriptMarkerId;
+    const layer=scriptLayers.find(entry=>Array.isArray(entry.markers)&&entry.markers.some(marker=>String(marker.id)===String(markerId)));
+    if(layer){event.preventDefault();event.stopPropagation();LukeAnimatePluginAPI.focusNodeCoderTimelineMarker(layer.id,markerId);}
   },true);
   document.addEventListener('keydown',event=>{
     const targetIsEditor=event.target instanceof Element&&!!event.target.closest('input,textarea,select,[contenteditable="true"]');
