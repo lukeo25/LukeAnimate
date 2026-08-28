@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v282: adds two-click capture fallback for Script-marker Node Coder handoff. -->
+<!-- LukeAnimate GPT v283: adds two-click capture fallback for Script-marker Node Coder handoff. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
 <!-- LukeAnimate GPT v273: standardises the Script Behaviour panel, removes duplicate add controls and uses frame-centred icon-only Script keys. -->
@@ -95,7 +95,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Luke Animate v282</title>
+<title>Luke Animate v283</title>
 <link rel="icon" type="image/png" href="LukeIcon.png">
 <link rel="shortcut icon" type="image/png" href="LukeIcon.png">
 <link rel="apple-touch-icon" href="LukeIcon.png">
@@ -11280,8 +11280,14 @@ ctx.fill();</textarea>
   }
 
   funct
-... 141184 bytes omitted ...
-ip)return [];
+... 140992 bytes omitted ...
+et.ownerClip) ensureClipSceneFrames(target.ownerClip);
+      this.refreshUI();
+      return true;
+    },
+    ensureClipStateFrames(clipId,names){
+      const clip=clips[clipId];
+      if(!clip)return [];
       const requested=(Array.isArray(names)?names:[]).map(name=>String(name||'').trim()).filter(Boolean);
       if(!requested.length)return this.getClipFrameLabels(clipId);
       pushUndo();
@@ -14782,10 +14788,8 @@ ip)return [];
 
   function renderIndependentFrameTrack(tracksEl){
     normalizeSceneFrameList(sceneFrames, timelineDuration, drawObjects);
-    // Automatic empty coverage is structural only and has no timeline row.
-    // A user-created Blank Key is explicit and must remain visible so artwork
-    // can be added to it and its held duration can be resized.
-    if(!sceneFrames.some(frame=>frame.explicitKey !== false || (Array.isArray(frame.objects) && frame.objects.length>0))) return;
+    // Keep the Frames row visible even when the project is empty. This gives
+    // users a real timeline target for scrubbing and inserting the first key.
     const info = getTimelineFrameInfo();
     const totalCells = info.totalFrames + 1;
     const currentIndex = frameIndexForTime(t, timelineDuration);
