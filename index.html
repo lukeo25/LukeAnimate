@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v287: adds ActionScript-style Clip button states and mouse event ports. -->
+<!-- LukeAnimate GPT v289: adds ActionScript-style button programming and keeps every registered floating panel inside the browser viewport. -->
 <!-- LukeAnimate GPT v286: adds two-click capture fallback for Script-marker Node Coder handoff. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
@@ -3607,13 +3607,14 @@ ctx.fill();</textarea>
   // Floating panels are viewport overlays, never children of the fixed side panels.
   // The most recently opened or clicked panel is always placed above every other UI panel.
   let floatingPanelZCounter = 10000;
+  const registeredFloatingPanels = new Set();
   function bringFloatingPanelToFront(panel){
     if(!panel) return;
     floatingPanelZCounter += 1;
     panel.style.zIndex = String(floatingPanelZCounter);
   }
   function clampFloatingPanelToViewport(panel){
-    if(!panel || !panel.classList.contains('open')) return;
+    if(!panel || !panel.isConnected || panel.getClientRects().length===0) return;
     const rect = panel.getBoundingClientRect();
     const margin = 8;
     const maxLeft = Math.max(margin, window.innerWidth - panel.offsetWidth - margin);
@@ -3627,6 +3628,7 @@ ctx.fill();</textarea>
   }
   function registerFloatingPanel(panel){
     if(!panel) return;
+    registeredFloatingPanels.add(panel);
     panel.addEventListener('pointerdown', ()=> bringFloatingPanelToFront(panel), true);
     const dragHandle=panel.querySelector('[data-floating-panel-drag]');
     if(!dragHandle||dragHandle.dataset.floatingDragBound==='true')return;
@@ -3652,7 +3654,14 @@ ctx.fill();</textarea>
     };
     dragHandle.addEventListener('pointerup',stopDrag);
     dragHandle.addEventListener('pointercancel',stopDrag);
+    requestAnimationFrame(()=>clampFloatingPanelToViewport(panel));
   }
+  window.addEventListener('resize',()=>{
+    registeredFloatingPanels.forEach(panel=>{
+      if(!panel.isConnected){registeredFloatingPanels.delete(panel);return;}
+      clampFloatingPanelToViewport(panel);
+    });
+  });
 
   // ---------------- Animate: Clips (nestable mini-scenes) ----------------
   // A Clip is shaped exactly like the main scene (its own points/layers/
@@ -4607,7 +4616,23 @@ ctx.fill();</textarea>
       downFrame:String(source.downFrame||'Down').trim()||'Down',
       selectedFrame:String(source.selectedFrame||'Selected').trim()||'Selected',
       latchSelected:source.latchSelected!==false,
+      actions:(Array.isArray(source.actions)?source.actions:[]).slice(0,64).map((entry,index)=>normaliseButtonAction(entry,index)),
       code:String(source.code||'')
+    };
+  }
+
+  function normaliseButtonAction(entry,index){
+    const source=entry&&typeof entry==='object'?entry:{};
+    return {
+      id:String(source.id||('button-action-'+(index+1))).trim()||('button-action-'+(index+1)),
+      event:['rollover','rollout','hover','press','release','click','hold','releaseoutside'].includes(source.event)?source.event:'click',
+      delay:Math.max(0,Math.min(3600,Number(source.delay)||0)),
+      target:String(source.target||'self').trim()||'self',
+      action:['gotoStop','gotoPlay','stop','play','setVariable','randomVariable','toggleSelected','select','deselect'].includes(source.action)?source.action:'gotoStop',
+      value:String(source.value===undefined?'1':source.value),
+      value2:String(source.value2===undefined?'10':source.value2),
+      variable:String(source.variable||'score').trim()||'score',
+      integer:source.integer!==false
     };
   }
 
@@ -5363,23 +5388,90 @@ ctx.fill();</textarea>
     });
   }
 
+  function buttonActionTarget(object,action){
+    const target=String(action&&action.target||'self');
+    return target==='self'?String(object&&object.id||''):target;
+  }
+
+  function parseButtonValue(value){
+    const raw=String(value===undefined?'':value).trim();
+    if(/^true$/i.test(raw))return true;
+    if(/^false$/i.test(raw))return false;
+    return raw!==''&&Number.isFinite(Number(raw))?Number(raw):raw;
+  }
+
+  function executeButtonAction(object,state,action){
+    const kind=action.action;
+    if(kind==='toggleSelected'){state.selected=!state.selected;return;}
+    if(kind==='select'){state.selected=true;return;}
+    if(kind==='deselect'){state.selected=false;return;}
+    if(kind==='setVariable'){typeToolWriteValue(object,action.variable,parseButtonValue(action.value));return;}
+    if(kind==='randomVariable'){
+      let minimum=Number(action.value)||0,maximum=Number(action.value2)||0;
+      if(minimum>maximum){const swap=minimum;minimum=maximum;maximum=swap;}
+      let value=minimum+Math.random()*(maximum-minimum);
+      if(action.integer)value=Math.round(value);
+      typeToolWriteValue(object,action.variable,value);return;
+    }
+    const target=buttonActionTarget(object,action);
+    if(target===String(object&&object.id||'')){
+      if(kind==='play'||kind==='gotoPlay')state.suspendVisualState=true;
+      else if(kind==='stop'||kind==='gotoStop')state.suspendVisualState=false;
+    }
+    applyScriptAction(target,kind,action.value);
+  }
+
+  function queueButtonEvent(object,config,state,eventName){
+    (config.actions||[]).filter(action=>action.event===eventName).forEach(action=>{
+      if(action.delay>0)state.pending.push({action,remaining:action.delay});
+      else executeButtonAction(object,state,action);
+    });
+  }
+
+  function tickButtonActionTimers(object,config,state,step){
+    state.pending=state.pending.filter(item=>{
+      item.remaining-=step;
+      if(item.remaining>0)return true;
+      executeButtonAction(object,state,item.action);return false;
+    });
+    if(state.over){
+      state.hoverElapsed+=step;
+      (config.actions||[]).filter(action=>action.event==='hover'&&!state.hoverFired.has(action.id)&&state.hoverElapsed>=action.delay).forEach(action=>{
+        state.hoverFired.add(action.id);executeButtonAction(object,state,action);
+      });
+    }
+    if(state.down){
+      state.holdElapsed+=step;
+      (config.actions||[]).filter(action=>action.event==='hold'&&!state.holdFired.has(action.id)&&state.holdElapsed>=action.delay).forEach(action=>{
+        state.holdFired.add(action.id);executeButtonAction(object,state,action);
+      });
+    }
+  }
+
   function tickButton(object,config,step){
     const runtime=typeToolRuntimeForObject(object,true);
-    if(!runtime.button)runtime.button={over:false,down:false,selected:false,clipStopTime:buttonFrameTime(object,config.normalFrame)};
+    if(!runtime.button)runtime.button={over:false,down:false,selected:false,clipStopTime:buttonFrameTime(object,config.normalFrame),pending:[],hoverElapsed:0,holdElapsed:0,hoverFired:new Set(),holdFired:new Set()};
     const state=runtime.button,pointer=nodeCodePointer;
+    if(!Array.isArray(state.pending))state.pending=[];
+    if(!(state.hoverFired instanceof Set))state.hoverFired=new Set();
+    if(!(state.holdFired instanceof Set))state.holdFired=new Set();
     const over=pointInBounds(pointer.x,pointer.y,getEffectiveBounds(object),0);
-    if(over&&!state.over)runButtonHook(object,config,state,'rollover',step);
-    if(!over&&state.over)runButtonHook(object,config,state,'rollout',step);
+    if(over&&!state.over){state.hoverElapsed=0;state.hoverFired.clear();queueButtonEvent(object,config,state,'rollover');runButtonHook(object,config,state,'rollover',step);}
+    if(!over&&state.over){state.hoverElapsed=0;state.hoverFired.clear();queueButtonEvent(object,config,state,'rollout');runButtonHook(object,config,state,'rollout',step);}
     state.over=over;
-    if(pointer.pressed&&pointer.button===0&&over){state.down=true;runButtonHook(object,config,state,'press',step);}
+    if(pointer.pressed&&pointer.button===0&&over){state.down=true;state.holdElapsed=0;state.holdFired.clear();queueButtonEvent(object,config,state,'press');runButtonHook(object,config,state,'press',step);}
     if(pointer.released&&state.down){
       state.down=false;
       if(over){
         if(config.latchSelected)state.selected=!state.selected;
+        queueButtonEvent(object,config,state,'release');
+        queueButtonEvent(object,config,state,'click');
         runButtonHook(object,config,state,'release',step);
         runButtonHook(object,config,state,'click',step);
-      }else runButtonHook(object,config,state,'releaseoutside',step);
+      }else{queueButtonEvent(object,config,state,'releaseoutside');runButtonHook(object,config,state,'releaseoutside',step);}
+      state.holdElapsed=0;state.holdFired.clear();
     }
+    tickButtonActionTimers(object,config,state,step);
     const frameName=state.down?config.downFrame:(state.selected?config.selectedFrame:(over?config.hoverFrame:config.normalFrame));
     state.clipStopTime=buttonFrameTime(object,frameName);
   }
@@ -13176,7 +13268,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=69';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=70';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -13592,7 +13684,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 134,
+    version: 135,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -19230,7 +19322,7 @@ ctx.fill();</textarea>
           effective.clipStopTime=Math.max(0,Number(dragState.clipStopTime));
         }
       }
-      if(runtime&&runtime.button&&runtime.button.clipStopTime!==null&&runtime.button.clipStopTime!==undefined&&Number.isFinite(Number(runtime.button.clipStopTime))){
+      if(runtime&&runtime.button&&!runtime.button.suspendVisualState&&runtime.button.clipStopTime!==null&&runtime.button.clipStopTime!==undefined&&Number.isFinite(Number(runtime.button.clipStopTime))){
         if(effective===obj)effective=Object.assign({},obj);
         effective.clipStopTime=Math.max(0,Number(runtime.button.clipStopTime));
       }

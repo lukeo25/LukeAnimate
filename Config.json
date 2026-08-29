@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 69,
+  "version": 70,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -87,7 +87,7 @@
           "label": "Button",
           "description": "Turn a Clip into an ActionScript-style button with Normal, Hover, Down and Selected frames plus mouse events for Node Coder.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/ButtonBehaviour.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/ButtonBehaviour.txt?v=1.0",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/ButtonBehaviour.txt?v=1.1",
           "action": "script",
           "F_Screen": 0
         },
