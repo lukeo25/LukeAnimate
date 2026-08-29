@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v287: adds ActionScript-style Clip button states and mouse event ports. -->
 <!-- LukeAnimate GPT v286: adds two-click capture fallback for Script-marker Node Coder handoff. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
@@ -4528,11 +4529,14 @@ ctx.fill();</textarea>
       const documentData=nodeCodeDocumentForObject(object,false);
       const tools=typeToolsForObject(object,false);
       const hasNativeDrag=!!(tools&&tools.dragdrop&&normaliseDragDropTypeTool(tools.dragdrop).enabled);
+      const hasButton=!!(tools&&tools.button&&normaliseButtonTypeTool(tools.button).enabled);
       const hasDrag=hasNativeDrag||(documentData&&documentData.slots.some(slot=>
         slot&&slot.enabled!==false&&slot.source!=='type-tool'&&slot.event==='update'&&
         slot.ui&&slot.ui.kind==='drag'
       ));
-      if(hasDrag&&pointInBounds(point.x,point.y,getEffectiveBounds(object),0))return object;
+      const hasPointerCode=!!(documentData&&documentData.slots.some(slot=>slot&&slot.enabled!==false&&
+        ['mouseover','mouseout','hover','click','pointerdown','pointerup','releaseoutside'].includes(slot.event)));
+      if((hasDrag||hasButton||hasPointerCode)&&pointInBounds(point.x,point.y,getEffectiveBounds(object),0))return object;
     }
     return null;
   }
@@ -4592,6 +4596,19 @@ ctx.fill();</textarea>
   function normaliseSolidTypeTool(settings){
     const source=settings&&typeof settings==='object'?settings:{};
     return {type:'solid',version:1,enabled:source.enabled!==false,oneWay:!!source.oneWay};
+  }
+
+  function normaliseButtonTypeTool(settings){
+    const source=settings&&typeof settings==='object'?settings:{};
+    return {
+      type:'button',version:1,enabled:source.enabled!==false,
+      normalFrame:String(source.normalFrame||'Normal').trim()||'Normal',
+      hoverFrame:String(source.hoverFrame||'Hover').trim()||'Hover',
+      downFrame:String(source.downFrame||'Down').trim()||'Down',
+      selectedFrame:String(source.selectedFrame||'Selected').trim()||'Selected',
+      latchSelected:source.latchSelected!==false,
+      code:String(source.code||'')
+    };
   }
 
   function normaliseDragDropEffects(value,fallback){
@@ -4707,6 +4724,7 @@ ctx.fill();</textarea>
     if(id==='oldtimer'||id==='old_timer'||id==='old timer')return normaliseOldTimerTypeTool(settings);
     if(id==='siderunner'||id==='side_runner'||id==='side runner')return normaliseSideRunnerTypeTool(settings);
     if(id==='solid')return normaliseSolidTypeTool(settings);
+    if(id==='button'||id==='mousebutton'||id==='mouse_button')return normaliseButtonTypeTool(settings);
     if(id==='dragdrop'||id==='drag_drop'||id==='drag drop')return normaliseDragDropTypeTool(settings);
     const clone=JSON.parse(JSON.stringify(settings&&typeof settings==='object'?settings:{}));
     clone.type=id;
@@ -4745,7 +4763,7 @@ ctx.fill();</textarea>
 
   function normaliseNodeCodeSlot(slot,index){
     const source=slot&&typeof slot==='object'?slot:{};
-    const event=['load','update','unload','tool'].includes(source.event)?source.event:'update';
+    const event=['load','update','unload','mouseover','mouseout','hover','click','pointerdown','pointerup','releaseoutside','dragstart','drag','drop','correctDrop','incorrectDrop','frame','tool'].includes(source.event)?source.event:'update';
     const id=String(source.id||('code-slot-'+(index+1))).trim()||('code-slot-'+(index+1));
     return {
       id,
@@ -4755,6 +4773,7 @@ ctx.fill();</textarea>
       code:String(source.code||''),
       source:source.source==='type-tool'?'type-tool':'custom',
       toolId:String(source.toolId||'').trim(),
+      frame:Number.isFinite(Number(source.frame))?Math.max(0,Math.round(Number(source.frame))):0,
       ui:source.ui&&typeof source.ui==='object'&&!Array.isArray(source.ui)
         ? JSON.parse(JSON.stringify(source.ui))
         : null,
@@ -4799,7 +4818,7 @@ ctx.fill();</textarea>
   function nodeCodeRuntimeForObject(object,create){
     const runtime=typeToolRuntimeForObject(object,create);
     if(!runtime)return null;
-    if(!runtime.nodeCoder&&create)runtime.nodeCoder={loaded:false,lastFrame:-1,state:Object.create(null),compiled:Object.create(null),errors:Object.create(null),output:Object.create(null)};
+    if(!runtime.nodeCoder&&create)runtime.nodeCoder={loaded:false,lastFrame:-1,pointerOver:false,pointerDownInside:false,state:Object.create(null),compiled:Object.create(null),errors:Object.create(null),output:Object.create(null)};
     return runtime.nodeCoder||null;
   }
 
@@ -4851,6 +4870,8 @@ ctx.fill();</textarea>
     runNodeCodeEvent(object,'unload',0,null);
     runtime.loaded=false;
     runtime.lastFrame=-1;
+    runtime.pointerOver=false;
+    runtime.pointerDownInside=false;
     runtime.state=Object.create(null);
     runtime.output=Object.create(null);
   }
@@ -4931,7 +4952,7 @@ ctx.fill();</textarea>
       const runtime=typeToolRuntimeForObject(object,false);
       const tools=typeToolsForObject(object,false);
       if(tools&&tools.oldtimer){const config=normaliseOldTimerTypeTool(tools.oldtimer);if(config.setCharacterDie)writeOldTimerDeathSignal(object,config,0);}
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;delete runtime.dragDrop;delete runtime.nodeCoder;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;delete runtime.dragDrop;delete runtime.button;delete runtime.nodeCoder;}
       if(activeDragDropObject===object)activeDragDropObject=null;
     });
     typeToolPressedKeys.clear();
@@ -5327,6 +5348,42 @@ ctx.fill();</textarea>
     tickDragDropEffects(runtime,state,step);
   }
 
+  function buttonFrameTime(object,frameName){
+    const resolved=dragDropFrameTime(object,frameName);
+    return resolved===null?0:resolved;
+  }
+
+  function runButtonHook(object,config,state,eventName,step){
+    if(!String(config.code||'').trim())return;
+    runTypeToolCode(object,'button',config.code,{
+      object,config,runtime:typeToolRuntimeForObject(object,true),state,event:eventName,
+      selected:!!state.selected,over:!!state.over,down:!!state.down,delta:step,time:t,api:LukeAnimatePluginAPI,
+      readValue:(name,fallback)=>typeToolReadValue(object,name,fallback),
+      writeValue:(name,value)=>typeToolWriteValue(object,name,value)
+    });
+  }
+
+  function tickButton(object,config,step){
+    const runtime=typeToolRuntimeForObject(object,true);
+    if(!runtime.button)runtime.button={over:false,down:false,selected:false,clipStopTime:buttonFrameTime(object,config.normalFrame)};
+    const state=runtime.button,pointer=nodeCodePointer;
+    const over=pointInBounds(pointer.x,pointer.y,getEffectiveBounds(object),0);
+    if(over&&!state.over)runButtonHook(object,config,state,'rollover',step);
+    if(!over&&state.over)runButtonHook(object,config,state,'rollout',step);
+    state.over=over;
+    if(pointer.pressed&&pointer.button===0&&over){state.down=true;runButtonHook(object,config,state,'press',step);}
+    if(pointer.released&&state.down){
+      state.down=false;
+      if(over){
+        if(config.latchSelected)state.selected=!state.selected;
+        runButtonHook(object,config,state,'release',step);
+        runButtonHook(object,config,state,'click',step);
+      }else runButtonHook(object,config,state,'releaseoutside',step);
+    }
+    const frameName=state.down?config.downFrame:(state.selected?config.selectedFrame:(over?config.hoverFrame:config.normalFrame));
+    state.clipStopTime=buttonFrameTime(object,frameName);
+  }
+
   function tickTypeToolRuntime(deltaSeconds){
     if(!playing||exportPlayback.active){nodeCodeActiveObjects.forEach(unloadNodeCodeObject);nodeCodeActiveObjects.clear();activeDragDropObject=null;nodeCodePointer.pressed=false;nodeCodePointer.released=false;return;}
     // Avoid a large jump after a suspended/background browser tab resumes.
@@ -5341,14 +5398,23 @@ ctx.fill();</textarea>
         const nodeRuntime=nodeCodeRuntimeForObject(object,true);
         if(!nodeRuntime.loaded){nodeRuntime.loaded=true;runNodeCodeEvent(object,'load',step,null);}
         const pointerOver=pointInBounds(nodeCodePointer.x,nodeCodePointer.y,getEffectiveBounds(object),0);
-        if(nodeCodePointer.pressed&&pointerOver)runNodeCodeEvent(object,'pointerdown',step,{button:nodeCodePointer.button});
-        if(nodeCodePointer.released&&pointerOver){runNodeCodeEvent(object,'pointerup',step,{button:nodeCodePointer.button});runNodeCodeEvent(object,'click',step,{button:nodeCodePointer.button});}
+        if(pointerOver&&!nodeRuntime.pointerOver)runNodeCodeEvent(object,'mouseover',step,{pointer:{x:nodeCodePointer.x,y:nodeCodePointer.y}});
+        if(!pointerOver&&nodeRuntime.pointerOver)runNodeCodeEvent(object,'mouseout',step,{pointer:{x:nodeCodePointer.x,y:nodeCodePointer.y}});
+        if(pointerOver)runNodeCodeEvent(object,'hover',step,{pointer:{x:nodeCodePointer.x,y:nodeCodePointer.y}});
+        nodeRuntime.pointerOver=pointerOver;
+        if(nodeCodePointer.pressed&&pointerOver){nodeRuntime.pointerDownInside=true;runNodeCodeEvent(object,'pointerdown',step,{button:nodeCodePointer.button});}
+        if(nodeCodePointer.released){
+          if(nodeRuntime.pointerDownInside&&pointerOver){runNodeCodeEvent(object,'pointerup',step,{button:nodeCodePointer.button});runNodeCodeEvent(object,'click',step,{button:nodeCodePointer.button});}
+          else if(nodeRuntime.pointerDownInside)runNodeCodeEvent(object,'releaseoutside',step,{button:nodeCodePointer.button});
+          nodeRuntime.pointerDownInside=false;
+        }
         const currentNodeFrame=frameIndexForTime(t,timelineDuration);
         if(nodeRuntime.lastFrame!==currentNodeFrame){nodeRuntime.lastFrame=currentNodeFrame;runNodeCodeEvent(object,'frame',step,{frame:currentNodeFrame});}
         runNodeCodeEvent(object,'update',step,null);nodeCodeActiveObjects.add(object);
       }
       const tools=typeToolsForObject(object,false);
       if(!tools)return;
+      if(tools.button){const buttonConfig=normaliseButtonTypeTool(tools.button);if(buttonConfig.enabled)tickButton(object,buttonConfig,step);}
       if(tools.dragdrop){
         const dragConfig=normaliseDragDropTypeTool(tools.dragdrop);
         if(dragConfig.enabled)tickDragDrop(object,dragConfig,step);
@@ -13110,7 +13176,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=60';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=69';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -13526,7 +13592,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 133,
+    version: 134,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -13740,7 +13806,7 @@ ctx.fill();</textarea>
       tools[id]=normaliseTypeToolSettings(id,settings);
       syncTypeToolNodeCodeSlots(object);
       const runtime=typeToolRuntimeForObject(object,false);
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;delete runtime.dragDrop;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;delete runtime.dragDrop;delete runtime.button;}
       if(activeDragDropObject===object)activeDragDropObject=null;
       if(id==='oldtimer'&&tools[id].setCharacterDie)writeOldTimerDeathSignal(object,tools[id],0);
       this.refreshUI();
@@ -13755,7 +13821,7 @@ ctx.fill();</textarea>
       delete tools[id];
       syncTypeToolNodeCodeSlots(object);
       const runtime=typeToolRuntimeForObject(object,false);
-      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;delete runtime.dragDrop;}
+      if(runtime){runtime.offsetX=0;runtime.offsetY=0;delete runtime.sideRunner;delete runtime.oldTimer;delete runtime.dragDrop;delete runtime.button;}
       if(activeDragDropObject===object)activeDragDropObject=null;
       this.refreshUI();
       return true;
@@ -19163,6 +19229,10 @@ ctx.fill();</textarea>
           if(effective===obj)effective=Object.assign({},obj);
           effective.clipStopTime=Math.max(0,Number(dragState.clipStopTime));
         }
+      }
+      if(runtime&&runtime.button&&runtime.button.clipStopTime!==null&&runtime.button.clipStopTime!==undefined&&Number.isFinite(Number(runtime.button.clipStopTime))){
+        if(effective===obj)effective=Object.assign({},obj);
+        effective.clipStopTime=Math.max(0,Number(runtime.button.clipStopTime));
       }
       if(runtime&&runtime.scriptLayer){
         const scriptState=runtime.scriptLayer;
