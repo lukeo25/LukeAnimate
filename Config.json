@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 64,
+  "version": 65,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -186,6 +186,15 @@
       "label": "Import / Export",
       "tabIcon": "https://lukeo25.github.io/LukeAnimate/SVGs/Import.svg",
       "items": [
+        {
+          "id": "Scanner_Import",
+          "label": "Scanner Import",
+          "description": "Scan pages from a Windows WIA scanner through the local Luke Animate Scanner Bridge and import them as image layers or frame sequences.",
+          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Scanner.svg",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/ScannerImport.txt?v=1.0",
+          "action": "tool",
+          "F_Screen": 0
+        },
         {
           "id": "Multi_Asset_Importer",
           "label": "Multi Script",
