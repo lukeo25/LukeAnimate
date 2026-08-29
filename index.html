@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v289: adds ActionScript-style button programming and keeps every registered floating panel inside the browser viewport. -->
+<!-- LukeAnimate GPT v290: ActionScript Stop freezes the timeline without disabling game buttons, and manual Play can continue past the current Stop frame. -->
 <!-- LukeAnimate GPT v286: adds two-click capture fallback for Script-marker Node Coder handoff. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
@@ -3538,7 +3538,8 @@ ctx.fill();</textarea>
   let samples = [];       // sampled path points with tangent/normal
   let pathLen = 0;
 
-  let playing = false; // start paused at 0 seconds
+  let playing = false; // editor/game preview mode
+  let timelineScriptStopped = false; // ActionScript stop(): freeze frames but keep buttons and behaviours interactive
   // v180 playback uses uncapped wall-clock delta so heavy rigs do not run in slow motion.
   let t = 0;              // animation time (seconds)
   let lastFrame = performance.now();
@@ -13268,7 +13269,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=70';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=71';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -18749,6 +18750,11 @@ ctx.fill();</textarea>
 
   document.getElementById('btn-transport-play').addEventListener('click', ()=>{
     playing = true;
+    timelineScriptStopped = false;
+    // Manual Play is an editor transport command. Do not immediately execute
+    // a Stop marker on the exact frame Play is starting from; it will still
+    // execute normally if playback later arrives at that frame.
+    scriptRuntimeState.lastFrame = frameIndexForTime(t,timelineDuration);
     lastFrame = performance.now();
     syncPlaybackCursorMode();
     renderTransformHandles();
@@ -18756,6 +18762,7 @@ ctx.fill();</textarea>
   });
   document.getElementById('btn-transport-pause').addEventListener('click', ()=>{
     playing = false;
+    timelineScriptStopped = false;
     syncPlaybackCursorMode();
     renderTransformHandles();
     typeToolPressedKeys.clear();
@@ -18763,6 +18770,7 @@ ctx.fill();</textarea>
   });
   document.getElementById('btn-transport-stop').addEventListener('click', ()=>{
     playing = false;
+    timelineScriptStopped = false;
     syncPlaybackCursorMode();
     renderTransformHandles();
     t = 0;
@@ -20412,8 +20420,8 @@ ctx.fill();</textarea>
       if(action==='gotoStop'||action==='gotoPlay')t=frame/getTimelineFPS();
       else if(action==='next')t=Math.min(timelineDuration,(frameIndexForTime(t,timelineDuration)+1)/getTimelineFPS());
       else if(action==='prev')t=Math.max(0,(frameIndexForTime(t,timelineDuration)-1)/getTimelineFPS());
-      if(action==='stop'||action==='gotoStop')playing=false;
-      if(action==='play'||action==='gotoPlay')playing=true;
+      if(action==='stop'||action==='gotoStop')timelineScriptStopped=true;
+      if(action==='play'||action==='gotoPlay'){timelineScriptStopped=false;playing=true;}
       return;
     }
     const targetRuntime=scriptClipRuntime(target);if(!targetRuntime)return;
@@ -20468,7 +20476,7 @@ ctx.fill();</textarea>
     normaliseScriptLayers();
     for(const layer of scriptLayers){
       for(const marker of layer.markers){
-        if(marker.frame===frame){runScriptMarker(marker);if(!playing&&!exportPlayback.active)return;}
+        if(marker.frame===frame){runScriptMarker(marker);if((!playing||timelineScriptStopped)&&!exportPlayback.active)return;}
       }
     }
   }
@@ -20477,8 +20485,8 @@ ctx.fill();</textarea>
     const frame=frameIndexForTime(t,timelineDuration),last=scriptRuntimeState.lastFrame,total=wickTotalFrameIndex(timelineDuration);
     if(last===null)runScriptMarkersAtFrame(frame);
     else if(frame!==last){
-      if(frame>last){for(let index=last+1;index<=frame;index++){runScriptMarkersAtFrame(index);if(!playing&&!exportPlayback.active)break;}}
-      else{for(let index=last+1;index<=total;index++){runScriptMarkersAtFrame(index);if(!playing&&!exportPlayback.active)break;}if(playing||exportPlayback.active){for(let index=0;index<=frame;index++){runScriptMarkersAtFrame(index);if(!playing&&!exportPlayback.active)break;}}}
+      if(frame>last){for(let index=last+1;index<=frame;index++){runScriptMarkersAtFrame(index);if((!playing||timelineScriptStopped)&&!exportPlayback.active)break;}}
+      else{for(let index=last+1;index<=total;index++){runScriptMarkersAtFrame(index);if((!playing||timelineScriptStopped)&&!exportPlayback.active)break;}if((playing&&!timelineScriptStopped)||exportPlayback.active){for(let index=0;index<=frame;index++){runScriptMarkersAtFrame(index);if((!playing||timelineScriptStopped)&&!exportPlayback.active)break;}}}
     }
     scriptRuntimeState.lastFrame=frameIndexForTime(t,timelineDuration);
   }
@@ -20703,7 +20711,7 @@ ctx.fill();</textarea>
       );
       exportPlayback.currentFrameIndex = frameIndex;
       t = frameIndex / fps;
-    }else if(playing){
+    }else if(playing && !timelineScriptStopped){
       t += dt;
       if(timelineDuration > 0 && t >= timelineDuration){
         if(loopTimeline){
