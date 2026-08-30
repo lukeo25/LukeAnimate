@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v313: Removes object-name layer overwrites and attaches Rename Layer to the actual timeline label. -->
 <!-- LukeAnimate GPT v312: Layer context menus add Rename Layer without removing existing keyframe actions. -->
 <!-- LukeAnimate GPT v311: Timeline containers use sequential Layer 1, Layer 2 labels independent of their contents. -->
 <!-- LukeAnimate GPT v310: Blank keys split one layer cleanly and preserve its artwork before and after the blank frame. -->
@@ -13492,7 +13493,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=93';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=94';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -22050,7 +22051,6 @@ ctx.fill();</textarea>
           frame.object.frameLinkEnd = frame.endFrame;
           frame.object.frameFadeInFrames = frame.fadeInFrames;
           frame.object.frameFadeOutFrames = frame.fadeOutFrames;
-          layer.name = frame.object.name || layer.name || objectLayerName(frame.object);
         }else{
           frame.object = null;
           frame.blank = true;
@@ -23666,6 +23666,27 @@ ctx.fill();</textarea>
         renderTimeline();
         renderLayerList();
         renderTransformHandles();
+      });
+
+      name.addEventListener('contextmenu',event=>{
+        event.preventDefault();
+        event.stopPropagation();
+        wickActiveDrawingLayerId=layer.id;
+        openKeyframeContextMenu(event,{
+          actions:[
+            {label:'Rename Layer…',hint:'Give this timeline container a custom name',icon:'✎',pushHistory:false,callback:()=>{
+              const value=window.prompt('Layer name',layer.name||'Layer');
+              if(value===null) return;
+              const next=String(value).trim();
+              if(!next) return;
+              pushUndo();
+              layer.name=next;
+              layer._customName=true;
+              renderLayerList();
+              renderTimeline();
+            }}
+          ]
+        });
       });
 
       track.addEventListener('click',event=>{
@@ -27405,26 +27426,6 @@ ctx.fill();</textarea>
           }
         };
         input.click();
-      });
-      name.addEventListener('contextmenu',event=>{
-        event.preventDefault();
-        event.stopPropagation();
-        wickActiveDrawingLayerId=layer.id;
-        openKeyframeContextMenu(event,{
-          actions:[
-            {label:'Rename Layer…',hint:'Give this timeline container a custom name',icon:'✎',pushHistory:false,callback:()=>{
-              const value=window.prompt('Layer name',layer.name||'Layer');
-              if(value===null) return;
-              const next=String(value).trim();
-              if(!next) return;
-              pushUndo();
-              layer.name=next;
-              layer._customName=true;
-              renderLayerList();
-              renderTimeline();
-            }}
-          ]
-        });
       });
     }
     document.body.appendChild(menu);
