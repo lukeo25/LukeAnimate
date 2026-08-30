@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v312: Layer context menus add Rename Layer without removing existing keyframe actions. -->
 <!-- LukeAnimate GPT v311: Timeline containers use sequential Layer 1, Layer 2 labels independent of their contents. -->
 <!-- LukeAnimate GPT v310: Blank keys split one layer cleanly and preserve its artwork before and after the blank frame. -->
 <!-- LukeAnimate GPT v309: Layers always own explicit key blocks; artwork is never rendered as its own layer row. -->
@@ -13491,7 +13492,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=92';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=93';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -22026,7 +22027,7 @@ ctx.fill();</textarea>
       wickDrawingLayerOrderCounter = Math.max(wickDrawingLayerOrderCounter, layer.order);
       // Layer names describe the timeline container, never the shape inside
       // it. Keep the standard sequential labels used by the editor.
-      layer.name = 'Layer ' + (layerIndex + 1);
+      if(layer._customName!==true) layer.name = 'Layer ' + (layerIndex + 1);
       if(!Array.isArray(layer.frames)) layer.frames = [];
 
       const frames = layer.frames.map((frame, frameIndex)=>{
@@ -27404,6 +27405,26 @@ ctx.fill();</textarea>
           }
         };
         input.click();
+      });
+      name.addEventListener('contextmenu',event=>{
+        event.preventDefault();
+        event.stopPropagation();
+        wickActiveDrawingLayerId=layer.id;
+        openKeyframeContextMenu(event,{
+          actions:[
+            {label:'Rename Layer…',hint:'Give this timeline container a custom name',icon:'✎',pushHistory:false,callback:()=>{
+              const value=window.prompt('Layer name',layer.name||'Layer');
+              if(value===null) return;
+              const next=String(value).trim();
+              if(!next) return;
+              pushUndo();
+              layer.name=next;
+              layer._customName=true;
+              renderLayerList();
+              renderTimeline();
+            }}
+          ]
+        });
       });
     }
     document.body.appendChild(menu);
