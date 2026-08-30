@@ -1,3 +1,5 @@
+<!-- LukeAnimate GPT v303: Animate's Duplicate Selected Layer always targets the active drawing/Clip timeline layer, including blank and held frames. -->
+<!-- LukeAnimate GPT v302: Duplicate Selected Layer recognises a timeline-selected drawing/Clip frame before any stale FX selection. -->
 <!-- LukeAnimate GPT v301: Duplicate Selected Layer preserves the selected drawing/Clip layer and its complete timeline instead of creating a particle layer. -->
 <!-- LukeAnimate GPT v300: scaling a vector curve changes its geometry without multiplying its selected stroke width. -->
 <!-- LukeAnimate GPT v299: Clips can be nested recursively through the active Clip workspace, with deep rendering/edit breadcrumbs and cycle prevention. -->
@@ -13479,7 +13481,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=82';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=84';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -14980,6 +14982,8 @@ ctx.fill();</textarea>
     if(index !== activeIndex) saveActivePathEditor();
     activeIndex = index;
     selectedDrawIndices.clear();
+    if(typeof wickSelectedDrawingFrameId !== 'undefined') wickSelectedDrawingFrameId=null;
+    if(typeof wickSelectedTimelineFrameIds !== 'undefined') wickSelectedTimelineFrameIds.clear();
     loadPathEditorForLayer(activeLayer());
     setParticleEditorTabForLayer(activeLayer());
     if(openOwnerPanel !== false) routeSelectionToPanel('particles', false);
@@ -15158,14 +15162,23 @@ ctx.fill();</textarea>
     return true;
   }
 
-  function duplicateSelectedLayer(){
-    if(selectedDrawIndices.size && typeof wickDuplicateSelectedDrawingLayers === 'function'){
-      if(wickDuplicateSelectedDrawingLayers()) return true;
+  function duplicateSelectedLayer(preferActiveDrawingLayer){
+    if(typeof wickDuplicateSelectedDrawingLayers === 'function'){
+      const selectedFrameOwner=typeof wickFrameOwnerById === 'function'
+        ?wickFrameOwnerById(wickSelectedDrawingFrameId)
+        :null;
+      const requestedLayerIds=selectedDrawIndices.size
+        ?null
+        :(selectedFrameOwner&&selectedFrameOwner.layer
+          ?[selectedFrameOwner.layer.id]
+          :(preferActiveDrawingLayer&&wickActiveDrawingLayerId?[wickActiveDrawingLayerId]:[]));
+      if((selectedDrawIndices.size||requestedLayerIds.length) && wickDuplicateSelectedDrawingLayers(requestedLayerIds)) return true;
     }
+    if(preferActiveDrawingLayer) return false;
     return duplicateSelectedEffectLayer();
   }
 
-  document.getElementById('btn-tool-duplicate').addEventListener('click', duplicateSelectedLayer);
+  document.getElementById('btn-tool-duplicate').addEventListener('click', ()=>duplicateSelectedLayer(false));
 
   function beginStageMarqueeSelection(event,startCanvas,additive){
     const overlayRect=overlay.getBoundingClientRect();
@@ -18633,7 +18646,7 @@ ctx.fill();</textarea>
     renderTimeline();
   }
 
-  document.getElementById('btn-add-layer').addEventListener('click', duplicateSelectedLayer);
+  document.getElementById('btn-add-layer').addEventListener('click', ()=>duplicateSelectedLayer(true));
   document.getElementById('btn-del-layer').addEventListener('click', ()=>{
     if(selectedDrawIndices.size > 0){
       deleteSelectedDrawObjects();
@@ -22221,9 +22234,10 @@ ctx.fill();</textarea>
     return true;
   }
 
-  function wickDuplicateSelectedDrawingLayers(){
+  function wickDuplicateSelectedDrawingLayers(requestedLayerIds){
     const model=wickEnsureCurrentDrawingLayers();
-    const selectedIds=new Set(wickSelectedLayerIds().map(id=>String(id)));
+    const explicitIds=Array.isArray(requestedLayerIds)?requestedLayerIds:[];
+    const selectedIds=new Set((explicitIds.length?explicitIds:wickSelectedLayerIds()).map(id=>String(id)));
     if(!selectedIds.size) return false;
 
     const sources=model.filter(layer=>layer&&selectedIds.has(String(layer.id)));
