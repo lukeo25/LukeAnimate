@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v300: scaling a vector curve changes its geometry without multiplying its selected stroke width. -->
 <!-- LukeAnimate GPT v299: Clips can be nested recursively through the active Clip workspace, with deep rendering/edit breadcrumbs and cycle prevention. -->
 <!-- LukeAnimate GPT v298: stage object context actions directly reorder the complete drawing-layer model and use proper clickable LA menu rows. -->
 <!-- LukeAnimate GPT v297: right-clicking a stage object or Clip offers Bring to Front and Send to Back across its complete timeline layer. -->
@@ -7874,13 +7875,16 @@ ctx.fill();</textarea>
     return Math.max(.0001,Math.sqrt(smallest));
   }
 
-  function strokeVectorPathEvenly(context,path,strokeColor,strokeWidth,lineJoin,lineCap){
+  function strokeVectorPathEvenly(context,path,strokeColor,strokeWidth,lineJoin,lineCap,strokeReferenceMatrix){
     if(!path||!(strokeWidth>0)) return;
     const matrix=typeof context.getTransform==='function'?context.getTransform():null;
     if(matrix&&typeof Path2D!=='undefined'&&typeof Path2D.prototype.addPath==='function'){
       const transformed=new Path2D();
       transformed.addPath(path,matrix);
-      const evenScale=transformMinimumScale(matrix);
+      // The path uses the complete object transform, but its stroke width uses
+      // the transform that existed before this object's local scale. This keeps
+      // a curve's chosen line weight constant while the curve itself is scaled.
+      const evenScale=transformMinimumScale(strokeReferenceMatrix||matrix);
       context.save();
       context.setTransform(1,0,0,1,0,0);
       context.strokeStyle=strokeColor;
@@ -8194,6 +8198,7 @@ ctx.fill();</textarea>
     }
 
     ctx.save();
+    const objectStrokeReferenceMatrix=typeof ctx.getTransform==='function'?ctx.getTransform():null;
     if(isPreview) ctx.globalAlpha *= 0.6;
     else ctx.globalAlpha *= (eff.opacity !== undefined ? eff.opacity : 1);
 
@@ -8262,7 +8267,7 @@ ctx.fill();</textarea>
         if(closedPath&&fillEnabled&&vectorPath){
           ctx.save();ctx.fillStyle=fillColor;ctx.fill(vectorPath);ctx.restore();
         }
-        if(strokeEnabled&&vectorPath) strokeVectorPathEvenly(ctx,vectorPath,strokeColor,strokeWidth,'round','round');
+        if(strokeEnabled&&vectorPath) strokeVectorPathEvenly(ctx,vectorPath,strokeColor,strokeWidth,'round','round',objectStrokeReferenceMatrix);
       }
     } else if(obj.type === 'line'){
       const x1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
@@ -8272,7 +8277,7 @@ ctx.fill();</textarea>
       const strokeEnabled = eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false;
       if(strokeEnabled && strokeWidth > 0){
         const linePath=new Path2D();linePath.moveTo(x1,y1);linePath.lineTo(x2,y2);
-        strokeVectorPathEvenly(ctx,linePath,strokeColor,strokeWidth,'round','round');
+        strokeVectorPathEvenly(ctx,linePath,strokeColor,strokeWidth,'round','round',objectStrokeReferenceMatrix);
       }
     } else if(obj.type === 'rect'){
       const rx1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
@@ -8285,7 +8290,7 @@ ctx.fill();</textarea>
       const strokeEnabled = eff.strokeEnabled !== undefined ? !!eff.strokeEnabled : obj.strokeEnabled !== false;
       const rectPath=path2DRoundedRect(x,y,w,h,cornerRadius);
       if(fillEnabled){ctx.save();ctx.fillStyle=fillColor;ctx.fill(rectPath);ctx.restore();}
-      if(strokeEnabled&&strokeWidth>0) strokeVectorPathEvenly(ctx,rectPath,strokeColor,strokeWidth,'round','round');
+      if(strokeEnabled&&strokeWidth>0) strokeVectorPathEvenly(ctx,rectPath,strokeColor,strokeWidth,'round','round',objectStrokeReferenceMatrix);
     } else if(obj.type === 'ellipse'){
       const ex1 = eff.x1 !== undefined ? eff.x1 : obj.x1;
       const ey1 = eff.y1 !== undefined ? eff.y1 : obj.y1;
@@ -8298,7 +8303,7 @@ ctx.fill();</textarea>
       const ellipsePath=new Path2D();
       ellipsePath.ellipse(cx,cy,Math.max(.5,rx),Math.max(.5,ry),0,0,Math.PI*2);
       if(fillEnabled){ctx.save();ctx.fillStyle=fillColor;ctx.fill(ellipsePath);ctx.restore();}
-      if(strokeEnabled&&strokeWidth>0) strokeVectorPathEvenly(ctx,ellipsePath,strokeColor,strokeWidth,'round','round');
+      if(strokeEnabled&&strokeWidth>0) strokeVectorPathEvenly(ctx,ellipsePath,strokeColor,strokeWidth,'round','round',objectStrokeReferenceMatrix);
     } else if(obj.type === 'image'){
       const startTime = Math.max(0,Number(eff.mediaStartTime !== undefined ? eff.mediaStartTime : obj.mediaStartTime)||0);
       if(t + 1e-6 >= startTime){
@@ -13473,7 +13478,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=80';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=81';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
