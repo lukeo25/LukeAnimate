@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v296: selected stage objects and Clips take Delete priority over stale timeline, Script and gizmo-key selections. -->
 <!-- LukeAnimate GPT v295: restores Ctrl/Cmd+C and Ctrl/Cmd+V for stage objects on main and nested Clip timelines. -->
 <!-- LukeAnimate GPT v294: Boolean Subtract preserves selection order: first-selected shape is the base, later selections are cutters. -->
 <!-- LukeAnimate GPT v293: Node Coder exposes Button programming as event/action nodes instead of misclassifying it as generic Type Tools code. -->
@@ -6750,6 +6751,19 @@ ctx.fill();</textarea>
   document.getElementById('btn-undo').addEventListener('click', doUndo);
   document.getElementById('btn-redo').addEventListener('click', doRedo);
 
+  // A visibly selected stage object is the user's current target. Handle its
+  // Delete before document-level Script, gizmo-key and timeline handlers can
+  // consume the same key because of a stale secondary selection.
+  window.addEventListener('keydown',event=>{
+    if(event.key!=='Delete'&&event.key!=='Backspace')return;
+    const target=event.target;
+    if(target&&(/INPUT|TEXTAREA|SELECT/.test(target.tagName)||target.isContentEditable))return;
+    if(shapePointEditMode||selectedDrawIndices.size===0)return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    deleteSelectedDrawObjects();
+  },true);
+
   function clipboardCloneWithoutOwnership(source){
     const clone=JSON.parse(JSON.stringify(source));
     const reset=object=>{
@@ -6814,6 +6828,8 @@ ctx.fill();</textarea>
       suppressCommitDrawUndo=previousSuppress;
     }
     selectedDrawIndices.clear();
+    selectedScriptMarkerId=null;
+    selectedFrameGizmoTimelineKey=null;
     pasted.forEach(object=>{
       const index=drawObjects.findIndex(candidate=>candidate===object||(candidate&&object&&candidate.id===object.id));
       if(index>=0)selectedDrawIndices.add(index);
@@ -13396,7 +13412,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=76';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=77';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
