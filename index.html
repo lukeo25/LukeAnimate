@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v314: Layer menus render correctly with Rename, Add New Layer and Delete Layer actions. -->
 <!-- LukeAnimate GPT v313: Removes object-name layer overwrites and attaches Rename Layer to the actual timeline label. -->
 <!-- LukeAnimate GPT v312: Layer context menus add Rename Layer without removing existing keyframe actions. -->
 <!-- LukeAnimate GPT v311: Timeline containers use sequential Layer 1, Layer 2 labels independent of their contents. -->
@@ -13493,7 +13494,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=94';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=95';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -19445,6 +19446,46 @@ ctx.fill();</textarea>
       menu.appendChild(button);
     }
 
+    const customActions=Array.isArray(target.actions)?target.actions:[];
+    if(customActions.length){
+      customActions.forEach(action=>{
+        if(!action) return;
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='keyframe-context-item'+(action.danger?' danger':'');
+        button.setAttribute('role','menuitem');
+        button.disabled=action.disabled===true;
+        const icon=document.createElement('span');
+        icon.className='keyframe-context-check';
+        icon.textContent=String(action.icon||'');
+        const text=document.createElement('span');
+        const label=document.createElement('span');
+        label.className='keyframe-context-label';
+        label.textContent=String(action.label||'Action');
+        const hint=document.createElement('span');
+        hint.className='keyframe-context-hint';
+        hint.textContent=String(action.hint||'');
+        text.appendChild(label);
+        text.appendChild(hint);
+        button.appendChild(icon);
+        button.appendChild(text);
+        button.addEventListener('click',()=>{
+          if(button.disabled) return;
+          if(action.pushHistory!==false) pushUndo();
+          if(typeof action.callback==='function') action.callback();
+          closeKeyframeContextMenu();
+          refreshAfterKeyframeMenuAction();
+        });
+        menu.appendChild(button);
+      });
+      menu.hidden=false;
+      const margin=8;
+      const rect=menu.getBoundingClientRect();
+      menu.style.left=Math.max(margin,Math.min(window.innerWidth-rect.width-margin,event.clientX))+'px';
+      menu.style.top=Math.max(margin,Math.min(window.innerHeight-rect.height-margin,event.clientY))+'px';
+      return;
+    }
+
     const hasAddAction = typeof target.addKey === 'function';
     const hasDeleteAction = typeof target.deleteKey === 'function';
     const hasInterpolation = typeof target.setEasing === 'function';
@@ -22883,6 +22924,12 @@ ctx.fill();</textarea>
     if(remove.has(String(wickActiveDrawingLayerId))) wickActiveDrawingLayerId=wickDrawingLayers.length?wickDrawingLayers[wickDrawingLayers.length-1].id:null;
     const selectedOwner=wickFrameOwnerById(wickSelectedDrawingFrameId);
     if(!selectedOwner || remove.has(String(selectedOwner.layer.id))) wickSelectedDrawingFrameId=null;
+    // Replace the old projected artwork before synchronising. Otherwise
+    // deleting the final layer can be mistaken for legacy data and immediately
+    // recreate the layer that the user just removed.
+    wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);
+    const projected=sceneFrameAtIndex(sceneFrames,wickCurrentFrameIndex());
+    drawObjects=projected&&Array.isArray(projected.objects)?projected.objects:[];
     syncActiveSceneFrameForTime(t,false);
     return true;
   }
@@ -23684,7 +23731,16 @@ ctx.fill();</textarea>
               layer._customName=true;
               renderLayerList();
               renderTimeline();
-            }}
+            }},
+            {label:'Add New Layer',hint:'Create a new empty layer with a blank key',icon:'+',callback:()=>{
+              const created=wickCreateLayer();
+              wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
+              wickActiveDrawingLayerId=created.id;
+              wickSelectedDrawingFrameId=created.frames[0]?created.frames[0].id:null;
+              selectedDrawIndices.clear();
+              syncActiveSceneFrameForTime(t,false);
+            }},
+            {label:'Delete Layer',hint:'Remove this layer and all of its keys',icon:'×',danger:true,pushHistory:false,callback:()=>wickDeleteDrawingLayer(layer)}
           ]
         });
       });
