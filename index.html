@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v305: Animate layer duplication copies the complete active Clip Frames content, not one selected object. -->
 <!-- LukeAnimate GPT v304: Frame-owned Clip timelines duplicate selected artwork without falling back to an FX layer. -->
 <!-- LukeAnimate GPT v303: Animate's Duplicate Selected Layer always targets the active drawing/Clip timeline layer, including blank and held frames. -->
 <!-- LukeAnimate GPT v302: Duplicate Selected Layer recognises a timeline-selected drawing/Clip frame before any stale FX selection. -->
@@ -13482,7 +13483,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=85';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=86';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -15184,10 +15185,12 @@ ctx.fill();</textarea>
     return true;
   }
 
-  function duplicateSelectedTimelineFrameObjects(){
+  function duplicateSelectedTimelineFrameObjects(includeActiveFrame){
     const ids=typeof wickSelectedTimelineFrameIds!=='undefined'?Array.from(wickSelectedTimelineFrameIds).map(String):[];
-    if(!ids.length) return false;
-    const frames=sceneFrames.filter(frame=>frame&&ids.includes(String(frame.id)));
+    const frames=ids.length
+      ?sceneFrames.filter(frame=>frame&&ids.includes(String(frame.id)))
+      :(includeActiveFrame?[sceneFrameAtIndex(sceneFrames,frameIndexForTime(t,timelineDuration))].filter(Boolean):[]);
+    if(!frames.length) return false;
     const sourceCount=frames.reduce((count,frame)=>count+(Array.isArray(frame.objects)?frame.objects.length:0),0);
     if(!sourceCount) return false;
     pushUndo();
@@ -15211,7 +15214,7 @@ ctx.fill();</textarea>
 
   function duplicateSelectedLayer(preferActiveDrawingLayer){
     if(selectedDrawIndices.size && duplicateSelectedFrameOwnedObjects()) return true;
-    if(duplicateSelectedTimelineFrameObjects()) return true;
+    if(duplicateSelectedTimelineFrameObjects(!!preferActiveDrawingLayer)) return true;
     if(typeof wickDuplicateSelectedDrawingLayers === 'function'){
       const selectedFrameOwner=typeof wickFrameOwnerById === 'function'
         ?wickFrameOwnerById(wickSelectedDrawingFrameId)
