@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v306: Duplicated artwork receives its own visible timeline layer row with full-frame exposure. -->
 <!-- LukeAnimate GPT v305: Animate layer duplication copies the complete active Clip Frames content, not one selected object. -->
 <!-- LukeAnimate GPT v304: Frame-owned Clip timelines duplicate selected artwork without falling back to an FX layer. -->
 <!-- LukeAnimate GPT v303: Animate's Duplicate Selected Layer always targets the active drawing/Clip timeline layer, including blank and held frames. -->
@@ -3723,6 +3724,7 @@ ctx.fill();</textarea>
   let selectedDrawIndices = new Set();
   let drawObjectCounter = 0;
   let groupCounter = 0;
+  let artworkLayerCounter = 0;
   // A Group is a normal stage object, not a Clip. Its children keep their own
   // editable geometry and keyframes. Double-clicking one child enters isolation
   // so only that child can be manipulated and keyed until Escape / Exit Group.
@@ -6784,6 +6786,7 @@ ctx.fill();</textarea>
       delete object.frameLinkId;
       delete object.frameLinkStart;
       delete object.frameLinkEnd;
+      delete object._lukeArtworkLayerId;
       if(object.type==='group'&&Array.isArray(object.children))object.children.forEach(reset);
     };
     reset(clone);
@@ -13483,7 +13486,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=86';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=87';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -18161,6 +18164,68 @@ ctx.fill();</textarea>
     tracksEl.appendChild(row);
   }
 
+  function artworkLayerIdForTimelineObject(object){
+    if(!object) return '';
+    if(!object._lukeArtworkLayerId){
+      artworkLayerCounter+=1;
+      object._lukeArtworkLayerId='art-layer-'+artworkLayerCounter;
+    }
+    return String(object._lukeArtworkLayerId);
+  }
+
+  function renderArtworkLayerTracks(tracksEl){
+    const entries=[];
+    const byId=new Map();
+    sceneFrames.forEach(frame=>{
+      (Array.isArray(frame&&frame.objects)?frame.objects:[]).forEach(object=>{
+        if(!object) return;
+        const id=artworkLayerIdForTimelineObject(object);
+        let entry=byId.get(id);
+        if(!entry){
+          entry={id,object,frames:[]};
+          byId.set(id,entry);entries.push(entry);
+        }
+        entry.frames.push(frame);
+      });
+    });
+    entries.forEach(entry=>{
+      const row=document.createElement('div');
+      row.className='timeline-track-row artwork-timeline-layer';
+      const name=document.createElement('div');
+      name.className='timeline-track-name';
+      name.textContent=objectLayerName(entry.object);
+      name.title='Artwork layer · duplicate and edit this layer across its complete frame exposure';
+      const track=document.createElement('div');
+      track.className='timeline-track';
+      const info=getTimelineFrameInfo();
+      const totalCells=info.totalFrames+1;
+      const spans=[];
+      entry.frames.forEach(frame=>{
+        const span=document.createElement('div');
+        span.className='timeline-object-span';
+        span.style.left=(Math.max(0,frame.startFrame)/totalCells*100)+'%';
+        span.style.width=(Math.max(1,frame.endFrame-frame.startFrame+1)/totalCells*100)+'%';
+        span.style.background=entry.object.fillColor||entry.object.strokeColor||'#4fe0c4';
+        span.title=name.textContent+' · Frame '+(frame.startFrame+1)+'–'+(frame.endFrame+1);
+        track.appendChild(span);
+        spans.push({frame,span});
+      });
+      track.addEventListener('click',event=>{
+        const frameIndex=frameIndexForTime(t,timelineDuration);
+        const activeFrame=entry.frames.find(frame=>frame.startFrame<=frameIndex&&frame.endFrame>=frameIndex)||entry.frames[0];
+        if(!activeFrame) return;
+        const objectIndex=(activeFrame.objects||[]).indexOf(entry.object);
+        if(objectIndex>=0){
+          t=Math.max(0,activeFrame.startFrame/getTimelineFPS());
+          syncActiveSceneFrameForTime(t,false);
+          const visibleIndex=drawObjects.indexOf(entry.object);
+          if(visibleIndex>=0) selectDrawObject(visibleIndex,false,true);
+        }
+      });
+      row.appendChild(name);row.appendChild(track);tracksEl.appendChild(row);
+    });
+  }
+
   function renderTimeline(){
     syncTimelineFrameCountDisplay();
     renderFrameRuler();
@@ -18168,6 +18233,7 @@ ctx.fill();</textarea>
     const tracksEl = document.getElementById('timeline-tracks');
     tracksEl.innerHTML = '';
     renderIndependentFrameTrack(tracksEl);
+    renderArtworkLayerTracks(tracksEl);
 
     layers.forEach((layer, idx)=>{
       const row = document.createElement('div');
