@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v304: Frame-owned Clip timelines duplicate selected artwork without falling back to an FX layer. -->
 <!-- LukeAnimate GPT v303: Animate's Duplicate Selected Layer always targets the active drawing/Clip timeline layer, including blank and held frames. -->
 <!-- LukeAnimate GPT v302: Duplicate Selected Layer recognises a timeline-selected drawing/Clip frame before any stale FX selection. -->
 <!-- LukeAnimate GPT v301: Duplicate Selected Layer preserves the selected drawing/Clip layer and its complete timeline instead of creating a particle layer. -->
@@ -13481,7 +13482,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=84';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=85';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -15162,7 +15163,55 @@ ctx.fill();</textarea>
     return true;
   }
 
+  function duplicateSelectedFrameOwnedObjects(){
+    const selected=Array.from(selectedDrawIndices).filter(index=>index>=0&&index<drawObjects.length).map(index=>drawObjects[index]).filter(Boolean);
+    if(!selected.length) return false;
+    pushUndo();
+    const copies=selected.map(source=>{
+      const clone=clipboardCloneWithoutOwnership(source);
+      offsetClipboardObject(clone,16);
+      if(clone.name) clone.name=String(clone.name)+' copy';
+      ensureDrawObjectMetadata(clone);
+      drawObjects.push(clone);
+      return clone;
+    });
+    selectedDrawIndices.clear();
+    copies.forEach(object=>{const index=drawObjects.indexOf(object);if(index>=0)selectedDrawIndices.add(index);});
+    normalizeSceneFrameList(sceneFrames,timelineDuration,drawObjects);
+    syncActiveSceneFrameForTime(t,false);
+    updateSelectedCountUI();renderLayerList();updateInspector();renderTimeline();renderTransformHandles();renderPoints();
+    logToSandbox('Duplicated '+copies.length+' drawing object'+(copies.length===1?'':'s')+' on the current frame.');
+    return true;
+  }
+
+  function duplicateSelectedTimelineFrameObjects(){
+    const ids=typeof wickSelectedTimelineFrameIds!=='undefined'?Array.from(wickSelectedTimelineFrameIds).map(String):[];
+    if(!ids.length) return false;
+    const frames=sceneFrames.filter(frame=>frame&&ids.includes(String(frame.id)));
+    const sourceCount=frames.reduce((count,frame)=>count+(Array.isArray(frame.objects)?frame.objects.length:0),0);
+    if(!sourceCount) return false;
+    pushUndo();
+    const copies=[];
+    frames.forEach(frame=>{
+      const next=(Array.isArray(frame.objects)?frame.objects:[]).map(source=>{
+        const clone=clipboardCloneWithoutOwnership(source);
+        offsetClipboardObject(clone,16);
+        if(clone.name) clone.name=String(clone.name)+' copy';
+        ensureDrawObjectMetadata(clone);
+        return clone;
+      });
+      frame.objects.push(...next);copies.push(...next);
+    });
+    syncActiveSceneFrameForTime(t,false);
+    selectedDrawIndices.clear();copies.forEach(object=>{const index=drawObjects.indexOf(object);if(index>=0)selectedDrawIndices.add(index);});
+    updateSelectedCountUI();renderLayerList();updateInspector();renderTimeline();renderTransformHandles();renderPoints();
+    logToSandbox('Duplicated '+copies.length+' drawing object'+(copies.length===1?'':'s')+' from the selected timeline frame'+(copies.length===1?'':'s')+'.');
+    return true;
+  }
+
   function duplicateSelectedLayer(preferActiveDrawingLayer){
+    if(selectedDrawIndices.size && duplicateSelectedFrameOwnedObjects()) return true;
+    if(duplicateSelectedTimelineFrameObjects()) return true;
     if(typeof wickDuplicateSelectedDrawingLayers === 'function'){
       const selectedFrameOwner=typeof wickFrameOwnerById === 'function'
         ?wickFrameOwnerById(wickSelectedDrawingFrameId)
