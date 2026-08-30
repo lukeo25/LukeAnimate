@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v298: stage object context actions directly reorder the complete drawing-layer model and use proper clickable LA menu rows. -->
 <!-- LukeAnimate GPT v297: right-clicking a stage object or Clip offers Bring to Front and Send to Back across its complete timeline layer. -->
 <!-- LukeAnimate GPT v296: selected stage objects and Clips take Delete priority over stale timeline, Script and gizmo-key selections. -->
 <!-- LukeAnimate GPT v295: restores Ctrl/Cmd+C and Ctrl/Cmd+V for stage objects on main and nested Clip timelines. -->
@@ -13413,7 +13414,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=78';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=79';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -26981,30 +26982,30 @@ ctx.fill();</textarea>
 
   function moveStageObjectToEdge(hit,front){
     if(!hit || !hit.object) return false;
-    const object=hit.object;
-    if(typeof nativeObjectLayerLocked==='function' && nativeObjectLayerLocked(object)) return false;
-
-    const model=typeof wickEnsureCurrentDrawingLayers==='function'
-      ?wickEnsureCurrentDrawingLayers()
+    const requestedObject=hit.object;
+    const frame=typeof activeIndependentSceneFrame==='function'
+      ?activeIndependentSceneFrame()
       :null;
-    const layerIndex=Array.isArray(model)&&object.timelineLayerId
-      ?model.findIndex(layer=>String(layer.id)===String(object.timelineLayerId))
-      :-1;
-
-    if(layerIndex>=0 && typeof wickMoveDrawingLayerInStack==='function'){
-      const targetIndex=front?model.length-1:0;
-      const moved=wickMoveDrawingLayerInStack(object.timelineLayerId,targetIndex-layerIndex);
-      if(moved) logToSandbox(objectLayerName(object)+(front?' brought to front.':' sent to back.'));
-      return moved;
-    }
-
-    const currentIndex=drawObjects.indexOf(object);
+    const objects=frame&&Array.isArray(frame.objects)?frame.objects:drawObjects;
+    const requestedId=String(requestedObject.id||'');
+    const currentIndex=objects.findIndex(candidate=>candidate===requestedObject||(
+      requestedId&&candidate&&String(candidate.id||'')===requestedId
+    ));
     if(currentIndex<0) return false;
-    const targetIndex=front?drawObjects.length-1:0;
+    const object=objects[currentIndex];
+    if(typeof nativeObjectLayerLocked==='function' && nativeObjectLayerLocked(object)) return false;
+    const targetIndex=front?objects.length-1:0;
     if(currentIndex===targetIndex) return false;
     pushUndo();
-    drawObjects.splice(currentIndex,1);
-    drawObjects.splice(targetIndex,0,object);
+    objects.splice(currentIndex,1);
+    objects.splice(targetIndex,0,object);
+    if(frame){
+      frame.objects=objects;
+      frame.explicitKey=true;
+      frame.frameOnly=true;
+      activeSceneFrameId=frame.id;
+    }
+    drawObjects=objects;
     selectedDrawIndices.clear();
     selectedDrawIndices.add(targetIndex);
     updateSelectedCountUI();
@@ -27013,21 +27014,37 @@ ctx.fill();</textarea>
     renderTimeline();
     renderTransformHandles();
     renderPoints();
+    renderOffstageObjectProxies();
     logToSandbox(objectLayerName(object)+(front?' brought to front.':' sent to back.'));
     return true;
   }
 
-  function appendStageObjectContextButton(menu,label,disabled,callback){
+  function appendStageObjectContextButton(menu,label,hint,icon,disabled,callback){
     const button=document.createElement('button');
     button.type='button';
-    button.textContent=label;
-    button.style.width='100%';
-    button.style.textAlign='left';
+    button.className='keyframe-context-item';
+    button.setAttribute('role','menuitem');
     button.disabled=!!disabled;
-    button.addEventListener('click',()=>{
+    const iconNode=document.createElement('span');
+    iconNode.className='keyframe-context-check';
+    iconNode.textContent=icon;
+    const textNode=document.createElement('span');
+    const labelNode=document.createElement('span');
+    labelNode.className='keyframe-context-label';
+    labelNode.textContent=label;
+    const hintNode=document.createElement('span');
+    hintNode.className='keyframe-context-hint';
+    hintNode.textContent=hint;
+    textNode.appendChild(labelNode);
+    textNode.appendChild(hintNode);
+    button.appendChild(iconNode);
+    button.appendChild(textNode);
+    button.addEventListener('click',event=>{
+      event.preventDefault();
+      event.stopPropagation();
       if(button.disabled) return;
-      closeStageImageContextMenu();
       callback();
+      closeStageImageContextMenu();
     });
     menu.appendChild(button);
   }
@@ -27038,15 +27055,13 @@ ctx.fill();</textarea>
     selectDrawObject(hit.index,false,true);
     const object=hit.object;
     const locked=typeof nativeObjectLayerLocked==='function'&&nativeObjectLayerLocked(object);
-    const model=typeof wickEnsureCurrentDrawingLayers==='function'
-      ?wickEnsureCurrentDrawingLayers()
-      :[];
-    const layerIndex=object.timelineLayerId
-      ?model.findIndex(layer=>String(layer.id)===String(object.timelineLayerId))
-      :-1;
-    const currentIndex=drawObjects.indexOf(object);
-    const atFront=layerIndex>=0?layerIndex===model.length-1:currentIndex===drawObjects.length-1;
-    const atBack=layerIndex>=0?layerIndex===0:currentIndex===0;
+    const frame=typeof activeIndependentSceneFrame==='function'?activeIndependentSceneFrame():null;
+    const objects=frame&&Array.isArray(frame.objects)?frame.objects:drawObjects;
+    const currentIndex=objects.findIndex(candidate=>candidate===object||(
+      object.id&&candidate&&String(candidate.id||'')===String(object.id)
+    ));
+    const atFront=currentIndex===objects.length-1;
+    const atBack=currentIndex===0;
     const menu=document.createElement('div');
     menu.className='keyframe-context-menu';
     menu.style.position='fixed';
@@ -27055,11 +27070,14 @@ ctx.fill();</textarea>
     menu.style.zIndex='25000';
     menu.style.minWidth='190px';
 
-    appendStageObjectContextButton(menu,'Bring to Front',locked||atFront,()=>moveStageObjectToEdge(hit,true));
-    appendStageObjectContextButton(menu,'Send to Back',locked||atBack,()=>moveStageObjectToEdge(hit,false));
+    appendStageObjectContextButton(menu,'Bring to Front','Place above every other stage layer','▲',locked||atFront,()=>moveStageObjectToEdge(hit,true));
+    appendStageObjectContextButton(menu,'Send to Back','Place behind every other stage layer','▼',locked||atBack,()=>moveStageObjectToEdge(hit,false));
 
     if(object.type==='image'){
-      appendStageObjectContextButton(menu,'Replace Image…',locked,()=>{
+      const separator=document.createElement('div');
+      separator.className='keyframe-context-separator';
+      menu.appendChild(separator);
+      appendStageObjectContextButton(menu,'Replace Image…','Choose a different source image','↻',locked,()=>{
         const input=ensureStageImageReplaceInput();
         input.value='';
         input.onchange=async()=>{
