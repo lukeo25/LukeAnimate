@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v315: Keeps the layer-owned runtime active so Blank Key splits only the selected layer and resumes its content. -->
 <!-- LukeAnimate GPT v314: Layer menus render correctly with Rename, Add New Layer and Delete Layer actions. -->
 <!-- LukeAnimate GPT v313: Removes object-name layer overwrites and attaches Rename Layer to the actual timeline label. -->
 <!-- LukeAnimate GPT v312: Layer context menus add Rename Layer without removing existing keyframe actions. -->
@@ -13494,7 +13495,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=95';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=96';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -23982,50 +23983,8 @@ ctx.fill();</textarea>
   wickDrawingLayers=wickMainDrawingLayers;
   wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);
 
-  // v261: frames, not objects, own artwork. The Wick per-object layer model is
-  // retained above only as a migration reader for older projects. From this
-  // point onward the canonical sceneFrames[].objects array owns every shape.
-  normalizeSceneFrameList=wickNormalizeSceneFrameListBase;
-  ensureClipSceneFrames=wickEnsureClipSceneFramesBase;
-  syncActiveSceneFrameForTime=frameOwnedSyncActiveSceneFrameForTime;
-  ensureCurrentSceneFrames=frameOwnedEnsureCurrentSceneFrames;
-  activeIndependentSceneFrame=frameOwnedActiveIndependentSceneFrame;
-  ensureFrameOwnedDrawingForMutation=frameOwnedEnsureFrameOwnedDrawingForMutation;
-  insertIndependentSceneFrame=frameOwnedInsertIndependentSceneFrame;
-  clearActiveIndependentSceneFrame=frameOwnedClearActiveIndependentSceneFrame;
-  setIndependentSceneFrameEnd=frameOwnedSetIndependentSceneFrameEnd;
-  commitDrawObject=wickCommitDrawObjectBase;
-  renderLayerList=wickRenderLayerListBase;
-  selectDrawObject=wickSelectDrawObjectBase;
-  deleteDrawObject=wickDeleteDrawObjectBase;
-  deleteSelectedDrawObjects=wickDeleteSelectedDrawObjectsBase;
-  renderIndependentFrameTrack=frameOwnedRenderIndependentFrameTrack;
-  const frameOwnedTimelineRenderBase=wickRenderTimelineBase;
-  renderTimeline=function(){
-    const result=frameOwnedTimelineRenderBase();
-    const tracks=document.getElementById('timeline-tracks');
-    if(!tracks) return result;
-    // The canonical artwork model is layer-owned: each row represents one
-    // drawing layer and its complete exposure, while its shapes remain inside
-    // that row. Remove the legacy aggregate/object rows before rebuilding the
-    // proper per-layer tracks.
-    tracks.querySelectorAll('.artwork-timeline-layer').forEach(row=>row.remove());
-    tracks.querySelectorAll('.timeline-track-row').forEach(row=>{
-      const name=row.querySelector('.timeline-track-name');
-      if(name && (name.textContent==='Frames'||name.textContent==='Clip Frames')) row.remove();
-    });
-    if(typeof wickBuildDrawingLayerRows==='function') wickBuildDrawingLayerRows(tracks);
-    return result;
-  };
-  captureMainSceneAsContext=wickCaptureMainSceneAsContextBase;
-  applyContext=wickApplyContextBase;
-  saveCurrentClipEditingContext=wickSaveCurrentClipEditingContextBase;
-  makeClip=wickMakeClipBase;
-  snapshotState=wickSnapshotStateBase;
-  restoreState=wickRestoreStateBase;
-  const removeObjectTimelineMetadata=object=>{if(!object)return;delete object.timelineLayerId;delete object.timelineLayerOrder;delete object.frameLinkId;delete object.frameLinkStart;delete object.frameLinkEnd;delete object.frameFadeInFrames;delete object.frameFadeOutFrames;};
-  sceneFrames.forEach(frame=>(frame.objects||[]).forEach(removeObjectTimelineMetadata));
-  wickDrawingLayers.splice(0,wickDrawingLayers.length);
+  // The layer-owned model remains active after migration. Shapes live inside
+  // layer keys, and every timeline command must operate on that same model.
 
 
 
