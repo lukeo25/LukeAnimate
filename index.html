@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v299: Clips can be nested recursively through the active Clip workspace, with deep rendering/edit breadcrumbs and cycle prevention. -->
 <!-- LukeAnimate GPT v298: stage object context actions directly reorder the complete drawing-layer model and use proper clickable LA menu rows. -->
 <!-- LukeAnimate GPT v297: right-clicking a stage object or Clip offers Bring to Front and Send to Back across its complete timeline layer. -->
 <!-- LukeAnimate GPT v296: selected stage objects and Clips take Delete priority over stale timeline, Script and gizmo-key selections. -->
@@ -3284,7 +3285,7 @@
         </div>
       </div>
 
-      <div class="hint" style="padding:0 0 8px;">Double-click a Clip on the stage to jump straight inside it — or use <b>Edit</b> below. Either way its Path/Layers/Timeline take over the main UI, with a breadcrumb (← Back) to get out. <b>+ Instance</b> places another copy of that clip on the stage you're currently in.</div>
+      <div class="hint" style="padding:0 0 8px;">Double-click a Clip on the stage to jump straight inside it — or use <b>Edit</b> below. Either way its Path/Layers/Timeline take over the main UI, with a breadcrumb (← Back) to get out. <b>+ Instance</b> places another copy on the main stage; while editing a Clip it becomes <b>↳+ Nest</b> and places that Clip inside the open Clip. You can keep nesting Clips inside Clips.</div>
       <div id="clip-library" style="display:flex;flex-direction:column;gap:6px;"></div>
 
       <div id="clip-frame-names-section" style="display:none;">
@@ -3678,7 +3679,8 @@ ctx.fill();</textarea>
   const clips = {};        // id -> clip definition
   let clipCounter = 0;
   let clipRenderDepth = 0;
-  const MAX_CLIP_DEPTH = 6;
+  const MAX_CLIP_DEPTH = 64;
+  const clipRenderPath = [];
 
   /*
     v158:
@@ -5035,7 +5037,7 @@ ctx.fill();</textarea>
     const seenObjects=new Set();
     const clipStack=new Set();
     function visit(list,timeValue,depth){
-      if(depth>12)return;
+      if(depth>=MAX_CLIP_DEPTH)return;
       (list||[]).forEach(object=>{
         if(!object||object.enabled===false||seenObjects.has(object))return;
         seenObjects.add(object);
@@ -8609,6 +8611,48 @@ ctx.fill();</textarea>
     return editingClipId && clips[editingClipId] ? clips[editingClipId] : null;
   }
 
+  function clipDefinitionChildIds(clip){
+    const childIds=new Set();
+    if(!clip) return childIds;
+    ensureClipSceneFrames(clip);
+    const visitObject=object=>{
+      if(!object) return;
+      if(object.type==='clipinstance'&&object.clipId) childIds.add(String(object.clipId));
+      if(object.type==='group'&&Array.isArray(object.children)) object.children.forEach(visitObject);
+    };
+    allSceneFrameObjectArrays(clip.sceneFrames,clip.drawObjects||[]).forEach(list=>(list||[]).forEach(visitObject));
+    return childIds;
+  }
+
+  function clipDefinitionContainsClip(startClipId,targetClipId,visited){
+    const startId=String(startClipId||'');
+    const targetId=String(targetClipId||'');
+    if(!startId||!targetId) return false;
+    if(startId===targetId) return true;
+    const seen=visited instanceof Set?visited:new Set();
+    if(seen.has(startId)) return false;
+    seen.add(startId);
+    const definition=clips[startId];
+    if(!definition) return false;
+    for(const childId of clipDefinitionChildIds(definition)){
+      if(childId===targetId||clipDefinitionContainsClip(childId,targetId,seen)) return true;
+    }
+    return false;
+  }
+
+  function clipCanNestInside(childClipId,parentClipId){
+    const childId=String(childClipId||'');
+    const parentId=String(parentClipId||'');
+    if(!childId||!parentId) return true;
+    return childId!==parentId&&!clipDefinitionContainsClip(childId,parentId,new Set());
+  }
+
+  function clipEditPathIds(){
+    const ids=contextStack.map(context=>String(context&&context.clipId||'')).filter(Boolean);
+    if(editingClipId) ids.push(String(editingClipId));
+    return ids;
+  }
+
   function clipFrameCount(clip){
     if(!clip) return 0;
     return Math.max(1, Math.round(Math.max(0, Number(clip.timelineDuration) || 0) * getTimelineFPS()) + 1);
@@ -8766,7 +8810,8 @@ ctx.fill();</textarea>
 
     if(
       !clip ||
-      clipRenderDepth>=MAX_CLIP_DEPTH
+      clipRenderDepth>=MAX_CLIP_DEPTH ||
+      clipRenderPath.includes(String(obj.clipId||clip.id||''))
     ){
       return;
     }
@@ -8779,6 +8824,7 @@ ctx.fill();</textarea>
     }
 
     clipRenderDepth++;
+    clipRenderPath.push(String(obj.clipId||clip.id||''));
 
     const saved={
       points,
@@ -8906,6 +8952,7 @@ ctx.fill();</textarea>
       activeSceneFrameId=saved.activeSceneFrameId;
       t=saved.t;
 
+      clipRenderPath.pop();
       clipRenderDepth--;
 
       if(enteringMainClipTree){
@@ -8953,6 +9000,12 @@ ctx.fill();</textarea>
   function enterClipEdit(clipId){
     const clip = clips[clipId];
     if(!clip) return;
+    if(clipEditPathIds().includes(String(clipId))){
+      logToSandbox('That Clip is already in the current edit path. Recursive self-editing is blocked.',true);
+      return;
+    }
+    placingClipId=null;
+    updatePlacingUI();
     contextStack.push({ data: captureMainSceneAsContext(), clipId: editingClipId, viewOffset:{ x:clipEditViewOffset.x, y:clipEditViewOffset.y } });
     editingClipId = clipId;
     clipWorkspaceCentrePending = true;
@@ -13209,11 +13262,17 @@ ctx.fill();</textarea>
 
       const instBtn = document.createElement('button');
       instBtn.className = 'layer-btn';
-      instBtn.title = 'Click the stage to place another instance';
-      instBtn.textContent = '+';
+      const nestingBlocked=!!editingClipId&&!clipCanNestInside(id,editingClipId);
+      instBtn.title = nestingBlocked
+        ? 'Cannot nest this Clip here because it would create a recursive cycle'
+        : editingClipId
+          ? 'Place an instance inside '+String(clips[editingClipId]&&clips[editingClipId].name||'the current Clip')
+          : 'Click the stage to place another instance';
+      instBtn.textContent = editingClipId ? '↳+' : '+';
+      instBtn.disabled=nestingBlocked;
       instBtn.addEventListener('click', ()=>{
         placingClipId = id;
-        logToSandbox('Click the stage to place an instance of "' + clip.name + '"');
+        logToSandbox('Click the stage to place an instance of "' + clip.name + '"'+(editingClipId?' inside the current Clip':'')+'.');
       });
 
       const delBtn = document.createElement('button');
@@ -13414,7 +13473,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=79';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=80';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -13641,7 +13700,7 @@ ctx.fill();</textarea>
     const selectedObjects=Array.from(selectedDrawIndices).map(index=>drawObjects[index]).filter(Boolean);
 
     function add(instance, ownerClip, path, rank, selected, depth){
-      if(!instance || instance.type!=='clipinstance' || depth>10) return;
+      if(!instance || instance.type!=='clipinstance' || depth>=MAX_CLIP_DEPTH) return;
       ensureDrawObjectMetadata(instance);
       const ref=clips[instance.clipId];
       if(!ref) return;
@@ -15309,6 +15368,16 @@ ctx.fill();</textarea>
     }
 
     if(placingClipId){
+      if(editingClipId&&!clipCanNestInside(placingClipId,editingClipId)){
+        const child=clips[placingClipId];
+        const parent=clips[editingClipId];
+        placingClipId=null;
+        updatePlacingUI();
+        logToSandbox('Cannot place “'+String(child&&child.name||'Clip')+'” inside “'+String(parent&&parent.name||'this Clip')+'” because that would create a recursive Clip cycle.',true);
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       const c = canvasCoords(e.clientX, e.clientY);
       pushUndo();
       ensureFrameOwnedDrawingForMutation();
@@ -17534,7 +17603,7 @@ ctx.fill();</textarea>
     }
 
     function visitObject(object, inheritedLabel, depth){
-      if(!object || depth > 12 || visitedObjects.has(object)) return;
+      if(!object || depth>=MAX_CLIP_DEPTH || visitedObjects.has(object)) return;
       visitedObjects.add(object);
 
       const ownRig = object.demBones && object.demBones.rig;
@@ -23902,7 +23971,7 @@ ctx.fill();</textarea>
     const rootLocalTime=clipInstanceLocalTime(root,rootEffective,contextTime);
 
     function visit(definition,ownerTime,ancestors,depth,path,clipPath){
-      if(!definition||depth>12) return;
+      if(!definition||depth>=MAX_CLIP_DEPTH) return;
       const childInstances=nativeClipPartObjectsAtClipTime(definition,ownerTime);
       childInstances.forEach(child=>{
         ensureDrawObjectMetadata(child);
