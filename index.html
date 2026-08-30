@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v308: Restores true layer-owned artwork rows so duplication and blank keys affect one layer only. -->
 <!-- LukeAnimate GPT v307: Always exposes duplicated artwork as a visible timeline layer, including during frame-model migration. -->
 <!-- LukeAnimate GPT v306: Duplicated artwork receives its own visible timeline layer row with full-frame exposure. -->
 <!-- LukeAnimate GPT v305: Animate layer duplication copies the complete active Clip Frames content, not one selected object. -->
@@ -13487,7 +13488,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=88';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=89';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -15217,8 +15218,6 @@ ctx.fill();</textarea>
   }
 
   function duplicateSelectedLayer(preferActiveDrawingLayer){
-    if(selectedDrawIndices.size && duplicateSelectedFrameOwnedObjects()) return true;
-    if(duplicateSelectedTimelineFrameObjects(!!preferActiveDrawingLayer)) return true;
     if(typeof wickDuplicateSelectedDrawingLayers === 'function'){
       const selectedFrameOwner=typeof wickFrameOwnerById === 'function'
         ?wickFrameOwnerById(wickSelectedDrawingFrameId)
@@ -15230,6 +15229,8 @@ ctx.fill();</textarea>
           :(preferActiveDrawingLayer&&wickActiveDrawingLayerId?[wickActiveDrawingLayerId]:[]));
       if((selectedDrawIndices.size||requestedLayerIds.length) && wickDuplicateSelectedDrawingLayers(requestedLayerIds)) return true;
     }
+    if(selectedDrawIndices.size && duplicateSelectedFrameOwnedObjects()) return true;
+    if(duplicateSelectedTimelineFrameObjects(!!preferActiveDrawingLayer)) return true;
     if(preferActiveDrawingLayer) return false;
     return duplicateSelectedEffectLayer();
   }
@@ -23905,7 +23906,23 @@ ctx.fill();</textarea>
   deleteDrawObject=wickDeleteDrawObjectBase;
   deleteSelectedDrawObjects=wickDeleteSelectedDrawObjectsBase;
   renderIndependentFrameTrack=frameOwnedRenderIndependentFrameTrack;
-  renderTimeline=wickRenderTimelineBase;
+  const frameOwnedTimelineRenderBase=wickRenderTimelineBase;
+  renderTimeline=function(){
+    const result=frameOwnedTimelineRenderBase();
+    const tracks=document.getElementById('timeline-tracks');
+    if(!tracks) return result;
+    // The canonical artwork model is layer-owned: each row represents one
+    // drawing layer and its complete exposure, while its shapes remain inside
+    // that row. Remove the legacy aggregate/object rows before rebuilding the
+    // proper per-layer tracks.
+    tracks.querySelectorAll('.artwork-timeline-layer').forEach(row=>row.remove());
+    tracks.querySelectorAll('.timeline-track-row').forEach(row=>{
+      const name=row.querySelector('.timeline-track-name');
+      if(name && (name.textContent==='Frames'||name.textContent==='Clip Frames')) row.remove();
+    });
+    if(typeof wickBuildDrawingLayerRows==='function') wickBuildDrawingLayerRows(tracks);
+    return result;
+  };
   captureMainSceneAsContext=wickCaptureMainSceneAsContextBase;
   applyContext=wickApplyContextBase;
   saveCurrentClipEditingContext=wickSaveCurrentClipEditingContextBase;
