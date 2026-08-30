@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v309: Layers always own explicit key blocks; artwork is never rendered as its own layer row. -->
 <!-- LukeAnimate GPT v308: Restores true layer-owned artwork rows so duplication and blank keys affect one layer only. -->
 <!-- LukeAnimate GPT v307: Always exposes duplicated artwork as a visible timeline layer, including during frame-model migration. -->
 <!-- LukeAnimate GPT v306: Duplicated artwork receives its own visible timeline layer row with full-frame exposure. -->
@@ -13488,7 +13489,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=89';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=90';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -18249,7 +18250,6 @@ ctx.fill();</textarea>
     const tracksEl = document.getElementById('timeline-tracks');
     tracksEl.innerHTML = '';
     renderIndependentFrameTrack(tracksEl);
-    renderArtworkLayerTracks(tracksEl);
 
     layers.forEach((layer, idx)=>{
       const row = document.createElement('div');
@@ -22554,7 +22554,15 @@ ctx.fill();</textarea>
   }
 
   function wickCreateLayer(name){
-    const layer={id:wickNextLayerId(),name:String(name||('Layer '+(wickDrawingLayers.length+1))),order:wickNextLayerOrder(),frames:[]};
+    const layer={
+      id:wickNextLayerId(),
+      name:String(name||('Layer '+(wickDrawingLayers.length+1))),
+      order:wickNextLayerOrder(),
+      // Every layer starts with an explicit blank key. Artwork is assigned to
+      // that key when the first shape is committed; otherwise the blank key
+      // remains visible and editable on this layer only.
+      frames:[{id:wickNextFrameId(),startFrame:0,endFrame:wickTotalFrameIndex(timelineDuration),blank:true,object:null,_sequence:0}]
+    };
     wickDrawingLayers.push(layer);
     wickActiveDrawingLayerId=layer.id;
     return layer;
