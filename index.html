@@ -1,4 +1,4 @@
-<!-- LukeAnimate GPT v291: Stop nodes end Preview mode at their frame and return Luke Animate to editable timeline mode. -->
+<!-- LukeAnimate GPT v292: Timeline Stop freezes frame advance without ending Preview, so Button/Node Coder interactions and other Clip commands keep running. -->
 <!-- LukeAnimate GPT v286: adds two-click capture fallback for Script-marker Node Coder handoff. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
 <!-- LukeAnimate GPT v274: adds Timeline actions to Node Coder, uses native Stop/Rando icons throughout and expands Stop with Play actions. -->
@@ -3538,7 +3538,8 @@ ctx.fill();</textarea>
   let samples = [];       // sampled path points with tangent/normal
   let pathLen = 0;
 
-  let playing = false; // start paused at 0 seconds
+  let playing = false; // Preview mode: behaviours and interactive Clips are live.
+  let timelineScriptStopped = false; // A Timeline Stop freezes only the playhead.
   // v180 playback uses uncapped wall-clock delta so heavy rigs do not run in slow motion.
   let t = 0;              // animation time (seconds)
   let lastFrame = performance.now();
@@ -4553,6 +4554,9 @@ ctx.fill();</textarea>
   function syncPlaybackCursorMode(){
     const shell=document.getElementById('canvas-shell');
     document.body.classList.toggle('playback-active',!!playing);
+    document.body.classList.toggle('timeline-script-stopped',!!(playing&&timelineScriptStopped));
+    const playButton=document.getElementById('btn-transport-play');
+    if(playButton)playButton.title=playing&&timelineScriptStopped?'Resume timeline preview':'Play';
     if(!shell)return;
     const interactive=!!(playing&&nodeCodeDragTargetAtPoint({x:nodeCodePointer.x,y:nodeCodePointer.y}));
     shell.classList.toggle('playback-interactive',interactive);
@@ -13268,7 +13272,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=72';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=73';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -18749,6 +18753,7 @@ ctx.fill();</textarea>
 
   document.getElementById('btn-transport-play').addEventListener('click', ()=>{
     playing = true;
+    timelineScriptStopped = false;
     lastFrame = performance.now();
     syncPlaybackCursorMode();
     renderTransformHandles();
@@ -18756,6 +18761,7 @@ ctx.fill();</textarea>
   });
   document.getElementById('btn-transport-pause').addEventListener('click', ()=>{
     playing = false;
+    timelineScriptStopped = false;
     syncPlaybackCursorMode();
     renderTransformHandles();
     typeToolPressedKeys.clear();
@@ -18763,6 +18769,7 @@ ctx.fill();</textarea>
   });
   document.getElementById('btn-transport-stop').addEventListener('click', ()=>{
     playing = false;
+    timelineScriptStopped = false;
     syncPlaybackCursorMode();
     renderTransformHandles();
     t = 0;
@@ -20389,6 +20396,7 @@ ctx.fill();</textarea>
   }
 
   function resetScriptLayerRuntime(){
+    timelineScriptStopped=false;
     scriptRuntimeState.lastFrame=null;
     scriptRuntimeState.executedOnce.clear();
     Object.keys(scriptRuntimeVariables).forEach(key=>delete scriptRuntimeVariables[key]);
@@ -20412,8 +20420,17 @@ ctx.fill();</textarea>
       if(action==='gotoStop'||action==='gotoPlay')t=frame/getTimelineFPS();
       else if(action==='next')t=Math.min(timelineDuration,(frameIndexForTime(t,timelineDuration)+1)/getTimelineFPS());
       else if(action==='prev')t=Math.max(0,(frameIndexForTime(t,timelineDuration)-1)/getTimelineFPS());
-      if(action==='stop'||action==='gotoStop')playing=false;
-      if(action==='play'||action==='gotoPlay')playing=true;
+      if(action==='stop'||action==='gotoStop'){
+        timelineScriptStopped=true;
+        pauseAudioIfLoaded();
+      }
+      if(action==='play'||action==='gotoPlay'){
+        timelineScriptStopped=false;
+        playing=true;
+        lastFrame=performance.now();
+        playAudioIfLoaded();
+      }
+      syncPlaybackCursorMode();
       return;
     }
     const targetRuntime=scriptClipRuntime(target);if(!targetRuntime)return;
@@ -20468,7 +20485,7 @@ ctx.fill();</textarea>
     normaliseScriptLayers();
     for(const layer of scriptLayers){
       for(const marker of layer.markers){
-        if(marker.frame===frame){runScriptMarker(marker);if(!playing&&!exportPlayback.active)return;}
+        if(marker.frame===frame)runScriptMarker(marker);
       }
     }
   }
@@ -20477,8 +20494,8 @@ ctx.fill();</textarea>
     const frame=frameIndexForTime(t,timelineDuration),last=scriptRuntimeState.lastFrame,total=wickTotalFrameIndex(timelineDuration);
     if(last===null)runScriptMarkersAtFrame(frame);
     else if(frame!==last){
-      if(frame>last){for(let index=last+1;index<=frame;index++){runScriptMarkersAtFrame(index);if(!playing&&!exportPlayback.active)break;}}
-      else{for(let index=last+1;index<=total;index++){runScriptMarkersAtFrame(index);if(!playing&&!exportPlayback.active)break;}if(playing||exportPlayback.active){for(let index=0;index<=frame;index++){runScriptMarkersAtFrame(index);if(!playing&&!exportPlayback.active)break;}}}
+      if(frame>last){for(let index=last+1;index<=frame;index++){runScriptMarkersAtFrame(index);if(timelineScriptStopped&&!exportPlayback.active)break;}}
+      else{for(let index=last+1;index<=total;index++){runScriptMarkersAtFrame(index);if(timelineScriptStopped&&!exportPlayback.active)break;}if((playing||exportPlayback.active)&&(!timelineScriptStopped||exportPlayback.active)){for(let index=0;index<=frame;index++){runScriptMarkersAtFrame(index);if(timelineScriptStopped&&!exportPlayback.active)break;}}}
     }
     scriptRuntimeState.lastFrame=frameIndexForTime(t,timelineDuration);
   }
@@ -20703,7 +20720,7 @@ ctx.fill();</textarea>
       );
       exportPlayback.currentFrameIndex = frameIndex;
       t = frameIndex / fps;
-    }else if(playing){
+    }else if(playing&&!timelineScriptStopped){
       t += dt;
       if(timelineDuration > 0 && t >= timelineDuration){
         if(loopTimeline){
