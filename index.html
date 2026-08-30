@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v301: Duplicate Selected Layer preserves the selected drawing/Clip layer and its complete timeline instead of creating a particle layer. -->
 <!-- LukeAnimate GPT v300: scaling a vector curve changes its geometry without multiplying its selected stroke width. -->
 <!-- LukeAnimate GPT v299: Clips can be nested recursively through the active Clip workspace, with deep rendering/edit breadcrumbs and cycle prevention. -->
 <!-- LukeAnimate GPT v298: stage object context actions directly reorder the complete drawing-layer model and use proper clickable LA menu rows. -->
@@ -13478,7 +13479,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=81';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=82';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -15124,11 +15125,18 @@ ctx.fill();</textarea>
     window.addEventListener('mouseup', onUp);
   }
 
-  document.getElementById('btn-tool-duplicate').addEventListener('click', ()=>{
+  function duplicateSelectedEffectLayer(){
     const layer = activeLayer();
-    if(!layer) return;
+    if(!layer) return false;
     pushUndo();
-    const clone = { id: 'layer-' + (++layerCounter), type: layer.type, enabled: layer.enabled, p: JSON.parse(JSON.stringify(layer.p)), state:{} };
+    const clone = {
+      id:'layer-' + (++layerCounter),
+      type:layer.type,
+      enabled:layer.enabled,
+      layerLocked:!!layer.layerLocked,
+      p:JSON.parse(JSON.stringify(layer.p)),
+      state:{}
+    };
     if(isIndependentPointLayer(layer)){
       const duplicateIds = pointObjectsForLayer(layer).map(sourcePoint=>createOffsetPointFrom(sourcePoint).id);
       clone.p.geometryMode = 'points';
@@ -15147,7 +15155,17 @@ ctx.fill();</textarea>
     renderLayerList();
     renderPoints();
     renderTimeline();
-  });
+    return true;
+  }
+
+  function duplicateSelectedLayer(){
+    if(selectedDrawIndices.size && typeof wickDuplicateSelectedDrawingLayers === 'function'){
+      if(wickDuplicateSelectedDrawingLayers()) return true;
+    }
+    return duplicateSelectedEffectLayer();
+  }
+
+  document.getElementById('btn-tool-duplicate').addEventListener('click', duplicateSelectedLayer);
 
   function beginStageMarqueeSelection(event,startCanvas,additive){
     const overlayRect=overlay.getBoundingClientRect();
@@ -18615,53 +18633,7 @@ ctx.fill();</textarea>
     renderTimeline();
   }
 
-  document.getElementById('btn-add-layer').addEventListener('click', ()=>{
-    saveActivePathEditor();
-    pushUndo();
-    const current = activeLayer();
-    if(!current){
-      if(document.getElementById('tab-btn-points').classList.contains('active')) createEmptyPointLayer('ripple');
-      else createEmptyPathLayer('line');
-      return;
-    }
-
-    const newLayer = {
-      id:'layer-' + (++layerCounter),
-      type:current.type,
-      enabled:current.enabled,
-      p:JSON.parse(JSON.stringify(current.p)),
-      state:{}
-    };
-
-    if(isIndependentPointLayer(current)){
-      const duplicateIds = pointObjectsForLayer(current).map(sourcePoint=>createOffsetPointFrom(sourcePoint).id);
-      newLayer.p.geometryMode = 'points';
-      newLayer.p.pointIds = duplicateIds;
-      newLayer.p.target = duplicateIds[0] || '';
-      if(duplicateIds.length) newLayer.p.ownedPointId = duplicateIds[0];
-      else delete newLayer.p.ownedPointId;
-      delete newLayer.p.pathPoints;
-      delete newLayer.p.pathClosed;
-    }else{
-      const sourceData = ensureLayerPathData(current, points, closed);
-      newLayer.p.geometryMode = 'path';
-      newLayer.p.target = 'path';
-      newLayer.p.pointIds = [];
-      delete newLayer.p.ownedPointId;
-      newLayer.p.pathPoints = clonePathPointList(sourceData.pathPoints);
-      newLayer.p.pathClosed = !!sourceData.pathClosed;
-    }
-
-    layers.push(newLayer);
-    activeIndex = layers.length - 1;
-    loadPathEditorForLayer(newLayer);
-    setParticleEditorTabForLayer(newLayer);
-    refreshAllUIFromLayer(newLayer);
-    renderPointList();
-    renderLayerList();
-    renderPoints();
-    renderTimeline();
-  });
+  document.getElementById('btn-add-layer').addEventListener('click', duplicateSelectedLayer);
   document.getElementById('btn-del-layer').addEventListener('click', ()=>{
     if(selectedDrawIndices.size > 0){
       deleteSelectedDrawObjects();
@@ -22246,6 +22218,93 @@ ctx.fill();</textarea>
     renderTransformHandles();
     renderPoints();
 
+    return true;
+  }
+
+  function wickDuplicateSelectedDrawingLayers(){
+    const model=wickEnsureCurrentDrawingLayers();
+    const selectedIds=new Set(wickSelectedLayerIds().map(id=>String(id)));
+    if(!selectedIds.size) return false;
+
+    const sources=model.filter(layer=>layer&&selectedIds.has(String(layer.id)));
+    if(!sources.length) return false;
+
+    pushUndo();
+    const duplicateIds=[];
+    const rebuilt=[];
+
+    model.forEach(sourceLayer=>{
+      rebuilt.push(sourceLayer);
+      if(!selectedIds.has(String(sourceLayer.id))) return;
+
+      const duplicateLayer={
+        id:wickNextLayerId(),
+        name:String(sourceLayer.name||'Layer')+' copy',
+        order:0,
+        frames:[]
+      };
+
+      (Array.isArray(sourceLayer.frames)?sourceLayer.frames:[]).forEach((sourceFrame,frameIndex)=>{
+        if(!sourceFrame) return;
+        const duplicateFrame={
+          id:wickNextFrameId(),
+          startFrame:sourceFrame.startFrame,
+          endFrame:sourceFrame.endFrame,
+          fadeInFrames:sourceFrame.fadeInFrames,
+          fadeOutFrames:sourceFrame.fadeOutFrames,
+          blank:sourceFrame.blank===true||!sourceFrame.object,
+          object:null,
+          _sequence:frameIndex
+        };
+
+        if(!duplicateFrame.blank){
+          const object=clipboardCloneWithoutOwnership(sourceFrame.object);
+          offsetClipboardObject(object,16);
+          if(object.name) object.name=String(object.name)+' copy';
+          ensureDrawObjectMetadata(object);
+          object.timelineLayerId=duplicateLayer.id;
+          object.frameLinkId=duplicateFrame.id;
+          object.frameLinkStart=duplicateFrame.startFrame;
+          object.frameLinkEnd=duplicateFrame.endFrame;
+          duplicateFrame.object=object;
+        }
+        duplicateLayer.frames.push(duplicateFrame);
+      });
+
+      duplicateIds.push(duplicateLayer.id);
+      rebuilt.push(duplicateLayer);
+    });
+
+    model.splice(0,model.length,...rebuilt);
+    model.forEach((layer,index)=>{
+      layer.order=index+1;
+      (layer.frames||[]).forEach(frame=>{
+        if(!frame||!frame.object) return;
+        frame.object.timelineLayerId=layer.id;
+        frame.object.timelineLayerOrder=layer.order;
+        frame.object.frameLinkId=frame.id;
+        frame.object.frameLinkStart=frame.startFrame;
+        frame.object.frameLinkEnd=frame.endFrame;
+      });
+    });
+    wickDrawingLayerOrderCounter=Math.max(wickDrawingLayerOrderCounter,model.length);
+    wickNormalizeLayerModel(model,timelineDuration);
+
+    selectedDrawIndices.clear();
+    wickActiveDrawingLayerId=duplicateIds[duplicateIds.length-1]||null;
+    syncActiveSceneFrameForTime(t,false);
+    duplicateIds.forEach(layerId=>{
+      const index=drawObjects.findIndex(object=>object&&String(object.timelineLayerId)===String(layerId));
+      if(index>=0) selectedDrawIndices.add(index);
+    });
+
+    updateSelectedCountUI();
+    renderLayerList();
+    updateInspector();
+    renderTimeline();
+    renderTransformHandles();
+    renderPoints();
+    logToSandbox('Duplicated '+duplicateIds.length+' drawing layer'+(duplicateIds.length===1?'':'s')+' with all frames.');
     return true;
   }
 
