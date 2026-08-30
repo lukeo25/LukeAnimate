@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v295: restores Ctrl/Cmd+C and Ctrl/Cmd+V for stage objects on main and nested Clip timelines. -->
 <!-- LukeAnimate GPT v294: Boolean Subtract preserves selection order: first-selected shape is the base, later selections are cutters. -->
 <!-- LukeAnimate GPT v293: Node Coder exposes Button programming as event/action nodes instead of misclassifying it as generic Type Tools code. -->
 <!-- LukeAnimate GPT v292: Timeline Stop freezes frame advance without ending Preview, so Button/Node Coder interactions and other Clip commands keep running. -->
@@ -3602,6 +3603,7 @@ ctx.fill();</textarea>
   let penSettings = { width:32, nibAspect:0.89, nibAngle:-25, taperLength:0.95, widthPosition:0.47, taperStart:true, taperEnd:true };
   let fillGapTolerance = 8;
   let suppressCommitDrawUndo = false;
+  let stageObjectClipboard = null;
   let inkPanelHistoryPushed = false;
   let stageTextEdit = null; // active in-place text entry {x,y,existingIndex}
   const loadedGoogleFonts = new Set();
@@ -6747,9 +6749,93 @@ ctx.fill();</textarea>
 
   document.getElementById('btn-undo').addEventListener('click', doUndo);
   document.getElementById('btn-redo').addEventListener('click', doRedo);
+
+  function clipboardCloneWithoutOwnership(source){
+    const clone=JSON.parse(JSON.stringify(source));
+    const reset=object=>{
+      if(!object||typeof object!=='object')return;
+      delete object.id;
+      delete object.timelineLayerId;
+      delete object.timelineLayerOrder;
+      delete object.frameLinkId;
+      delete object.frameLinkStart;
+      delete object.frameLinkEnd;
+      if(object.type==='group'&&Array.isArray(object.children))object.children.forEach(reset);
+    };
+    reset(clone);
+    return clone;
+  }
+
+  function offsetClipboardObject(object,amount){
+    if(!object||!amount)return;
+    const xField=object.type==='clipinstance'?'x':'tx';
+    const yField=object.type==='clipinstance'?'y':'ty';
+    object[xField]=(Number(object[xField])||0)+amount;
+    object[yField]=(Number(object[yField])||0)+amount;
+    if(Array.isArray(object.keyframes))object.keyframes.forEach(key=>{
+      if(key&&key[xField]!==undefined)key[xField]=(Number(key[xField])||0)+amount;
+      if(key&&key[yField]!==undefined)key[yField]=(Number(key[yField])||0)+amount;
+    });
+  }
+
+  function copySelectedStageObjects(){
+    const selected=Array.from(selectedDrawIndices)
+      .filter(index=>index>=0&&index<drawObjects.length)
+      .map(index=>drawObjects[index])
+      .filter(Boolean);
+    if(!selected.length)return false;
+    stageObjectClipboard={
+      format:'Luke Animate stage objects',
+      objects:selected.map(clipboardCloneWithoutOwnership),
+      pasteCount:0
+    };
+    logToSandbox('Copied '+selected.length+' stage object'+(selected.length===1?'':'s')+'.');
+    return true;
+  }
+
+  function pasteStageObjects(){
+    if(!stageObjectClipboard||!Array.isArray(stageObjectClipboard.objects)||!stageObjectClipboard.objects.length)return false;
+    pushUndo();
+    stageObjectClipboard.pasteCount=Math.max(0,Number(stageObjectClipboard.pasteCount)||0)+1;
+    const amount=16*stageObjectClipboard.pasteCount;
+    const pasted=[];
+    const previousSuppress=suppressCommitDrawUndo;
+    suppressCommitDrawUndo=true;
+    try{
+      stageObjectClipboard.objects.forEach(source=>{
+        const clone=clipboardCloneWithoutOwnership(source);
+        offsetClipboardObject(clone,amount);
+        if(clone.name)clone.name=String(clone.name)+' copy';
+        ensureDrawObjectMetadata(clone);
+        commitDrawObject(clone);
+        pasted.push(clone);
+      });
+    }finally{
+      suppressCommitDrawUndo=previousSuppress;
+    }
+    selectedDrawIndices.clear();
+    pasted.forEach(object=>{
+      const index=drawObjects.findIndex(candidate=>candidate===object||(candidate&&object&&candidate.id===object.id));
+      if(index>=0)selectedDrawIndices.add(index);
+    });
+    updateSelectedCountUI();
+    renderLayerList();
+    updateInspector();
+    renderTimeline();
+    renderTransformHandles();
+    renderPoints();
+    logToSandbox('Pasted '+pasted.length+' stage object'+(pasted.length===1?'':'s')+' on the current frame.');
+    return true;
+  }
+
   window.addEventListener('keydown', (e)=>{
     const tag = (e.target.tagName || '').toLowerCase();
     if(tag === 'input' || tag === 'select' || tag === 'textarea' || e.target.isContentEditable) return; // don't hijack typing/sliders
+    if(!playing&&(e.ctrlKey||e.metaKey)&&!e.altKey){
+      const shortcut=String(e.key||'').toLowerCase();
+      if(shortcut==='c'&&copySelectedStageObjects()){e.preventDefault();return;}
+      if(shortcut==='v'&&pasteStageObjects()){e.preventDefault();return;}
+    }
     if(stageTool === 'pen' && e.key === 'Enter' && penDraft){
       e.preventDefault();finishPenDraft(true);return;
     }
@@ -13310,7 +13396,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=75';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=76';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
