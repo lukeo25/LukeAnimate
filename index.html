@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v293: Node Coder exposes Button programming as event/action nodes instead of misclassifying it as generic Type Tools code. -->
 <!-- LukeAnimate GPT v292: Timeline Stop freezes frame advance without ending Preview, so Button/Node Coder interactions and other Clip commands keep running. -->
 <!-- LukeAnimate GPT v286: adds two-click capture fallback for Script-marker Node Coder handoff. -->
 <!-- LukeAnimate GPT v276: double-clicking any Script marker opens Node Coder focused on that Timeline action. -->
@@ -4828,8 +4829,42 @@ ctx.fill();</textarea>
     const tools=typeToolsForObject(object,false);
     if(!tools)return nodeCodeDocumentForObject(object,false);
     const documentData=nodeCodeDocumentForObject(object,true);
+    const managedSlotIds=new Set();
     Object.keys(tools).forEach((toolId,index)=>{
       const settings=normaliseTypeToolSettings(toolId,tools[toolId]);
+      if(toolId==='button'){
+        const eventNames={rollover:'Roll Over',rollout:'Roll Out',hover:'Hover',press:'Mouse Down',release:'Mouse Up',click:'Mouse Click',hold:'Hold',releaseoutside:'Release Outside'};
+        const eventPorts={rollover:'mouseover',rollout:'mouseout',hover:'hover',press:'pointerdown',release:'pointerup',click:'click',hold:'pointerdown',releaseoutside:'releaseoutside'};
+        const actionNames={gotoStop:'Go to and stop',gotoPlay:'Go to and play',stop:'Stop',play:'Play',setVariable:'Set variable',randomVariable:'Random number',toggleSelected:'Toggle Selected',select:'Select',deselect:'Normal'};
+        const actions=Array.isArray(settings.actions)?settings.actions:[];
+        actions.forEach((action,actionIndex)=>{
+          const actionId=String(action.id||('button-action-'+(actionIndex+1)));
+          const slotId='type-tool-button-action-'+actionId;
+          const target=action.target==='timeline'?'Timeline':action.target==='self'?'This Clip':String(action.target||'This Clip');
+          const actionName=actionNames[action.action]||String(action.action||'Action');
+          const eventName=eventNames[action.event]||String(action.event||'Button event');
+          const value=['gotoStop','gotoPlay'].includes(action.action)?' · Frame '+String(action.value||'1'):'';
+          const variable=['setVariable','randomVariable'].includes(action.action)?' · '+String(action.variable||'variable'):'';
+          const displayName=eventName+' → '+target+' · '+actionName+value+variable;
+          const existing=documentData.slots.find(slot=>slot.id===slotId);
+          const slot=normaliseNodeCodeSlot(Object.assign({},existing||{}, {
+            id:slotId,name:displayName,event:eventPorts[action.event]||'click',enabled:settings.enabled!==false,
+            code:'Button action: '+displayName,source:'type-tool',toolId:'button'
+          }),documentData.slots.length+actionIndex);
+          managedSlotIds.add(slotId);
+          if(existing)Object.assign(existing,slot);else documentData.slots.push(slot);
+        });
+        if(!actions.length){
+          const slotId='type-tool-button',existing=documentData.slots.find(slot=>slot.id===slotId);
+          const slot=normaliseNodeCodeSlot(Object.assign({},existing||{}, {
+            id:slotId,name:'Button · No actions',event:'tool',enabled:settings.enabled!==false,
+            code:'Button behaviour has no programmed actions.',source:'type-tool',toolId:'button'
+          }),documentData.slots.length+index);
+          managedSlotIds.add(slotId);
+          if(existing)Object.assign(existing,slot);else documentData.slots.push(slot);
+        }
+        return;
+      }
       const slotId='type-tool-'+toolId;
       const existing=documentData.slots.find(slot=>slot.id===slotId);
       const displayName=toolId==='dragdrop'?'Drag & Drop':toolId.replace(/[_-]+/g,' ').replace(/\b\w/g,letter=>letter.toUpperCase());
@@ -4838,9 +4873,10 @@ ctx.fill();</textarea>
         id:slotId,name:displayName,event:'tool',enabled:settings.enabled!==false,
         code:code||('// '+displayName+' uses Luke Animate native runtime code.'),source:'type-tool',toolId
       }),documentData.slots.length+index);
+      managedSlotIds.add(slotId);
       if(existing)Object.assign(existing,slot);else documentData.slots.push(slot);
     });
-    documentData.slots=documentData.slots.filter(slot=>slot.source!=='type-tool'||!!tools[slot.toolId]);
+    documentData.slots=documentData.slots.filter(slot=>slot.source!=='type-tool'||managedSlotIds.has(slot.id));
     return documentData;
   }
 
@@ -13272,7 +13308,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=73';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=74';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
