@@ -1,3 +1,5 @@
+<!-- LukeAnimate GPT v311: Timeline containers use sequential Layer 1, Layer 2 labels independent of their contents. -->
+<!-- LukeAnimate GPT v310: Blank keys split one layer cleanly and preserve its artwork before and after the blank frame. -->
 <!-- LukeAnimate GPT v309: Layers always own explicit key blocks; artwork is never rendered as its own layer row. -->
 <!-- LukeAnimate GPT v308: Restores true layer-owned artwork rows so duplication and blank keys affect one layer only. -->
 <!-- LukeAnimate GPT v307: Always exposes duplicated artwork as a visible timeline layer, including during frame-model migration. -->
@@ -13489,7 +13491,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=90';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=92';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -22022,7 +22024,9 @@ ctx.fill();</textarea>
       if(!Number.isFinite(Number(layer.order))) layer.order = wickNextLayerOrder();
       layer.order = Math.round(Number(layer.order) || (layerIndex + 1));
       wickDrawingLayerOrderCounter = Math.max(wickDrawingLayerOrderCounter, layer.order);
-      if(!layer.name) layer.name = 'Layer ' + (layerIndex + 1);
+      // Layer names describe the timeline container, never the shape inside
+      // it. Keep the standard sequential labels used by the editor.
+      layer.name = 'Layer ' + (layerIndex + 1);
       if(!Array.isArray(layer.frames)) layer.frames = [];
 
       const frames = layer.frames.map((frame, frameIndex)=>{
@@ -22387,7 +22391,7 @@ ctx.fill();</textarea>
 
       const duplicateLayer={
         id:wickNextLayerId(),
-        name:String(sourceLayer.name||'Layer')+' copy',
+        name:'Layer '+(model.length+rebuilt.length+1),
         order:0,
         frames:[]
       };
@@ -22607,10 +22611,14 @@ ctx.fill();</textarea>
     frameIndex=Math.max(0,Math.min(totalFrames,Math.round(Number(frameIndex)||0)));
     wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
     const current=wickFrameAt(layer,frameIndex);
+    // Capture the original exposure before shortening it for a new key. The
+    // following held artwork must resume after a blank key; otherwise the
+    // projection can leave the entire layer empty after the insertion.
+    const originalEnd=current ? current.endFrame : null;
     const next=layer.frames.filter(frame=>frame.startFrame>frameIndex).sort((a,b)=>a.startFrame-b.startFrame)[0] || null;
     let newEnd=current ? current.endFrame : (next ? next.startFrame-1 : totalFrames);
     let source=current && current.object ? current : wickPreviousDrawableFrame(layer,frameIndex);
-    const resumeEnd=current ? current.endFrame : frameIndex;
+    const resumeEnd=current ? originalEnd : frameIndex;
     const resumeSource=mode==='blank' && current && current.object ? current.object : null;
 
     if(current){
