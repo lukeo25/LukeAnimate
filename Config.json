@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 96,
+  "version": 97,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -241,9 +241,10 @@
         {
           "id": "Stop Mo",
           "label": "Stop Mo",
+          "description": "Capture webcam frames directly into a selected Luke Animate timeline layer with auto-advance and onion skin preview.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/StopMo.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/StopMo.txt",
-          "action": "script",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/StopMo.txt?v=1.0",
+          "action": "tool",
           "F_Screen": 0
         }
       ],
