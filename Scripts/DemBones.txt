@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.78
+/* Luke Animate Dem Bones + MyCharacter GPT v16.79
+   v16.79 lets native stage rotation/scale and their keyframes drive an
+   attached Gizmo Clip while Dem Bones continues applying the parent bone.
    v16.78 keeps attached Gizmo controls available from Gizmos/Animate and
    restores a saved single rig when no stage object is selected and
    recovers the rig from a selected attached Gizmo Clip.
@@ -218,7 +220,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.78";
+  var TOOL_VERSION = "16.79";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -4511,9 +4513,9 @@
           var parentBone=pinBone.parentId?(gizmoRig.bones||[]).filter(function(bone){return String(bone.id)===String(pinBone.parentId);})[0]:null,parentPose=parentBone?poses[parentBone.id]:null;
           if(parentBone&&parentPose){
             var parentRestAngle=angleOf(parentBone.restHead,parentBone.restTail),parentPoseAngle=angleOf(parentPose.head,parentPose.tail),parentRestLength=Math.max(.001,n(parentBone.restLength,Math.hypot(parentBone.restTail.x-parentBone.restHead.x,parentBone.restTail.y-parentBone.restHead.y))),parentPoseLength=Math.max(.001,Math.hypot(parentPose.tail.x-parentPose.head.x,parentPose.tail.y-parentPose.head.y)),parentRatio=parentPoseLength/parentRestLength,storedOffset=pinBone.gizmoParentOffset,localAnchor=storedOffset?{x:n(storedOffset.x,0),y:n(storedOffset.y,0)}:inverseRotateVector(pinBone.restHead.x-parentBone.restHead.x,pinBone.restHead.y-parentBone.restHead.y,parentRestAngle),anchorOffset=rotateVector(localAnchor.x*parentRatio,localAnchor.y*parentRatio,parentPoseAngle),pinDistance=Math.max(.001,n(pinBone.restLength,1))*parentRatio,pinOffset=rotateVector(n(gizmo.pin.along,0)*pinDistance,n(gizmo.pin.across,0)*pinDistance,parentPoseAngle);
-            gizmoOut.x=parentPose.head.x+anchorOffset.x+pinOffset.x;gizmoOut.y=parentPose.head.y+anchorOffset.y+pinOffset.y;gizmoOut.rotation=n(gizmo.pin.rotation,0)+(parentPoseAngle-parentRestAngle);gizmoOut.scale=n(pinBone.gizmoDisplayScale,gizmo.pin.scale)*parentRatio;gizmoOut.scaleX=n(gizmo.pin.scaleX,1);gizmoOut.scaleY=n(gizmo.pin.scaleY,1);
+            gizmoOut.x=parentPose.head.x+anchorOffset.x+pinOffset.x;gizmoOut.y=parentPose.head.y+anchorOffset.y+pinOffset.y;gizmoOut.rotation=n(effective.rotation,n(gizmo.pin.rotation,0))+(parentPoseAngle-parentRestAngle);gizmoOut.scale=n(effective.scale,n(pinBone.gizmoDisplayScale,gizmo.pin.scale))*parentRatio;gizmoOut.scaleX=n(effective.scaleX,n(gizmo.pin.scaleX,1));gizmoOut.scaleY=n(effective.scaleY,n(gizmo.pin.scaleY,1));
           }else{
-            var poseAngle=angleOf(pinPose.head,pinPose.tail),poseLength=Math.max(.001,Math.hypot(pinPose.tail.x-pinPose.head.x,pinPose.tail.y-pinPose.head.y)),offset=rotateVector(n(gizmo.pin.along,0)*poseLength,n(gizmo.pin.across,0)*poseLength,poseAngle),ratio=poseLength/Math.max(.001,n(pinBone.restLength,poseLength));gizmoOut.x=pinPose.head.x+offset.x;gizmoOut.y=pinPose.head.y+offset.y;gizmoOut.rotation=n(gizmo.pin.rotation,0)+(poseAngle-n(gizmo.pin.restAngle,poseAngle));gizmoOut.scale=n(pinBone.gizmoDisplayScale,gizmo.pin.scale)*ratio;gizmoOut.scaleX=n(gizmo.pin.scaleX,1);gizmoOut.scaleY=n(gizmo.pin.scaleY,1);
+            var poseAngle=angleOf(pinPose.head,pinPose.tail),poseLength=Math.max(.001,Math.hypot(pinPose.tail.x-pinPose.head.x,pinPose.tail.y-pinPose.head.y)),offset=rotateVector(n(gizmo.pin.along,0)*poseLength,n(gizmo.pin.across,0)*poseLength,poseAngle),ratio=poseLength/Math.max(.001,n(pinBone.restLength,poseLength));gizmoOut.x=pinPose.head.x+offset.x;gizmoOut.y=pinPose.head.y+offset.y;gizmoOut.rotation=n(effective.rotation,n(gizmo.pin.rotation,0))+(poseAngle-n(gizmo.pin.restAngle,poseAngle));gizmoOut.scale=n(effective.scale,n(pinBone.gizmoDisplayScale,gizmo.pin.scale))*ratio;gizmoOut.scaleX=n(effective.scaleX,n(gizmo.pin.scaleX,1));gizmoOut.scaleY=n(effective.scaleY,n(gizmo.pin.scaleY,1));
           }
         }
       }
