@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v324: Restores timeline marquee selection from the timeline background and modifier-dragged frame bars. -->
 <!-- LukeAnimate GPT v323: Loads Dem Bones v16.68 with one-step stage Clip ingestion as a positioned, parented Gizmo Bone. -->
 <!-- LukeAnimate GPT v322: Loads Dem Bones v16.67 with restored Build Parts save and character-add actions. -->
 <!-- LukeAnimate GPT v321: Loads Dem Bones v16.66 with direct on-stage PNG cropping before bone setup. -->
@@ -1620,7 +1621,8 @@
   }
   .toolbar-action-menu button:hover,.toolbar-action-menu button:focus-visible{background:var(--accent-dim);border-color:var(--accent);outline:none;}
   .toolbar-action-menu img{width:23px;height:23px;display:block;filter:grayscale(1) brightness(0) invert(1);pointer-events:none;}
-  .wick-layer-frame.timeline-frame-selected{
+  .wick-layer-frame.timeline-frame-selected,
+  .timeline-scene-frame.timeline-frame-selected{
     outline:2px solid #b72f72; outline-offset:1px; z-index:7;
     box-shadow:0 0 0 2px rgba(255,255,255,.82) inset;
   }
@@ -23891,9 +23893,20 @@ ctx.fill();</textarea>
   const wickTimelineTracksElement=document.getElementById('timeline-tracks');
   if(wickTimelineTracksElement){
     wickTimelineTracksElement.addEventListener('pointerdown',event=>{
-      if(event.button!==0 || !event.target.closest('.timeline-track') || event.target.closest('.wick-layer-frame,.timeline-scene-frame,.timeline-key-dot,.timeline-bar')) return;
+      if(event.button!==0) return;
+      const startTrack=event.target.closest('.timeline-track');
+      const startRow=event.target.closest('.timeline-track-row');
+      const startsInTimeline=startTrack||startRow||event.target===wickTimelineTracksElement;
+      const startsOnFrame=event.target.closest('.wick-layer-frame,.timeline-scene-frame,.timeline-bar');
+      const modifier=event.shiftKey||event.ctrlKey||event.metaKey;
+      if(!startsInTimeline) return;
+      if(event.target.closest('.timeline-track-name,.timeline-key-dot,.wick-layer-edge-handle,.wick-object-fade-handle')) return;
+      // Normal dragging on a frame still moves that frame. Holding a selection
+      // modifier turns the same gesture into a marquee, so full-width layer
+      // exposures no longer leave the user with nowhere to start a box.
+      if(startsOnFrame&&!modifier) return;
       const startX=event.clientX,startY=event.clientY;
-      const additive=event.shiftKey||event.ctrlKey||event.metaKey;
+      const additive=modifier;
       const original=additive?new Set(wickSelectedTimelineFrameIds):new Set();
       const marquee=document.createElement('div');
       marquee.className='timeline-key-marquee';
