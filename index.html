@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v319: Converting artwork to a Clip replaces it inside its original layer key instead of creating an additional host layer. -->
 <!-- LukeAnimate GPT v318: Restores Make Clip by removing undefined metadata cleanup and timeline-reveal calls that aborted Clip creation and stage selection. -->
 <!-- LukeAnimate GPT v317: Clip conversion now replaces selected layer-key artwork with a canonical Clip layer so new and existing Clip instances remain enterable by double-click. -->
 <!-- LukeAnimate GPT v316: Replicates LukeTools StopMo as a native Luke Animate webcam importer with onion skin and layer-owned frame capture. -->
@@ -13259,23 +13260,24 @@ ctx.fill();</textarea>
           {pushUndo:false,refresh:false}
         );
       });
-      const clipLayer=wickCreateLayer();
+      // Conversion stays on the selected artwork's existing layer. For a
+      // multi-layer selection, use the frontmost selected layer as the Clip's
+      // host and leave the other selected layers blank over this exposure.
+      const activeSelectedId=selectedLayerIds.includes(String(wickActiveDrawingLayerId||''))
+        ?String(wickActiveDrawingLayerId)
+        :selectedLayerIds[selectedLayerIds.length-1];
+      const clipLayer=wickLayerById(activeSelectedId);
+      if(!clipLayer) throw new Error('The selected layer is no longer available for Clip conversion.');
       const totalFrame=wickTotalFrameIndex(timelineDuration);
       const clipEnd=Math.min(totalFrame,sourceFrameStart+sourceFrameCount-1);
-      clipLayer.frames=[];
-      if(sourceFrameStart>0){
-        clipLayer.frames.push({id:wickNextFrameId(),startFrame:0,endFrame:sourceFrameStart-1,blank:true,object:null,_sequence:0});
-      }
-      const clipFrame={id:wickNextFrameId(),startFrame:sourceFrameStart,endFrame:clipEnd,blank:false,object:clipInstance,_sequence:clipLayer.frames.length};
+      const clipFrame={id:wickNextFrameId(),startFrame:sourceFrameStart,endFrame:clipEnd,blank:false,object:clipInstance,_sequence:clipLayer.frames.length+1};
       clipInstance.timelineLayerId=clipLayer.id;
       clipInstance.timelineLayerOrder=clipLayer.order;
       clipInstance.frameLinkId=clipFrame.id;
       clipInstance.frameLinkStart=clipFrame.startFrame;
       clipInstance.frameLinkEnd=clipFrame.endFrame;
       clipLayer.frames.push(clipFrame);
-      if(clipEnd<totalFrame){
-        clipLayer.frames.push({id:wickNextFrameId(),startFrame:clipEnd+1,endFrame:totalFrame,blank:true,object:null,_sequence:clipLayer.frames.length});
-      }
+      wickActiveDrawingLayerId=clipLayer.id;
       wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
       wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);
       syncActiveSceneFrameForTime(t,false);
