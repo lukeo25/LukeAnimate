@@ -1,4 +1,9 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.74
+/* Luke Animate Dem Bones + MyCharacter GPT v16.76
+   v16.76 adds a Dem Bones-owned transform box for attached Gizmo Clips. It
+   writes move, scale and rotation through the Gizmo Bone pin so animation is
+   preserved while the gizmo remains directly editable.
+   v16.75 closes Multi Script when Dem Bones is selected so floating tools do
+   not overlap or appear to change identity.
    v16.74 keeps front/back changes authoritative across canonical layers and
    every currently rendered copy of an ingested Gizmo.
    v16.73 makes the rig and Gizmo Bone authoritative for attached Gizmo scale
@@ -210,7 +215,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.74";
+  var TOOL_VERSION = "16.76";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -223,6 +228,8 @@
   if(!API || typeof API.getDrawObjects !== "function" || typeof API.getClips !== "function"){
     throw new Error("Dem Bones requires the Luke Animate plug-in API.");
   }
+  var openMultiPanel=document.getElementById('lukeanimate-multi-script-panel');
+  if(openMultiPanel){var closeMulti=openMultiPanel.querySelector('.la-multi-close');if(closeMulti){try{closeMulti.click();}catch(ignoreMultiClose){}}}
   /* Replace older Dem Bones scripts cleanly when the .txt file is updated without
      requiring a full Luke Animate page reload. Older listeners remain installed but
      their close() state prevents them from handling stage input. */
@@ -3506,6 +3513,49 @@
     return found;
   }
 
+  /* A registered Clip Gizmo is still a normal stage object.  DemBones owns
+     its attachment, so the native transform handles are hidden while this
+     panel is open; these small helpers provide the same move/scale/rotate
+     controls without bypassing the Gizmo Bone pin. */
+  function gizmoObjectTransform(instance){
+    if(!instance||instance.type!=='clipinstance')return null;
+    if(typeof API.getObjectTransform==='function'){
+      try{return API.getObjectTransform(instance,currentTime());}catch(ignoreGizmoTransform){ }
+    }
+    var effective=typeof API.getEffectiveObject==='function'?(API.getEffectiveObject(instance,currentTime())||instance):instance;
+    return{effective:effective,originX:n(effective.x,0),originY:n(effective.y,0),pivotX:n(effective.x,0),pivotY:n(effective.y,0),scale:n(effective.scale,1),scaleX:n(effective.scaleX,1),scaleY:n(effective.scaleY,1),rotation:n(effective.rotation,0),halfW:60,halfH:60};
+  }
+
+  function gizmoTransformCorners(transform){
+    var angle=n(transform&&transform.rotation,0)*Math.PI/180,scaleX=n(transform&&transform.scaleX,1),scaleY=n(transform&&transform.scaleY,1),cx=n(transform&&transform.pivotX,0),cy=n(transform&&transform.pivotY,0);
+    return[
+      {key:'tl',x:-n(transform&&transform.halfW,60),y:-n(transform&&transform.halfH,60)},
+      {key:'tr',x:n(transform&&transform.halfW,60),y:-n(transform&&transform.halfH,60)},
+      {key:'br',x:n(transform&&transform.halfW,60),y:n(transform&&transform.halfH,60)},
+      {key:'bl',x:-n(transform&&transform.halfW,60),y:n(transform&&transform.halfH,60)}
+    ].map(function(point){var scaled=rotateVector(point.x*scaleX,point.y*scaleY,angle);return{x:cx+scaled.x,y:cy+scaled.y,key:point.key};});
+  }
+
+  function gizmoTransformHandlePoint(transform){
+    var angle=n(transform&&transform.rotation,0)*Math.PI/180,offset=-(n(transform&&transform.halfH,60)*Math.abs(n(transform&&transform.scaleY,1))+28),rotated=rotateVector(0,offset,angle);
+    return{x:n(transform&&transform.pivotX,0)+rotated.x,y:n(transform&&transform.pivotY,0)+rotated.y};
+  }
+
+  function gizmoTransformHit(event){
+    if(state.tab!=='bones'||state.mode==='control-place')return null;
+    var control=selectedClipGizmoControl(),bone=control.bone,instance=control.gizmos[0]||null;
+    if(!instance)return null;
+    var transform=gizmoObjectTransform(instance);if(!transform)return null;
+    var point=selectedScenePoint(event),corners=gizmoTransformCorners(transform),threshold=scenePixels(12),best=null;
+    corners.forEach(function(corner){var distance=Math.hypot(point.x-corner.x,point.y-corner.y);if(distance<=threshold&&(!best||distance<best.distance))best={handle:'scale-'+corner.key,distance:distance,transform:transform};});
+    var rotate=gizmoTransformHandlePoint(transform),rotateDistance=Math.hypot(point.x-rotate.x,point.y-rotate.y);
+    if(rotateDistance<=threshold&&(!best||rotateDistance<best.distance))best={handle:'rotate',distance:rotateDistance,transform:transform};
+    if(best)return best;
+    var angle=n(transform.rotation,0)*Math.PI/180,local=inverseRotateVector(point.x-n(transform.pivotX,0),point.y-n(transform.pivotY,0),angle),halfW=n(transform.halfW,60)*Math.abs(n(transform.scaleX,1)),halfH=n(transform.halfH,60)*Math.abs(n(transform.scaleY,1));
+    if(Math.abs(local.x)<=halfW+threshold&&Math.abs(local.y)<=halfH+threshold)return{handle:'move',distance:0,transform:transform};
+    return null;
+  }
+
   function clipGizmoForBone(bone,quiet){
     if(!bone||!isGizmoBone(bone))return null;
     var found=clipGizmoObjects(state.activeRig).filter(function(object){return object.demBonesGizmo&&String(object.demBonesGizmo.boneId||'')===String(bone.id);})[0]||null;
@@ -3522,8 +3572,21 @@
     });
   }
 
-  function setSelectedClipGizmoScale(value,recordUndo,rerenderPanel){
+  function selectedClipGizmoControl(){
     var bone=selectedBone(),gizmos=clipGizmosForBone(bone);
+    if(!gizmos.length){
+      var instance=selectedClipGizmo();
+      if(instance&&instance.demBonesGizmo){
+        var id=instance.demBonesGizmo.boneId;
+        bone=id?boneById(id):bone;
+        gizmos=[instance];
+      }
+    }
+    return{bone:bone,gizmos:gizmos};
+  }
+
+  function setSelectedClipGizmoScale(value,recordUndo,rerenderPanel){
+    var control=selectedClipGizmoControl(),bone=control.bone,gizmos=control.gizmos;
     if(!gizmos.length){notify('Select a Gizmo Bone with an ingested Clip first.',true);return false;}
     var scale=clamp(n(value,1),.05,10);
     if(recordUndo!==false)API.pushUndo();
@@ -3540,8 +3603,34 @@
     return true;
   }
 
+  function setSelectedClipGizmoPosition(x,y,recordUndo,rerenderPanel){
+    var control=selectedClipGizmoControl(),bone=control.bone,gizmos=control.gizmos;
+    if(!gizmos.length){notify('Select a Gizmo Bone with an ingested Clip first.',true);return false;}
+    var head=bone.restHead||{x:0,y:0},tail=bone.restTail||{x:1,y:0},angle=angleOf(head,tail),length=Math.max(.001,n(bone.restLength,Math.hypot(tail.x-head.x,tail.y-head.y))),local=inverseRotateVector(n(x,head.x)-n(head.x,0),n(y,head.y)-n(head.y,0),angle);
+    if(recordUndo!==false)API.pushUndo();
+    gizmos.forEach(function(gizmo){
+      var pin=gizmo.demBonesGizmo.pin=gizmo.demBonesGizmo.pin||{};
+      pin.along=round3(local.x/length);pin.across=round3(local.y/length);
+      gizmo.x=round3(n(x,0));gizmo.y=round3(n(y,0));
+    });
+    syncRigRefs(state.activeRig);API.refreshUI();if(rerenderPanel!==false)renderAll();
+    if(rerenderPanel!==false)notify((gizmos[0].name||'Gizmo')+' position set to '+round3(x)+', '+round3(y)+'.',false);
+    return true;
+  }
+
+  function setSelectedClipGizmoRotation(value,recordUndo,rerenderPanel){
+    var control=selectedClipGizmoControl(),bone=control.bone,gizmos=control.gizmos;
+    if(!gizmos.length){notify('Select a Gizmo Bone with an ingested Clip first.',true);return false;}
+    var rotation=round3(n(value,0));
+    if(recordUndo!==false)API.pushUndo();
+    gizmos.forEach(function(gizmo){var pin=gizmo.demBonesGizmo.pin=gizmo.demBonesGizmo.pin||{};pin.rotation=rotation;gizmo.rotation=rotation;});
+    syncRigRefs(state.activeRig);API.refreshUI();if(rerenderPanel!==false)renderAll();
+    if(rerenderPanel!==false)notify((gizmos[0].name||'Gizmo')+' rotation set to '+rotation+'°.',false);
+    return true;
+  }
+
   function moveSelectedClipGizmoDepth(toFront){
-    var bone=selectedBone(),gizmos=clipGizmosForBone(bone);
+    var control=selectedClipGizmoControl(),bone=control.bone,gizmos=control.gizmos;
     if(!gizmos.length){notify('Select a Gizmo Bone with an ingested Clip first.',true);return false;}
     var refs=gizmos.slice(),ids={};gizmos.forEach(function(object){if(object&&object.id!=null)ids[String(object.id)]=true;});
     function matches(object){
@@ -3696,6 +3785,15 @@
     }
     ctx.fillStyle='#26303b';ctx.font='11px Arial';ctx.fillText(label||'Dummy',geom.ne.x+7,geom.ne.y-6);
     ctx.restore();
+  }
+
+  function drawGizmoTransformBox(ctx,instance,selected){
+    var transform=gizmoObjectTransform(instance);if(!transform)return;
+    var corners=gizmoTransformCorners(transform).map(stagePointFromScene),rotate=stagePointFromScene(gizmoTransformHandlePoint(transform));
+    ctx.save();ctx.strokeStyle=selected?'#0e9c86':'rgba(14,156,134,.75)';ctx.fillStyle=selected?'rgba(14,156,134,.05)':'rgba(14,156,134,.02)';ctx.lineWidth=2;ctx.setLineDash(selected?[]:[6,4]);
+    ctx.beginPath();corners.forEach(function(point,index){if(index)ctx.lineTo(point.x,point.y);else ctx.moveTo(point.x,point.y);});ctx.closePath();ctx.fill();ctx.stroke();ctx.setLineDash([]);
+    if(selected){ctx.fillStyle='#fff';ctx.strokeStyle='#0e9c86';ctx.lineWidth=2;corners.forEach(function(point){ctx.beginPath();ctx.rect(point.x-5,point.y-5,10,10);ctx.fill();ctx.stroke();});ctx.beginPath();ctx.moveTo((corners[0].x+corners[1].x)/2,(corners[0].y+corners[1].y)/2);ctx.lineTo(rotate.x,rotate.y);ctx.stroke();ctx.beginPath();ctx.arc(rotate.x,rotate.y,6,0,Math.PI*2);ctx.fill();ctx.stroke();}
+    ctx.fillStyle='#26303b';ctx.font='11px Arial';ctx.fillText(instance.name||'Gizmo Clip',corners[1].x+7,corners[1].y-6);ctx.restore();
   }
 
   function characterAllEditBoneHit(event){
@@ -7279,6 +7377,21 @@
     }
   }
 
+  function updateGizmoTransformDrag(drag,pointer){
+    var start=drag.startTransform||{},handle=String(drag.handle||''),dx=pointer.x-drag.startPointer.x,dy=pointer.y-drag.startPointer.y;
+    if(handle==='move'){
+      setSelectedClipGizmoPosition(drag.startOrigin.x+dx,drag.startOrigin.y+dy,false,false);
+    }else if(handle==='rotate'){
+      var startAngle=Math.atan2(drag.startPointer.y-drag.startOrigin.y,drag.startPointer.x-drag.startOrigin.x),nextAngle=Math.atan2(pointer.y-drag.startOrigin.y,pointer.x-drag.startOrigin.x),delta=(nextAngle-startAngle)*180/Math.PI;
+      while(delta>180)delta-=360;while(delta<-180)delta+=360;
+      setSelectedClipGizmoRotation(drag.startRotation+delta,false,false);
+    }else if(handle.indexOf('scale-')===0){
+      var distance=Math.max(1,Math.hypot(pointer.x-drag.startPivot.x,pointer.y-drag.startPivot.y)),ratio=distance/Math.max(1,drag.startScaleDistance);
+      setSelectedClipGizmoScale(Math.max(.05,Math.min(20,drag.startScale*ratio)),false,false);
+    }
+    API.refreshUI();renderAll();
+  }
+
   function onPointerDown(event){
     if(!state.open){
       /* Only the most recent explicit stage bone click may choose a rig when
@@ -7524,6 +7637,15 @@
     }
     var hit=boneHit(event);
     if(state.tab==="bones"){
+      var gizmoTransform=gizmoTransformHit(event);
+      if(gizmoTransform){
+        if(stopLockedRigPointer(event,state.activeRig))return;
+        event.preventDefault();event.stopImmediatePropagation();API.pushUndo();
+        var gizmoStart=gizmoTransform.transform,scalePoint=null;
+        if(String(gizmoTransform.handle||'').indexOf('scale-')===0){scalePoint=gizmoTransformCorners(gizmoStart).filter(function(corner){return 'scale-'+corner.key===gizmoTransform.handle;})[0]||null;}
+        state.drag={kind:'gizmo-transform',pointerId:event.pointerId,handle:gizmoTransform.handle,startPointer:point,startTransform:clone(gizmoStart),startScale:Math.max(.05,n(gizmoStart.scale,1)),startRotation:n(gizmoStart.rotation,0),startOrigin:{x:n(gizmoStart.originX,gizmoStart.pivotX),y:n(gizmoStart.originY,gizmoStart.pivotY)},startPivot:{x:n(gizmoStart.pivotX,0),y:n(gizmoStart.pivotY,0)},startScaleDistance:scalePoint?Math.max(1,Math.hypot(scalePoint.x-gizmoStart.pivotX,scalePoint.y-gizmoStart.pivotY)):1};
+        return;
+      }
       if(state.mode==="control-place"){
         var placingControl=selectedBone();
         if(placingControl&&isDummyBone(placingControl)){
@@ -7605,6 +7727,10 @@
     if(state.drag.kind==="crop-png"){updatePngCropDrag(state.drag,p);API.refreshUI();return;}
     if(state.drag.kind==="character-dummy-transform"){
       updateCharacterDummyDirectDrag(state.drag,p);
+      return;
+    }
+    if(state.drag.kind==='gizmo-transform'){
+      updateGizmoTransformDrag(state.drag,p);
       return;
     }
     if(state.drag.kind==="closed-animate-bone"){
@@ -7766,6 +7892,7 @@
     if(state.drag.pointerId!==undefined&&event.pointerId!==state.drag.pointerId)return;
     event.preventDefault();event.stopImmediatePropagation();var finished=state.drag;
     if(finished.kind==="crop-png"){state.drag=null;renderAll();API.refreshUI();return;}
+    if(finished.kind==='gizmo-transform'){state.drag=null;renderAll();API.refreshUI();notify('Gizmo '+(finished.handle==='move'?'position':(finished.handle==='rotate'?'rotation':'scale'))+' updated.',false);return;}
     if(finished.kind==="add"&&state.addPreview)addBone(state.addPreview.head,state.addPreview.tail,state.addBoneType||"bone");
     else if(finished.kind==="character-add"&&state.addPreview){
       var characterAddPart=finished.part||partById(state.addPreview.characterPartId);
@@ -8091,6 +8218,12 @@
       }
     });
 
+    if(state.tab==='bones'){
+      var selectedGizmoBone=selectedBone();
+      var selectedGizmo=selectedGizmoBone&&isGizmoBone(selectedGizmoBone)?clipGizmoForBone(selectedGizmoBone,true):selectedClipGizmo();
+      if(selectedGizmo)drawGizmoTransformBox(ctx,selectedGizmo,true);
+    }
+
     if(state.addPreview){
       var activePreviewType=state.addBoneType||'bone';
       var activePreviewBone={name:activePreviewType==='tube'?'New Tube Bone':'New Bone',type:activePreviewType,restHead:state.addPreview.head,restTail:state.addPreview.tail,restLength:Math.max(.001,Math.hypot(state.addPreview.tail.x-state.addPreview.head.x,state.addPreview.tail.y-state.addPreview.head.y)),tubeHandleCount:3,tubeRestOffsets:normaliseTubeOffsets([],3)};
@@ -8273,8 +8406,8 @@
     var bone=selectedBone();if(!bone||!isGizmoBone(bone))return '';
     var gizmo=clipGizmoForBone(bone,true);
     if(!gizmo)return '<div class="db-section"><h3>Gizmo Display</h3><div class="db-empty">No Clip is attached to this Gizmo Bone yet.</div></div>';
-    var pin=gizmo.demBonesGizmo&&gizmo.demBonesGizmo.pin||{},scale=clamp(n(bone.gizmoDisplayScale,n(pin.scale,gizmo.scale||1)),.05,10);
-    return '<div class="db-section"><h3>Gizmo Display</h3><div class="db-part-summary">'+esc(gizmo.name||'Gizmo Clip')+'</div><div class="db-row" style="margin-top:7px"><label>Scale</label><div class="db-range-pair"><input type="range" min="0.05" max="10" step="0.01" value="'+scale+'" data-db-gizmo-display-scale><input type="number" min="0.05" max="10" step="0.01" value="'+round3(scale)+'" data-db-gizmo-display-scale-num></div></div><div class="db-grid2"><button class="db-btn primary" data-db-gizmo-front>Bring to Front</button><button class="db-btn" data-db-gizmo-back>Send to Back</button></div><p class="db-help" style="margin-top:7px">These controls change only the attached Gizmo Clip. The PNG remains controlled by its ordinary deforming bones.</p></div>';
+    var pin=gizmo.demBonesGizmo&&gizmo.demBonesGizmo.pin||{},scale=clamp(n(bone.gizmoDisplayScale,n(pin.scale,gizmo.scale||1)),.05,10),transform=gizmoObjectTransform(gizmo)||{},positionX=n(transform.originX,gizmo.x),positionY=n(transform.originY,gizmo.y),rotation=n(transform.rotation,gizmo.rotation);
+    return '<div class="db-section"><h3>Gizmo Display</h3><div class="db-part-summary">'+esc(gizmo.name||'Gizmo Clip')+'</div><div class="db-row" style="margin-top:7px"><label>Position X</label><input type="number" step="1" value="'+round3(positionX)+'" data-db-gizmo-position-x></div><div class="db-row"><label>Position Y</label><input type="number" step="1" value="'+round3(positionY)+'" data-db-gizmo-position-y></div><div class="db-row"><label>Rotation</label><input type="number" step="1" value="'+round3(rotation)+'" data-db-gizmo-rotation></div><div class="db-row"><label>Scale</label><div class="db-range-pair"><input type="range" min="0.05" max="10" step="0.01" value="'+scale+'" data-db-gizmo-display-scale><input type="number" min="0.05" max="10" step="0.01" value="'+round3(scale)+'" data-db-gizmo-display-scale-num></div></div><div class="db-grid2"><button class="db-btn primary" data-db-gizmo-front>Bring to Front</button><button class="db-btn" data-db-gizmo-back>Send to Back</button></div><p class="db-help" style="margin-top:7px">Drag the selected Gizmo box on the stage to move or scale it. Rotation, position, scale and depth apply to the attached Clip only; the PNG remains controlled by its ordinary deforming bones.</p></div>';
   }
 
   function bonesPage(){
@@ -8428,6 +8561,10 @@
     if(gizmoDisplayScale)gizmoDisplayScale.oninput=function(){if(!gizmoScaleGestureStarted){API.pushUndo();gizmoScaleGestureStarted=true;}if(gizmoDisplayScaleNumber)gizmoDisplayScaleNumber.value=round3(clamp(n(gizmoDisplayScale.value,1),.05,10));setSelectedClipGizmoScale(gizmoDisplayScale.value,false,false);};
     if(gizmoDisplayScale)gizmoDisplayScale.onchange=function(){setSelectedClipGizmoScale(gizmoDisplayScale.value,false,true);gizmoScaleGestureStarted=false;};
     if(gizmoDisplayScaleNumber)gizmoDisplayScaleNumber.onchange=function(){setSelectedClipGizmoScale(gizmoDisplayScaleNumber.value);};
+    var gizmoPositionX=p.querySelector('[data-db-gizmo-position-x]'),gizmoPositionY=p.querySelector('[data-db-gizmo-position-y]'),gizmoRotation=p.querySelector('[data-db-gizmo-rotation]');
+    if(gizmoPositionX)gizmoPositionX.onchange=function(){var gizmo=selectedClipGizmo(),transform=gizmoObjectTransform(gizmo)||{};setSelectedClipGizmoPosition(n(gizmoPositionX.value,n(transform.originX,gizmo&&gizmo.x)),n(transform.originY,gizmo&&gizmo.y));};
+    if(gizmoPositionY)gizmoPositionY.onchange=function(){var gizmo=selectedClipGizmo(),transform=gizmoObjectTransform(gizmo)||{};setSelectedClipGizmoPosition(n(transform.originX,gizmo&&gizmo.x),n(gizmoPositionY.value,n(transform.originY,gizmo&&gizmo.y)));};
+    if(gizmoRotation)gizmoRotation.onchange=function(){setSelectedClipGizmoRotation(gizmoRotation.value);};
     p.querySelectorAll('[data-db-gizmo-front]').forEach(function(button){button.onclick=function(){moveSelectedClipGizmoDepth(true);};});
     p.querySelectorAll('[data-db-gizmo-back]').forEach(function(button){button.onclick=function(){moveSelectedClipGizmoDepth(false);};});
     var editBoneSelect=p.querySelector('[data-db-edit-bone-select]');if(editBoneSelect)editBoneSelect.onchange=function(){state.selectedBoneId=editBoneSelect.value;selectAttachedGizmoForBone(selectedBone());renderAll();};
