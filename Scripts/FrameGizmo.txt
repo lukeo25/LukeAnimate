@@ -1,5 +1,5 @@
 /*
-  Luke Animate Frame Gizmo GPT v3.4
+  Luke Animate Frame Gizmo GPT v3.5
   Stage-side named-frame controller for selected Clip instances.
 
   The controller is shown only while exactly one Clip instance is selected.
@@ -13,7 +13,7 @@
   const STYLE_ID = "lukeanimate-frame-gizmo-v3-style";
   const DOCK_ID = "lukeanimate-frame-gizmo-v3-dock";
   const DATA_KEY = "_lukeAnimateFrameGizmo";
-  const VERSION = "3.4";
+  const VERSION = "3.5";
   const TOOL_GROUP_ID = String(group && group.id ? group.id : "animate");
   const TOOL_ITEM_ID = String(item && (item.id || item.label) ? (item.id || item.label) : "FrameGizmo");
   const TOOL_ICON_URL = String(item && item.iconUrl ? item.iconUrl : "https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.svg");
@@ -150,7 +150,22 @@
         keys:[]
       };
     }
-    const data = instance[DATA_KEY];
+    let data = instance[DATA_KEY];
+    const link=instance.demBonesGizmo||null;
+    const rig=instance.demBonesExpression&&instance.demBonesExpression.rig;
+    if(link&&link.boneId&&rig){
+      if(!rig.gizmoControllers||typeof rig.gizmoControllers!=="object")rig.gizmoControllers={};
+      const shared=rig.gizmoControllers[link.boneId];
+      if(shared&&typeof shared==="object"){
+        const score=value=>(Array.isArray(value&&value.keys)?value.keys.length:0)+(value&&value.enabled?1000:0)+(value&&value.manualFrame!=null?100:0);
+        if(score(data)>score(shared)){
+          Object.keys(shared).forEach(field=>delete shared[field]);
+          Object.assign(shared,JSON.parse(JSON.stringify(data)));
+        }
+        data=shared;
+      }else rig.gizmoControllers[link.boneId]=data;
+      instance[DATA_KEY]=data;
+    }
     data.enabled = !!data.enabled;
     data.baseFrame = Math.max(1,Math.round(number(data.baseFrame,1)));
     const manualValue = data.manualFrame;
