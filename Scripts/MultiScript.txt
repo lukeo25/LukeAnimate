@@ -1,3 +1,5 @@
+/* Luke Animate Multi Script v2.0
+   Adds main-timeline, single Clip and filename-labelled Gizmo Clip imports. */
 (function () {
   "use strict";
 
@@ -17,6 +19,7 @@
     "ensureTimelineFrameCount",
     "createImageObject",
     "createImageClip",
+    "createImageSequenceClip",
     "createClipInstance",
     "clearDrawingLayerRange",
     "setDrawingLayerFrameObject",
@@ -70,6 +73,13 @@
     '  </label>',
     '  <div class="la-multi-file-summary" id="la-multi-file-summary">No files selected.</div>',
     '  <div class="la-multi-grid">',
+    '    <label>Import As',
+    '      <select id="la-multi-import-mode">',
+    '        <option value="timeline">Timeline sequence</option>',
+    '        <option value="clip">Clip</option>',
+    '        <option value="gizmo">Gizmo</option>',
+    '      </select>',
+    '    </label>',
     '    <label>Start Frame',
     '      <input id="la-multi-start-frame" type="number" min="1" step="1">',
     '    </label>',
@@ -80,6 +90,9 @@
     '      </select>',
     '    </label>',
     '  </div>',
+    '  <label class="la-multi-clip-row" id="la-multi-clip-row">Clip Name',
+    '    <input id="la-multi-clip-name" type="text" value="Image Sequence" maxlength="80">',
+    '  </label>',
     '  <label class="la-multi-new-layer-row" id="la-multi-new-layer-row">New Layer Name',
     '    <input id="la-multi-layer-name" type="text" value="Image Sequence" maxlength="80">',
     '  </label>',
@@ -96,7 +109,7 @@
     '  </div>',
     '  <div class="la-multi-progress" id="la-multi-progress" aria-hidden="true"><span></span></div>',
     '  <pre class="la-multi-log" id="la-multi-log" aria-live="polite">Ready.</pre>',
-    '  <p class="la-multi-hint">Files are sorted naturally by filename. Each image is centred on the stage and placed on one consecutive frame of a single LukeAnimate drawing layer.</p>',
+    '  <p class="la-multi-hint" id="la-multi-hint">Files are sorted naturally by filename. Timeline Sequence places one image on each consecutive main-timeline frame. Clip and Gizmo create one multi-frame Clip instance; Gizmo frame labels exactly match the image filenames.</p>',
     '</div>'
   ].join("\n");
 
@@ -105,10 +118,13 @@
 
   var fileInput = panel.querySelector("#la-multi-files");
   var fileSummary = panel.querySelector("#la-multi-file-summary");
+  var importModeSelect = panel.querySelector("#la-multi-import-mode");
   var startFrameInput = panel.querySelector("#la-multi-start-frame");
   var destinationSelect = panel.querySelector("#la-multi-destination");
   var newLayerRow = panel.querySelector("#la-multi-new-layer-row");
   var layerNameInput = panel.querySelector("#la-multi-layer-name");
+  var clipRow = panel.querySelector("#la-multi-clip-row");
+  var clipNameInput = panel.querySelector("#la-multi-clip-name");
   var wrapInput = panel.querySelector("#la-multi-wrap");
   var nameInput = panel.querySelector("#la-multi-name");
   var clearRangeInput = panel.querySelector("#la-multi-clear");
@@ -135,6 +151,7 @@
   });
 
   destinationSelect.addEventListener("change", updateDestinationFields);
+  importModeSelect.addEventListener("change", updateDestinationFields);
 
   closeButton.addEventListener("click", closePanel);
 
@@ -186,6 +203,8 @@
       ".la-multi-panel input[type=number]:focus,.la-multi-panel input[type=text]:focus,.la-multi-panel select:focus{border-color:var(--accent-dim);box-shadow:none}",
       ".la-multi-new-layer-row{display:none!important}",
       ".la-multi-new-layer-row.is-visible{display:flex!important}",
+      ".la-multi-clip-row{display:none!important}",
+      ".la-multi-clip-row.is-visible{display:flex!important}",
       ".la-multi-options{display:flex;flex-direction:column;gap:7px;padding:9px;border:1px solid var(--line);border-radius:7px;background:var(--panel-2)}",
       ".la-multi-options label{flex-direction:row;align-items:flex-start;gap:8px;color:var(--text);cursor:pointer}",
       ".la-multi-options input[type=checkbox]{width:16px;height:16px;flex:0 0 16px;margin:0;accent-color:var(--accent)}",
@@ -216,7 +235,12 @@
 
   function updateDestinationFields() {
     var useNewLayer = destinationSelect.value === "new";
+    var sequenceMode = importModeSelect.value === "timeline";
     newLayerRow.classList.toggle("is-visible", useNewLayer);
+    clipRow.classList.toggle("is-visible", !sequenceMode);
+    wrapInput.disabled = !sequenceMode || state.busy;
+    nameInput.disabled = !sequenceMode || state.busy;
+    importButton.textContent = importModeSelect.value === "gizmo" ? "Import as Gizmo" : (importModeSelect.value === "clip" ? "Import as Clip" : "Build Animation Sequence");
   }
 
   function naturalSortFiles(files) {
@@ -247,9 +271,11 @@
     fileInput.disabled = state.busy;
     startFrameInput.disabled = state.busy;
     destinationSelect.disabled = state.busy;
+    importModeSelect.disabled = state.busy;
     layerNameInput.disabled = state.busy;
-    wrapInput.disabled = state.busy;
-    nameInput.disabled = state.busy;
+    clipNameInput.disabled = state.busy;
+    wrapInput.disabled = state.busy || importModeSelect.value !== "timeline";
+    nameInput.disabled = state.busy || importModeSelect.value !== "timeline";
     clearRangeInput.disabled = state.busy;
     extendTimelineInput.disabled = state.busy;
     fitInput.disabled = state.busy;
@@ -257,6 +283,7 @@
     progressElement.classList.toggle("is-visible", state.busy);
     progressElement.setAttribute("aria-hidden", state.busy ? "false" : "true");
     if (!state.busy) progressBar.style.width = "0%";
+    if (!state.busy) updateDestinationFields();
   }
 
   function setProgress(completed, total) {
@@ -359,6 +386,7 @@
     }
 
     var startFrame = Math.max(1, Math.round(Number(startFrameInput.value) || 1));
+    var importMode = importModeSelect.value || "timeline";
     startFrameInput.value = String(startFrame);
     var endFrame = startFrame + state.files.length - 1;
     var currentFrameCount = timelineFrameCount();
@@ -398,6 +426,29 @@
     }
 
     var firstObject = null;
+    if (importMode !== "timeline") {
+      var sequenceSources = loadedImages.map(function (loaded) {
+        var dimensions = fittedDimensions(loaded.width, loaded.height);
+        return {src:loaded.dataUrl,name:loaded.name,fileName:loaded.file.name,label:loaded.file.name,width:dimensions.width,height:dimensions.height};
+      });
+      var sequenceName = String(clipNameInput.value || "").trim() || (importMode === "gizmo" ? "Gizmo Sequence" : "Image Sequence");
+      var sequenceClip = API.createImageSequenceClip(sequenceSources, {
+        name:sequenceName,labelFrames:importMode === "gizmo",gizmo:importMode === "gizmo",loop:importMode !== "gizmo",pushUndo:false,refresh:false
+      });
+      firstObject = API.createClipInstance(sequenceClip.id, {
+        name:sequenceName,x:Number(API.width)/2,y:Number(API.height)/2,timeOffset:-API.frameToTime(startFrame)
+      });
+      if (importMode === "gizmo") {
+        firstObject._lukeAnimateFrameGizmo={enabled:true,baseFrame:1,manualFrame:null,keys:[]};
+        firstObject._lukeAnimateGizmoImport={version:1,frameNames:sequenceSources.map(function (source) { return source.fileName; })};
+      }
+      var sequenceFrame = API.setDrawingLayerFrameObject(targetLayer.id,startFrame,firstObject,{pushUndo:false,refresh:false});
+      sequenceFrame.endFrame=endFrame-1;
+      if(sequenceFrame.object)sequenceFrame.object.frameLinkEnd=sequenceFrame.endFrame;
+      log((importMode === "gizmo" ? "Gizmo" : "Clip")+" created: "+sequenceName+" · "+loadedImages.length+" internal frames.");
+      if(importMode === "gizmo")sequenceSources.forEach(function(source,sourceIndex){log("Gizmo frame "+(sourceIndex+1)+": "+source.fileName);});
+      setProgress(loadedImages.length,loadedImages.length);
+    } else {
     for (index = 0; index < loadedImages.length; index += 1) {
       var loaded = loadedImages[index];
       var frameNumber = startFrame + index;
@@ -448,6 +499,7 @@
       log("Frame " + frameNumber + ": " + loaded.file.name + (wrapInput.checked ? "  [Clip]" : "  [Image]"));
       setProgress(index + 1, loadedImages.length);
     }
+    }
 
     API.setFrame(startFrame);
     API.refreshUI();
@@ -456,7 +508,7 @@
       API.refreshUI();
     }
 
-    log("Complete. Imported " + loadedImages.length + " image" + (loadedImages.length === 1 ? "" : "s") + " across frames " + startFrame + " to " + endFrame + ".");
+    log("Complete. Imported " + loadedImages.length + " image" + (loadedImages.length === 1 ? "" : "s") + (importMode === "timeline" ? " across frames " : " inside one "+(importMode === "gizmo" ? "Gizmo Clip across frames " : "Clip across frames ")) + startFrame + " to " + endFrame + ".");
     setBusy(false);
   }
 

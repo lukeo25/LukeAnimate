@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 104,
+  "version": 105,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -209,7 +209,7 @@
           "label": "Multi Script",
           "description": "Import a naturally sorted image sequence onto consecutive LukeAnimate layer frames.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Multi.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/MultiScript.txt",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/MultiScript.txt?v=2.0",
           "action": "tool",
           "F_Screen": 0
         },

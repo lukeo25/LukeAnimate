@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v326: Adds native image-sequence Clip creation for Multi Script Clip and filename-labelled Gizmo imports. -->
 <!-- LukeAnimate GPT v325: Converts marquee-selected layer keys into one Clip while preserving their layer order and relative timing. -->
 <!-- LukeAnimate GPT v324: Restores timeline marquee selection from the timeline background and modifier-dragged frame bars. -->
 <!-- LukeAnimate GPT v323: Loads Dem Bones v16.68 with one-step stage Clip ingestion as a positioned, parented Gizmo Bone. -->
@@ -13621,7 +13622,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=104';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=105';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -14037,7 +14038,7 @@ ctx.fill();</textarea>
   }
 
   const LukeAnimatePluginAPI = {
-    version: 135,
+    version: 136,
     playerMode: publishedGameMode,
     configUrl: LUKE_ANIMATE_CONFIG_URL,
     get canvas(){ return canvas; },
@@ -14507,6 +14508,41 @@ ctx.fill();</textarea>
         renderClipLibrary();
         this.refreshUI();
       }
+      return clip;
+    },
+    createImageSequenceClip(sources, options){
+      const settings=options&&typeof options==='object'?options:{};
+      const entries=Array.isArray(sources)?sources.filter(Boolean):[];
+      if(!entries.length)throw new Error('createImageSequenceClip requires at least one image.');
+      if(settings.pushUndo!==false)pushUndo();
+      const fpsValue=Math.max(1,this.fps);
+      const clip=makeClip(String(settings.name||('Image Sequence '+(clipCounter+1))));
+      clip.timelineDuration=Math.max(1/fpsValue,entries.length/fpsValue);
+      clip.loopTimeline=settings.loop!==false;
+      clip.layers=[];clip.pivotX=0;clip.pivotY=0;
+      const layer={id:wickNextLayerId(),name:'Layer 1',order:1,frames:[]};
+      entries.forEach((entry,index)=>{
+        const width=Math.max(1,Number(entry.width)||1),height=Math.max(1,Number(entry.height)||1);
+        const image=this.createImageObject(entry,{
+          name:String(entry.name||('Image '+(index+1))),src:String(entry.src||entry.dataUrl||''),
+          width,height,x:-width/2,y:-height/2,opacity:entry.opacity===undefined?1:entry.opacity
+        });
+        layer.frames.push({id:wickNextFrameId(),startFrame:index,endFrame:index,blank:false,object:image,_sequence:index});
+      });
+      clip.drawingLayers=[layer];
+      wickNormalizeLayerModel(clip.drawingLayers,clip.timelineDuration);
+      clip.sceneFrames=[];
+      wickProjectLayerModel(clip.drawingLayers,clip.sceneFrames,clip.timelineDuration);
+      const first=sceneFrameAtIndex(clip.sceneFrames,0);
+      clip.drawObjects=first&&Array.isArray(first.objects)?first.objects:[];
+      clip.frameLabels=settings.labelFrames?entries.map((entry,index)=>({
+        name:String(entry.label||entry.fileName||entry.name||('Frame '+(index+1))),
+        frame:index+1,time:index/fpsValue
+      })):[];
+      if(settings.gizmo)clip._lukeAnimateGizmoClip={version:1,imported:true,frameNames:clip.frameLabels.map(label=>label.name)};
+      clips[clip.id]=clip;
+      ensureClipSceneFrames(clip);
+      if(settings.refresh!==false){renderClipLibrary();this.refreshUI();}
       return clip;
     },
     createClipInstance(clipId, options){
