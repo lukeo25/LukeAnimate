@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v318: Restores Make Clip by removing undefined metadata cleanup and timeline-reveal calls that aborted Clip creation and stage selection. -->
 <!-- LukeAnimate GPT v317: Clip conversion now replaces selected layer-key artwork with a canonical Clip layer so new and existing Clip instances remain enterable by double-click. -->
 <!-- LukeAnimate GPT v316: Replicates LukeTools StopMo as a native Luke Animate webcam importer with onion skin and layer-owned frame capture. -->
 <!-- LukeAnimate GPT v315: Keeps the layer-owned runtime active so Blank Key splits only the selected layer and resumes its content. -->
@@ -13133,13 +13134,10 @@ ctx.fill();</textarea>
     clip.drawingLayers=[];
     clip.sceneFrames=selected.map(sourceFrame=>{
       const objects=(sourceFrame.objects||[]).map(sourceObject=>{
-        const object=JSON.parse(JSON.stringify(sourceObject));
-        const cleanTimelineMetadata=item=>{
-          if(!item) return;
-          removeObjectTimelineMetadata(item);
-          if(item.type==='group'&&Array.isArray(item.children)) item.children.forEach(cleanTimelineMetadata);
-        };
-        cleanTimelineMetadata(object);
+        // Use the established recursive ownership reset used by Copy/Paste.
+        // The removed helper referenced here was never defined and aborted
+        // Make Clip before a Clip definition or instance could be created.
+        const object=clipboardCloneWithoutOwnership(sourceObject);
         translateDrawObjectIntoClip(object,-cx,-cy);
         object.keyframes=(object.keyframes||[]).filter(key=>{
           const keyFrame=Math.round((Number(key.time)||0)*fps);
@@ -13227,11 +13225,9 @@ ctx.fill();</textarea>
     const name = prompt('Name this Clip:', 'Clip ' + (clipCounter+1)) || undefined;
     pushUndo();
     const clip = makeClip(name);
-    clip.drawObjects = selectedObjs.map(o=>{
-      const clone = JSON.parse(JSON.stringify(o));
-      removeObjectTimelineMetadata(clone);
-      return translateDrawObjectIntoClip(clone,-cx,-cy);
-    });
+    clip.drawObjects = selectedObjs.map(o=>
+      translateDrawObjectIntoClip(clipboardCloneWithoutOwnership(o),-cx,-cy)
+    );
     // The Clip mirrors the exposure owned by the parent frame. A one-frame
     // parent becomes a one-frame Clip; an extended parent keeps that count.
     clip.timelineDuration = sourceFrameCount / getTimelineFPS();
@@ -15286,6 +15282,29 @@ ctx.fill();</textarea>
   }
 
   document.getElementById('btn-tool-duplicate').addEventListener('click', ()=>duplicateSelectedLayer(false));
+
+  let pendingTimelineLayerReveal=null;
+
+  function queueTimelineLayerReveal(kind,key){
+    const value=String(key||'');
+    pendingTimelineLayerReveal=value?{kind:String(kind||''),key:value}:null;
+  }
+
+  function fulfilPendingTimelineLayerReveal(){
+    const request=pendingTimelineLayerReveal;
+    pendingTimelineLayerReveal=null;
+    if(!request)return false;
+    const rows=Array.from(document.querySelectorAll('#timeline-tracks .timeline-track-row'));
+    const row=rows.find(element=>String(element.dataset.timelineKey||'')===request.key);
+    if(!row)return false;
+    const dock=document.getElementById('timeline-dock');
+    if(dock){
+      const rowRect=row.getBoundingClientRect(),dockRect=dock.getBoundingClientRect();
+      if(rowRect.top<dockRect.top)dock.scrollTop-=dockRect.top-rowRect.top+6;
+      else if(rowRect.bottom>dockRect.bottom)dock.scrollTop+=rowRect.bottom-dockRect.bottom+6;
+    }
+    return true;
+  }
 
   function beginStageMarqueeSelection(event,startCanvas,additive){
     const overlayRect=overlay.getBoundingClientRect();
