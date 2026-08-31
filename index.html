@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v330: Makes attached Gizmo scale, canonical layer depth, and Frame Gizmo keys update the actual rendered nested Clip. -->
 <!-- LukeAnimate GPT v329: Adds attached Gizmo scale/depth controls, preserves PNG bone deformation, and keeps unprogrammed Gizmo Clips animating. -->
 <!-- LukeAnimate GPT v328: Loads Dem Bones v16.70 with selection-driven stage Gizmo ingestion at the chosen parent bone. -->
 <!-- LukeAnimate GPT v327: Loads Dem Bones v16.69 with persistent Character-part bone editing and animation selection. -->
@@ -13625,7 +13626,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=108';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=109';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -14391,6 +14392,48 @@ ctx.fill();</textarea>
     },
     getDrawingLayers(){
       return wickEnsureCurrentDrawingLayers();
+    },
+    moveDrawObjectLayerToEdge(object, front){
+      if(!object) return false;
+      const candidates=[];
+      const seenModels=new Set();
+      const addCandidate=(model,frames,duration,current)=>{
+        if(!Array.isArray(model)||seenModels.has(model)) return;
+        seenModels.add(model);candidates.push({model,frames,duration,current:!!current});
+      };
+      addCandidate(wickEnsureCurrentDrawingLayers(),sceneFrames,timelineDuration,true);
+      Object.values(clips||{}).forEach(clip=>{
+        if(!clip) return;
+        addCandidate(wickEnsureClipDrawingLayers(clip),clip.sceneFrames,clip.timelineDuration,String(editingClipId||'')===String(clip.id||''));
+      });
+      const objectId=object.id==null?'':String(object.id);
+      const locate=exactOnly=>{
+        for(const candidate of candidates){
+          const index=candidate.model.findIndex(layer=>(layer&&layer.frames||[]).some(frame=>frame&&frame.object&&(
+            exactOnly?frame.object===object:(objectId&&String(frame.object.id||'')===objectId)
+          )));
+          if(index>=0) return {candidate,index};
+        }
+        return null;
+      };
+      const found=locate(true)||locate(false);if(!found) return false;
+      const model=found.candidate.model,target=front?model.length-1:0;
+      if(found.index===target) return true;
+      pushUndo();
+      const moved=model.splice(found.index,1)[0];model.splice(target,0,moved);
+      model.forEach((layer,index)=>{
+        layer.order=index+1;
+        (layer.frames||[]).forEach(frame=>{if(frame&&frame.object){frame.object.timelineLayerId=layer.id;frame.object.timelineLayerOrder=layer.order;}});
+      });
+      wickDrawingLayerOrderCounter=Math.max(wickDrawingLayerOrderCounter,model.length);
+      wickNormalizeLayerModel(model,found.candidate.duration);
+      wickProjectLayerModel(model,found.candidate.frames,found.candidate.duration);
+      if(found.candidate.current){
+        wickDrawingLayers=model;
+        syncActiveSceneFrameForTime(t,false);
+      }
+      this.refreshUI();renderClipLibrary();
+      return true;
     },
     getActiveDrawingLayer(){
       wickEnsureCurrentDrawingLayers();

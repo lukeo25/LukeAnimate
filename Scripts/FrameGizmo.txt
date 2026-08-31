@@ -1,5 +1,5 @@
 /*
-  Luke Animate Frame Gizmo GPT v3.3
+  Luke Animate Frame Gizmo GPT v3.4
   Stage-side named-frame controller for selected Clip instances.
 
   The controller is shown only while exactly one Clip instance is selected.
@@ -13,7 +13,7 @@
   const STYLE_ID = "lukeanimate-frame-gizmo-v3-style";
   const DOCK_ID = "lukeanimate-frame-gizmo-v3-dock";
   const DATA_KEY = "_lukeAnimateFrameGizmo";
-  const VERSION = "3.3";
+  const VERSION = "3.4";
   const TOOL_GROUP_ID = String(group && group.id ? group.id : "animate");
   const TOOL_ITEM_ID = String(item && (item.id || item.label) ? (item.id || item.label) : "FrameGizmo");
   const TOOL_ICON_URL = String(item && item.iconUrl ? item.iconUrl : "https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.svg");
@@ -167,6 +167,33 @@
     return data;
   }
 
+  function matchingControllerInstances(instance){
+    if(!instance) return [];
+    const out=[],seen=new Set(),id=instance.id==null?"":String(instance.id);
+    const gizmo=instance.demBonesGizmo||null;
+    const add=object=>{
+      if(!object||object.type!=="clipinstance"||seen.has(object)) return;
+      const sameId=id&&String(object.id||"")===id;
+      const other=object.demBonesGizmo||null;
+      const samePin=!!(gizmo&&gizmo.boneId&&other&&String(other.rigId||"")===String(gizmo.rigId||"")&&String(other.boneId||"")===String(gizmo.boneId||""));
+      if(object===instance||sameId||samePin){seen.add(object);out.push(object);}
+    };
+    (LukeAnimate.getDrawObjects&&LukeAnimate.getDrawObjects()||[]).forEach(add);
+    const clips=LukeAnimate.getClips?LukeAnimate.getClips():{};
+    Object.values(clips||{}).forEach(clip=>{
+      if(!clip)return;
+      (clip.drawObjects||[]).forEach(add);
+      (clip.sceneFrames||[]).forEach(frame=>(frame&&frame.objects||[]).forEach(add));
+      (clip.drawingLayers||[]).forEach(layer=>(layer&&layer.frames||[]).forEach(frame=>add(frame&&frame.object)));
+    });
+    return out;
+  }
+
+  function syncControllerInstances(instance,data){
+    const snapshot=JSON.parse(JSON.stringify(data||ensureControllerData(instance)));
+    matchingControllerInstances(instance).forEach(object=>{if(object!==instance)object[DATA_KEY]=JSON.parse(JSON.stringify(snapshot));});
+  }
+
   function frameAtTime(instance, time){
     const data = ensureControllerData(instance);
     if(data.manualFrame !== null) return data.manualFrame;
@@ -218,6 +245,7 @@
     }
     upsertHoldKey(data,currentTime,stop.frame);
     if(currentTime <= 0.0001) data.baseFrame = stop.frame;
+    syncControllerInstances(instance,data);
     LukeAnimate.refreshUI();
     renderDock(true);
   }
@@ -228,6 +256,7 @@
     const data = ensureControllerData(instance);
     data.enabled = false;
     data.manualFrame = null;
+    syncControllerInstances(instance,data);
     LukeAnimate.refreshUI();
     renderDock(true);
   }
@@ -240,6 +269,7 @@
     data.manualFrame = null;
     data.enabled = false;
     data.baseFrame = stops.length ? stops[0].frame : 1;
+    syncControllerInstances(instance,data);
     LukeAnimate.refreshUI();
     renderDock(true);
   }

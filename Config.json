@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 108,
+  "version": 109,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -23,7 +23,7 @@
           "label": "Dem Bones",
           "description": "Create, bind and animate vector bones directly in Luke Animate.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Bone.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DemBones.txt?v=16.71",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DemBones.txt?v=16.72",
           "action": "animate",
           "F_Screen": 0
         },
@@ -32,7 +32,7 @@
           "label": "Frame Gizmo",
           "description": "Show a circular named-frame dial beside the stage only while a Clip instance is selected.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/FrameGizmo.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/FrameGizmo.txt?v=3.3",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/FrameGizmo.txt?v=3.4",
           "action": "animate",
           "F_Screen": 0
         },
