@@ -1,4 +1,7 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.68
+/* Luke Animate Dem Bones + MyCharacter GPT v16.69
+   v16.69 keeps the selected MyCharacter part rig active in Bones, Edit Bone
+   and Animate when the native Clip selection briefly clears or the panel is
+   reopened from the assembled Character.
    v16.68 ingests an existing stage Gizmo Clip as a positioned Gizmo Bone and
    optionally pins that new control directly to an existing Dem Bones bone.
    v16.67 restores Save Part and Add Part to Character to Build Parts after
@@ -195,7 +198,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.68";
+  var TOOL_VERSION = "16.69";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -949,6 +952,7 @@
       if(object.demBones)add(liveRigForDemBonesData(object.demBones)||object.demBones.rig,object,'');
       else if(object.demBonesExpression)add(liveRigById(object.demBonesExpression.rigId,object.demBonesExpression.rig),object,object.demBonesExpression.boneId||'');
       else if(object.__dbPartId!==undefined){var part=partById(object.__dbPartId);if(part)add(part.rig,object,'');}
+      else if(object.__demBonesCharacterInstance){var selectedPart=partById(state.character.selectedPartId)||(state.character.parts||[])[0];if(selectedPart)add(selectedPart.rig,object,'');}
     });
     /* A current ordinary selection overrides an older bone click. It must not
        accidentally reopen whichever rig happened to be active last time. */
@@ -987,6 +991,9 @@
       state.activeRigFromBoneSelection=false;
     }
     var intent=explicitRigSelectionForOpen(),next=intent&&intent.rig||null;
+    /* Entering the Character root can briefly clear Luke Animate's native
+       selection. That is navigation, not a request to stop editing the part. */
+    if(!next&&state.characterAllBonesEdit&&state.activeRig&&characterPartForRigId(state.activeRig.id)&&['bones','editbone','animate'].indexOf(state.tab)>=0)return false;
     if(next===state.activeRig)return false;
     state.activeRig=next;state.activeRigFromBoneSelection=false;state.selectedCurveId='';state.selectedPointIndex=0;
     if(!next){state.selectedBoneId='';state.characterAllBonesEdit=false;API.refreshUI();return true;}
@@ -5296,6 +5303,8 @@
     state.tab=nextTab;
     state.mode="select";
     if(nextTab==="bones"||nextTab==="editbone")state.showEnvelopes=true;else if(nextTab==="animate")state.showEnvelopes=false;
+    var partClipInstance=currentCharacterPartInstance(part)||partInstance(part);
+    if(partClipInstance){try{API.selectDrawObject(partClipInstance);}catch(ignorePartRigSelection){}}
     API.refreshUI();
     renderAll();
     return true;
