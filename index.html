@@ -1,3 +1,4 @@
+
 <!-- LukeAnimate GPT v333: Adds Dem Bones-owned move, scale and rotation controls for attached Gizmo Clips. -->
 <!-- LukeAnimate GPT v331: Makes the rig authoritative for ingested Gizmo scale/frame state, reorders every matching canonical layer, and points corner scale cursors correctly. -->
 <!-- LukeAnimate GPT v330: Makes attached Gizmo scale, canonical layer depth, and Frame Gizmo keys update the actual rendered nested Clip. -->
@@ -13636,7 +13637,9 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=113';
+  const LUKE_ANIMATE_CONFIG_URL = location.protocol === 'file:'
+    ? 'https://lukeo25.github.io/LukeAnimate/Config.json?v=114'
+    : new URL('Config.json', location.href).href;
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
