@@ -23,7 +23,7 @@
           "label": "Dem Bones",
           "description": "Create, bind and animate vector bones directly in Luke Animate.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Bone.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DemBones.txt?v=16.73",
+          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DemBones.txt?v=16.74",
           "action": "animate",
           "F_Screen": 0
         },
@@ -209,7 +209,7 @@
           "label": "Multi Script",
           "description": "Import a naturally sorted image sequence onto consecutive LukeAnimate layer frames.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Multi.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/MultiScript.txt?v=2.0",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/MultiScript.txt?v=2.1",
           "action": "tool",
           "F_Screen": 0
         },
