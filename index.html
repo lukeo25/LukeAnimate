@@ -1,4 +1,5 @@
 
+<!-- LukeAnimate GPT v334: Native stage rotation/keyframes drive attached Gizmos, and right-click depth actions reorder their canonical layers. -->
 <!-- LukeAnimate GPT v333: Adds Dem Bones-owned move, scale and rotation controls for attached Gizmo Clips. -->
 <!-- LukeAnimate GPT v331: Makes the rig authoritative for ingested Gizmo scale/frame state, reorders every matching canonical layer, and points corner scale cursors correctly. -->
 <!-- LukeAnimate GPT v330: Makes attached Gizmo scale, canonical layer depth, and Frame Gizmo keys update the actual rendered nested Clip. -->
@@ -13638,7 +13639,7 @@ ctx.fill();</textarea>
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
   const LUKE_ANIMATE_CONFIG_URL = location.protocol === 'file:'
-    ? 'https://lukeo25.github.io/LukeAnimate/Config.json?v=114'
+    ? 'https://lukeo25.github.io/LukeAnimate/Config.json?v=115'
     : new URL('Config.json', location.href).href;
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
@@ -27658,6 +27659,22 @@ ctx.fill();</textarea>
   function moveStageObjectToEdge(hit,front){
     if(!hit || !hit.object) return false;
     const requestedObject=hit.object;
+    const demBonesGizmo=requestedObject.demBonesGizmo;
+    if(
+      demBonesGizmo &&
+      window.LukeAnimate &&
+      typeof window.LukeAnimate.moveDemBonesGizmoLayerToEdge==='function'
+    ){
+      const moved=window.LukeAnimate.moveDemBonesGizmoLayerToEdge(
+        demBonesGizmo.rigId,
+        demBonesGizmo.boneId,
+        !!front
+      );
+      if(moved){
+        logToSandbox(objectLayerName(requestedObject)+(front?' brought to front.':' sent to back.'));
+        return true;
+      }
+    }
     const frame=typeof activeIndependentSceneFrame==='function'
       ?activeIndependentSceneFrame()
       :null;
@@ -27735,8 +27752,11 @@ ctx.fill();</textarea>
     const currentIndex=objects.findIndex(candidate=>candidate===object||(
       object.id&&candidate&&String(candidate.id||'')===String(object.id)
     ));
-    const atFront=currentIndex===objects.length-1;
-    const atBack=currentIndex===0;
+    /* Attached Dem Bones Gizmos are projected from their canonical timeline
+       layer. Keep both depth actions available so the command can repair that
+       canonical order even when this temporary frame copy looks front/back. */
+    const atFront=!object.demBonesGizmo&&currentIndex===objects.length-1;
+    const atBack=!object.demBonesGizmo&&currentIndex===0;
     const menu=document.createElement('div');
     menu.className='keyframe-context-menu';
     menu.style.position='fixed';
