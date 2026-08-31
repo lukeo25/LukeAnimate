@@ -1,5 +1,5 @@
-/* Luke Animate Multi Script v2.0
-   Adds main-timeline, single Clip and filename-labelled Gizmo Clip imports. */
+/* Luke Animate Multi Script v2.1
+   Restores the established Frame Gizmo workflow for labelled Gizmo imports. */
 (function () {
   "use strict";
 
@@ -439,7 +439,7 @@
         name:sequenceName,x:Number(API.width)/2,y:Number(API.height)/2,timeOffset:-API.frameToTime(startFrame)
       });
       if (importMode === "gizmo") {
-        firstObject._lukeAnimateFrameGizmo={enabled:true,baseFrame:1,manualFrame:null,keys:[]};
+        firstObject._lukeAnimateFrameGizmo={enabled:false,baseFrame:1,manualFrame:null,keys:[]};
         firstObject._lukeAnimateGizmoImport={version:1,frameNames:sequenceSources.map(function (source) { return source.fileName; })};
       }
       var sequenceFrame = API.setDrawingLayerFrameObject(targetLayer.id,startFrame,firstObject,{pushUndo:false,refresh:false});
@@ -506,6 +506,17 @@
     if (firstObject && typeof API.selectDrawObject === "function") {
       API.selectDrawObject(firstObject);
       API.refreshUI();
+    }
+    if (firstObject && importMode === "gizmo" && typeof API.openConfiguredTool === "function") {
+      try {
+        await API.openConfiguredTool("animate", "FrameGizmo");
+        var frameGizmo = window.__LukeAnimateFrameGizmoV3;
+        if (frameGizmo && typeof frameGizmo.enable === "function") frameGizmo.enable();
+        if (frameGizmo && typeof frameGizmo.render === "function") frameGizmo.render();
+        log("Frame Gizmo opened for the imported labelled frames.");
+      } catch (frameGizmoError) {
+        log("Gizmo imported, but Frame Gizmo could not be opened automatically: " + String(frameGizmoError && frameGizmoError.message || frameGizmoError));
+      }
     }
 
     log("Complete. Imported " + loadedImages.length + " image" + (loadedImages.length === 1 ? "" : "s") + (importMode === "timeline" ? " across frames " : " inside one "+(importMode === "gizmo" ? "Gizmo Clip across frames " : "Clip across frames ")) + startFrame + " to " + endFrame + ".");
