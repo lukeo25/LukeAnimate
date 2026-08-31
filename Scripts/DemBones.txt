@@ -1,5 +1,6 @@
 /* Luke Animate Dem Bones + MyCharacter GPT v16.74
-   v16.74 keeps front/back changes authoritative across canonical layers and every rendered Gizmo copy.
+   v16.74 keeps front/back changes authoritative across canonical layers and
+   every currently rendered copy of an ingested Gizmo.
    v16.73 makes the rig and Gizmo Bone authoritative for attached Gizmo scale
    and frame keys, and reorders every canonical layer for that attachment.
    v16.72 writes Gizmo scale live to every projected Clip representation and
@@ -288,6 +289,7 @@
     expressionType:"lip",
     expressionSlot:"Default",
     selectedGizmoId:"",
+    stageGizmoClipId:"",
     gizmoType:"generic",
     status:"Ready.",
     statusType:"",
@@ -3420,6 +3422,30 @@
     var selected=[];
     try{selected=API.getSelectedDrawObjects()||[];}catch(ignoreSelectedClip){}
     return selected.length===1&&selected[0]&&selected[0].type==='clipinstance'?selected[0]:null;
+  }
+
+  function stageClipInstances(){
+    var out=[],seen={};
+    var list=[];try{list=API.getDrawObjects()||[];}catch(ignoreStageClips){}
+    (list||[]).forEach(function(object){
+      if(!object||object.type!=='clipinstance'||seen[String(object.id||'')])return;
+      seen[String(object.id||'')]=true;out.push(object);
+    });
+    return out;
+  }
+
+  function stageGizmoClipById(id){
+    var wanted=String(id||'');
+    return stageClipInstances().filter(function(object){return wanted&&String(object.id||'')===wanted;})[0]||null;
+  }
+
+  function selectStageGizmoFromPanel(id){
+    var object=stageGizmoClipById(id);
+    if(!object)return;
+    state.stageGizmoClipId=String(object.id||'');
+    try{API.selectDrawObject(object);}catch(ignoreStageGizmoSelect){}
+    API.refreshUI();renderAll();
+    notify((object.name||'Gizmo Clip')+' selected. Choose Ingest or Use Selected Clip.',false);
   }
 
   function clipGizmoStops(instance){
@@ -6736,7 +6762,7 @@
   }
 
   function ingestSelectedClipAsGizmoBone(){
-    var rig=state.activeRig,instance=selectedStageClip(),parent=selectedBone();
+    var rig=state.activeRig,instance=stageGizmoClipById(state.stageGizmoClipId)||selectedStageClip(),parent=selectedBone();
     if(!rig){notify('Build or load a Dem Bones part first.',true);return;}
     if(!instance){notify('Select one Gizmo Clip instance on the stage first.',true);return;}
     if(!parent||isDummyBone(parent)){notify('Select the normal, stretchy or tube parent bone in Bones before selecting the Gizmo Clip.',true);return;}
@@ -8315,13 +8341,15 @@
   function curvesPage(){var rig=state.activeRig,objs=rig?rigObjects(rig).filter(function(x){return x&&x.type!=="image";}):[],o=findObjectById(state.selectedCurveId)||objs[0];if(o&&!state.selectedCurveId)state.selectedCurveId=o.id;var options=objs.map(function(x,i){return'<option value="'+esc(x.id)+'"'+(o&&o.id===x.id?' selected':'')+'>'+esc(x.name||('Curve '+(i+1)))+'</option>';}).join('');var points=o&&o.points||[];var rows=points.map(function(p,i){return'<div class="db-point-row'+(i===state.selectedPointIndex?' active':'')+'" data-db-point-index="'+i+'"><span>'+i+'</span><input type="number" step="0.1" value="'+round3(p.x)+'" data-db-point-x="'+i+'"><input type="number" step="0.1" value="'+round3(p.y)+'" data-db-point-y="'+i+'"></div>';}).join('');var bone=selectedBone();return '<div class="db-page active"><div class="db-section"><h3>Curves</h3>'+(o?'<div class="db-row"><label>Curve</label><select data-db-curve-select>'+options+'</select></div><div class="db-row"><label>Points</label><span>'+points.length+'</span></div><div class="db-grid3"><button class="db-btn'+(state.curvePointAddMode?' primary':'')+'" data-db-add-curve-point>'+(state.curvePointAddMode?'Click Curve…':'Add Point')+'</button><button class="db-btn" data-db-subdivide-curve>Subdivide All</button><button class="db-btn danger" data-db-delete-source-point>Delete Point</button></div><button class="db-btn" style="width:100%;margin-top:7px" data-db-center-on-bone>Center On '+(bone?esc(bone.name||'Bone'):'Rig')+'</button><div class="db-point-list" style="margin-top:7px">'+rows+'</div><div class="db-row" style="margin-top:8px"><label>Easing</label><select data-db-point-easing><option value="linear">Linear</option><option value="ease-in">Ease In</option><option value="ease-out">Ease Out</option><option value="ease-in-out">Ease In/Out</option><option value="hold">Hold</option></select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-point-key>Set Curve Key</button><button class="db-btn danger" data-db-delete-point-key>Delete Curve Key</button></div>':'<div class="db-empty">No editable curves in this part.</div>')+'</div></div>';}
 
   function expressionPage(){
-    var rig=state.activeRig,gizmos=clipGizmoObjects(rig),gizmo=selectedClipGizmo(),data=gizmo?ensureClipGizmoController(gizmo):null,stops=gizmo?clipGizmoStops(gizmo):[];
+    var rig=state.activeRig,gizmos=clipGizmoObjects(rig),gizmo=selectedClipGizmo(),data=gizmo?ensureClipGizmoController(gizmo):null,stops=gizmo?clipGizmoStops(gizmo):[],stageClips=stageClipInstances();
+    if(!state.stageGizmoClipId&&stageClips.length)state.stageGizmoClipId=String(stageClips[0].id||'');
+    var stageClipOptions=stageClips.map(function(object){return'<option value="'+esc(object.id)+'"'+(String(state.stageGizmoClipId||'')===String(object.id||'')?' selected':'')+'>'+esc(object.name||'Clip Gizmo')+'</option>';}).join('');
     var gizmoOptions=gizmos.map(function(object){return'<option value="'+esc(object.id)+'"'+(gizmo&&String(object.id)===String(gizmo.id)?' selected':'')+'>'+esc(object.name||'Clip Gizmo')+'</option>';}).join('');
     var frameOptions=stops.map(function(stop){return'<option value="'+stop.frame+'"'+(data&&clipGizmoFrameAtTime(gizmo,currentTime())===stop.frame?' selected':'')+'>'+esc(stop.name)+' · Frame '+stop.frame+'</option>';}).join('');
     var pinBone=gizmo&&gizmo.demBonesGizmo&&gizmo.demBonesGizmo.boneId?boneById(gizmo.demBonesGizmo.boneId):null,type=gizmo&&gizmo.demBonesGizmo?gizmo.demBonesGizmo.type:state.gizmoType;
     var currentParent=selectedBone();
     return '<div class="db-page active">'+
-      '<div class="db-section"><h3>Ingest Stage Gizmo</h3><p class="db-help">First select the parent bone in Bones. Then select one prebuilt Gizmo Clip on the stage and click Ingest. It snaps to that bone and returns to Bones for positioning.</p><div class="db-pin-status'+(currentParent&&!isDummyBone(currentParent)?' pinned':'')+'">'+(currentParent&&!isDummyBone(currentParent)?'Parent: '+esc(currentParent.name||'Bone'):'No valid parent bone selected')+'</div><button class="db-btn primary" style="width:100%;margin-top:8px" data-db-ingest-gizmo-bone>Ingest Selected Clip as Gizmo Bone</button></div>'+
+      '<div class="db-section"><h3>Ingest Stage Gizmo</h3><p class="db-help">First select the parent bone in Bones. Choose the stage Clip here, then click Ingest. This selector is also available when the stage skeleton is covering the Clip.</p><div class="db-pin-status'+(currentParent&&!isDummyBone(currentParent)?' pinned':'')+'">'+(currentParent&&!isDummyBone(currentParent)?'Parent: '+esc(currentParent.name||'Bone'):'No valid parent bone selected')+'</div>'+(stageClips.length?'<div class="db-row" style="margin-top:8px"><label>Stage Clip</label><select data-db-stage-gizmo-select>'+stageClipOptions+'</select></div>':'<div class="db-empty" style="margin-top:8px">No Clip instances on the stage.</div>')+'<button class="db-btn primary" style="width:100%;margin-top:8px" data-db-ingest-gizmo-bone'+(stageClips.length?'':' disabled')+'>Ingest Selected Clip as Gizmo Bone</button></div>'+ 
       '<div class="db-section"><h3>Clip Gizmos</h3><p class="db-help">For the manual workflow, select a Gizmo Bone in Bones, select a multi-frame Clip on stage, then choose Use Selected Clip.</p><div class="db-row"><label>Gizmo type</label><select data-db-gizmo-type><option value="generic"'+(type!=='lip'?' selected':'')+'>Generic frames</option><option value="lip"'+(type==='lip'?' selected':'')+'>Lip Service</option></select></div><div class="db-grid2"><button class="db-btn" data-db-create-gizmo>Create Clip from Selection</button><button class="db-btn" data-db-register-gizmo>Use Selected Clip</button></div></div>'+
       '<div class="db-section"><h3>Program Gizmo</h3>'+(gizmo?'<div class="db-row"><label>Gizmo</label><select data-db-gizmo-select>'+gizmoOptions+'</select></div><div class="db-part-summary">'+esc(gizmo.name||'Clip Gizmo')+' · '+stops.length+' available Clip frame'+(stops.length===1?'':'s')+'</div>'+(stops.length?'<div class="db-row" style="margin-top:8px"><label>Clip frame</label><select data-db-gizmo-frame>'+frameOptions+'</select></div><div class="db-grid2"><button class="db-btn primary" data-db-set-gizmo-frame>Set Frame Key</button><button class="db-btn danger" data-db-clear-gizmo-keys>Follow Clip Timeline</button></div>':'<div class="db-empty" style="margin-top:8px">Add frames or frame labels inside this Clip first.</div>'):'<div class="db-empty">No Clip Gizmo registered for this part.</div>')+'</div>'+
       (gizmo?'<div class="db-section"><h3>Gizmo Bone</h3><p class="db-help">Select a Gizmo Bone and attach this Clip. The Gizmo Bone follows only its parent animation bone.</p><div class="db-pin-status'+(pinBone?' pinned':'')+'">'+(pinBone?'Attached to '+esc(pinBone.name||'Gizmo Bone'):'Not attached')+'</div><div class="db-grid2" style="margin-top:8px"><button class="db-btn" data-db-pin-gizmo>Attach to Selected Gizmo Bone</button><button class="db-btn" data-db-unpin-gizmo>Detach</button></div></div>':'')+
@@ -8422,6 +8450,7 @@
     var gizmoSelect=p.querySelector('[data-db-gizmo-select]');if(gizmoSelect)gizmoSelect.onchange=function(){state.selectedGizmoId=gizmoSelect.value;renderAll();};
     p.querySelectorAll('[data-db-register-gizmo]').forEach(function(button){button.onclick=registerSelectedClipGizmo;});
     p.querySelectorAll('[data-db-ingest-gizmo-bone]').forEach(function(button){button.onclick=ingestSelectedClipAsGizmoBone;});
+    p.querySelectorAll('[data-db-stage-gizmo-select]').forEach(function(select){select.onchange=function(){selectStageGizmoFromPanel(select.value);};});
     p.querySelectorAll('[data-db-create-gizmo]').forEach(function(button){button.onclick=createClipGizmoFromSelection;});
     p.querySelectorAll('[data-db-pin-gizmo]').forEach(function(button){button.onclick=pinSelectedClipGizmo;});
     p.querySelectorAll('[data-db-unpin-gizmo]').forEach(function(button){button.onclick=unpinSelectedClipGizmo;});
