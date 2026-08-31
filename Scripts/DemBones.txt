@@ -1,4 +1,5 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.73
+/* Luke Animate Dem Bones + MyCharacter GPT v16.74
+   v16.74 keeps front/back changes authoritative across canonical layers and every rendered Gizmo copy.
    v16.73 makes the rig and Gizmo Bone authoritative for attached Gizmo scale
    and frame keys, and reorders every canonical layer for that attachment.
    v16.72 writes Gizmo scale live to every projected Clip representation and
@@ -208,7 +209,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.73";
+  var TOOL_VERSION = "16.74";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
