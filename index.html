@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v333: Adds Dem Bones-owned move, scale and rotation controls for attached Gizmo Clips. -->
 <!-- LukeAnimate GPT v331: Makes the rig authoritative for ingested Gizmo scale/frame state, reorders every matching canonical layer, and points corner scale cursors correctly. -->
 <!-- LukeAnimate GPT v330: Makes attached Gizmo scale, canonical layer depth, and Frame Gizmo keys update the actual rendered nested Clip. -->
 <!-- LukeAnimate GPT v329: Adds attached Gizmo scale/depth controls, preserves PNG bone deformation, and keeps unprogrammed Gizmo Clips animating. -->
@@ -13635,7 +13636,7 @@ ctx.fill();</textarea>
   // The deployed application deliberately looks for one configuration only:
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
-  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=110';
+  const LUKE_ANIMATE_CONFIG_URL = 'https://lukeo25.github.io/LukeAnimate/Config.json?v=113';
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
   let lukeAnimateConfig = null;
@@ -14355,6 +14356,13 @@ ctx.fill();</textarea>
     },
     pushUndo(){ pushUndo(); return true; },
     getEffectiveObject(object, timeValue){ return getEffectiveObj(object, timeValue === undefined ? t : Number(timeValue) || 0); },
+    getObjectTransform(object, timeValue){
+      if(!object) return null;
+      const sampleTime = timeValue === undefined ? t : Number(timeValue) || 0;
+      const effective = getEffectiveObj(object, sampleTime) || object;
+      const live = getLiveTransform(object, effective);
+      return live ? Object.assign({}, live, { effective }) : null;
+    },
     refreshUI(){
       syncActiveSceneFrameForTime(t, false);
       updateInspector();
@@ -14457,12 +14465,23 @@ ctx.fill();</textarea>
         if(!clip)return;
         addCandidate(wickEnsureClipDrawingLayers(clip),clip.sceneFrames,clip.timelineDuration,String(editingClipId||'')===String(clip.id||''));
       });
-      const layerMatches=layer=>(layer&&layer.frames||[]).some(frame=>{
-        const data=frame&&frame.object&&frame.object.demBonesGizmo;
+      const objectMatches=object=>{
+        const data=object&&object.demBonesGizmo;
         return !!(data&&String(data.rigId||'')===wantedRig&&String(data.boneId||'')===wantedBone);
-      });
+      };
+      const layerMatches=layer=>(layer&&layer.frames||[]).some(frame=>objectMatches(frame&&frame.object));
       const affected=candidates.map(candidate=>({candidate,moving:candidate.model.filter(layerMatches)})).filter(entry=>entry.moving.length);
-      if(!affected.length)return false;
+      const liveLists=[],seenLists=new Set();
+      const addLiveList=list=>{if(Array.isArray(list)&&!seenLists.has(list)){seenLists.add(list);liveLists.push(list);}};
+      addLiveList(drawObjects);
+      sceneFrames.forEach(frame=>addLiveList(frame&&frame.objects));
+      Object.values(clips||{}).forEach(clip=>{
+        if(!clip)return;
+        addLiveList(clip.drawObjects);
+        (clip.sceneFrames||[]).forEach(frame=>addLiveList(frame&&frame.objects));
+      });
+      const liveAffected=liveLists.filter(list=>list.some(objectMatches));
+      if(!affected.length&&!liveAffected.length)return false;
       pushUndo();
       affected.forEach(entry=>{
         const model=entry.candidate.model,moving=entry.moving,kept=model.filter(layer=>!moving.includes(layer));
@@ -14475,6 +14494,10 @@ ctx.fill();</textarea>
         wickNormalizeLayerModel(model,entry.candidate.duration);
         wickProjectLayerModel(model,entry.candidate.frames,entry.candidate.duration);
         if(entry.candidate.current)wickDrawingLayers=model;
+      });
+      liveAffected.forEach(list=>{
+        const moving=list.filter(objectMatches),kept=list.filter(object=>!objectMatches(object));
+        list.splice(0,list.length,...(front?kept.concat(moving):moving.concat(kept)));
       });
       syncActiveSceneFrameForTime(t,false);
       this.refreshUI();renderClipLibrary();
@@ -14822,6 +14845,18 @@ ctx.fill();</textarea>
   async function runConfiguredItem(group, item, button, options){
     const runOptions=options&&typeof options==='object'?options:{};
     const action = String(item.action || 'script').toLowerCase();
+    /* Tool panels are mutually exclusive. Close stale floating panels before
+       loading the requested script so a previous Dem Bones window cannot make
+       Multi Script appear to open the wrong tool (and vice versa). */
+    const requestedId=String(item&&(item.id||item.label)||'');
+    if(requestedId==='Multi_Asset_Importer'){
+      const staleDemBones=window.__LukeAnimateDemBonesFull;
+      if(staleDemBones&&typeof staleDemBones.close==='function'){try{staleDemBones.close();}catch(_closeDemBones){}}
+    }else if(requestedId==='DemBones'){
+      const staleMulti=document.getElementById('lukeanimate-multi-script-panel');
+      const closeMulti=staleMulti&&staleMulti.querySelector('.la-multi-close');
+      if(closeMulti){try{closeMulti.click();}catch(_closeMulti){}}
+    }
     if(action === 'script-marker'){
       addScriptMarkerFromTool(item.markerType || item.id);
       configMessage((item.label || item.id || 'Script behaviour') + ' added at Frame ' + (frameIndexForTime(t,timelineDuration)+1) + '.', false);
