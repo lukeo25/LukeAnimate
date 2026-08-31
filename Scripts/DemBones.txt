@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.67
+/* Luke Animate Dem Bones + MyCharacter GPT v16.68
+   v16.68 ingests an existing stage Gizmo Clip as a positioned Gizmo Bone and
+   optionally pins that new control directly to an existing Dem Bones bone.
    v16.67 restores Save Part and Add Part to Character to Build Parts after
    the direct on-stage PNG crop workflow is complete.
    v16.66 replaces numeric PNG crop fields with a direct on-stage crop tool.
@@ -193,7 +195,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.67";
+  var TOOL_VERSION = "16.68";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -2020,9 +2022,4 @@
     */
     rig.bones.forEach(function(child){
       if(String(child.parentId)===String(bone.id)){
-        child.parentId="";
-        child.restAngle=angleOf(
-          child.restHead,
-          child.restTail
-        );
-        child.localRestAngle=chi
+     
