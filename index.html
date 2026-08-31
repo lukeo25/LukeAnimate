@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v317: Clip conversion now replaces selected layer-key artwork with a canonical Clip layer so new and existing Clip instances remain enterable by double-click. -->
 <!-- LukeAnimate GPT v316: Replicates LukeTools StopMo as a native Luke Animate webcam importer with onion skin and layer-owned frame capture. -->
 <!-- LukeAnimate GPT v315: Keeps the layer-owned runtime active so Blank Key splits only the selected layer and resumes its content. -->
 <!-- LukeAnimate GPT v314: Layer menus render correctly with Rename, Add New Layer and Delete Layer actions. -->
@@ -13120,8 +13121,9 @@ ctx.fill();</textarea>
     t=previousTime;
     const cx=drawableCount?(x1+x2)/2:W/2;
     const cy=drawableCount?(y1+y2)/2:H/2;
-    const requestedName='Shape Verify Clip'; // TEMPORARY LOCAL TEST BYPASS
-    if(requestedName===null) return true;
+    const requestedClipName=prompt('Name this Clip:','Clip '+(clipCounter+1));
+    if(requestedClipName===null) return true;
+    const requestedName=requestedClipName||undefined;
 
     pushUndo();
     const clip=makeClip(requestedName||undefined);
@@ -13155,6 +13157,7 @@ ctx.fill();</textarea>
     normalizeSceneFrameList(clip.sceneFrames,clip.timelineDuration,[]);
     const firstClipFrame=sceneFrameAtIndex(clip.sceneFrames,0);
     clip.drawObjects=firstClipFrame&&Array.isArray(firstClipFrame.objects)?firstClipFrame.objects:[];
+    clip.drawingLayers=wickMigrateSceneFrames(clip.sceneFrames,clip.drawObjects,clip.timelineDuration);
     clips[clip.id]=clip;
 
     const clipInstance=ensureDrawObjectMetadata({
@@ -13233,6 +13236,10 @@ ctx.fill();</textarea>
     // parent becomes a one-frame Clip; an extended parent keeps that count.
     clip.timelineDuration = sourceFrameCount / getTimelineFPS();
     clip.sceneFrames = [makeIndependentSceneFrame(0, sourceFrameCount - 1, clip.drawObjects)];
+    // Initialise the Clip's own canonical layer model immediately. Waiting
+    // until enterClipEdit() can allow the parent layer projection to replace
+    // the newly-created instance before a double-click reaches it.
+    clip.drawingLayers = wickMigrateSceneFrames(clip.sceneFrames, clip.drawObjects, clip.timelineDuration);
     clip.layers = []; // a fresh clip starts with no effect layers; add them once you Edit it
     clips[clip.id] = clip;
 
@@ -13240,8 +13247,43 @@ ctx.fill();</textarea>
     idxs.slice().reverse().forEach(i => drawObjects.splice(i,1));
     const clipInstance = ensureDrawObjectMetadata({ type:'clipinstance', clipId:clip.id, name:clip.name, x:cx, y:cy, scale:1, scaleX:1, scaleY:1, rotation:0, timeOffset:-sourceFrameStart/getTimelineFPS(), opacity:1, keyframes:[] });
     drawObjects.push(clipInstance);
-    // The Clip instance replaces objects inside this frame; it does not create
-    // or rebuild per-object timeline layers.
+
+    // v317: the visible composite array is only a projection. Replace the
+    // selected artwork in its owning layer keys as well, then give the Clip
+    // instance one real layer/key exposure. Without this, the next render or
+    // timeline refresh projects the old shapes back over the new Clip and the
+    // stage double-click has no persistent Clip instance to enter.
+    const selectedLayerIds=Array.from(new Set(selectedObjs.map(object=>String(object&&object.timelineLayerId||'')).filter(Boolean)));
+    if(selectedLayerIds.length){
+      selectedLayerIds.forEach(layerId=>{
+        LukeAnimatePluginAPI.clearDrawingLayerRange(
+          layerId,
+          sourceFrameStart+1,
+          sourceFrameStart+sourceFrameCount,
+          {pushUndo:false,refresh:false}
+        );
+      });
+      const clipLayer=wickCreateLayer();
+      const totalFrame=wickTotalFrameIndex(timelineDuration);
+      const clipEnd=Math.min(totalFrame,sourceFrameStart+sourceFrameCount-1);
+      clipLayer.frames=[];
+      if(sourceFrameStart>0){
+        clipLayer.frames.push({id:wickNextFrameId(),startFrame:0,endFrame:sourceFrameStart-1,blank:true,object:null,_sequence:0});
+      }
+      const clipFrame={id:wickNextFrameId(),startFrame:sourceFrameStart,endFrame:clipEnd,blank:false,object:clipInstance,_sequence:clipLayer.frames.length};
+      clipInstance.timelineLayerId=clipLayer.id;
+      clipInstance.timelineLayerOrder=clipLayer.order;
+      clipInstance.frameLinkId=clipFrame.id;
+      clipInstance.frameLinkStart=clipFrame.startFrame;
+      clipInstance.frameLinkEnd=clipFrame.endFrame;
+      clipLayer.frames.push(clipFrame);
+      if(clipEnd<totalFrame){
+        clipLayer.frames.push({id:wickNextFrameId(),startFrame:clipEnd+1,endFrame:totalFrame,blank:true,object:null,_sequence:clipLayer.frames.length});
+      }
+      wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
+      wickProjectLayerModel(wickDrawingLayers,sceneFrames,timelineDuration);
+      syncActiveSceneFrameForTime(t,false);
+    }
 
     selectedDrawIndices.clear();
     selectedDrawIndices.add(drawObjects.length - 1);
