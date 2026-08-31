@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v325: Converts marquee-selected layer keys into one Clip while preserving their layer order and relative timing. -->
 <!-- LukeAnimate GPT v324: Restores timeline marquee selection from the timeline background and modifier-dragged frame bars. -->
 <!-- LukeAnimate GPT v323: Loads Dem Bones v16.68 with one-step stage Clip ingestion as a positioned, parented Gizmo Bone. -->
 <!-- LukeAnimate GPT v322: Loads Dem Bones v16.67 with restored Build Parts save and character-add actions. -->
@@ -13095,7 +13096,85 @@ ctx.fill();</textarea>
     return object;
   }
 
+  function convertSelectedDrawingLayerFramesToClip(){
+    if(typeof wickSelectedTimelineFrameIds==='undefined'||!wickSelectedTimelineFrameIds.size) return false;
+    const selectedEntries=[];
+    (wickDrawingLayers||[]).forEach(layer=>(layer.frames||[]).forEach(frame=>{
+      if(frame&&wickSelectedTimelineFrameIds.has(String(frame.id))) selectedEntries.push({layer,frame});
+    }));
+    if(!selectedEntries.length){
+      wickSelectedTimelineFrameIds.clear();
+      logToSandbox('Those timeline keys are no longer available. Box-select them again.',true);
+      updateSelectedCountUI();
+      return true;
+    }
+
+    selectedEntries.sort((a,b)=>(a.layer.order-b.layer.order)||(a.frame.startFrame-b.frame.startFrame));
+    const firstFrame=Math.min(...selectedEntries.map(entry=>entry.frame.startFrame));
+    const lastFrame=Math.max(...selectedEntries.map(entry=>entry.frame.endFrame));
+    const fps=Math.max(1,getTimelineFPS());
+    const previousTime=t;
+    let x1=Infinity,y1=Infinity,x2=-Infinity,y2=-Infinity,drawableCount=0;
+    selectedEntries.forEach(entry=>{
+      if(!entry.frame.object||entry.frame.blank) return;
+      t=entry.frame.startFrame/fps;
+      const bounds=getEffectiveBounds(entry.frame.object);
+      x1=Math.min(x1,bounds.x1);y1=Math.min(y1,bounds.y1);
+      x2=Math.max(x2,bounds.x2);y2=Math.max(y2,bounds.y2);drawableCount++;
+    });
+    t=previousTime;
+    const cx=drawableCount?(x1+x2)/2:W/2,cy=drawableCount?(y1+y2)/2:H/2;
+    const requestedClipName=prompt('Name this Clip:','Clip '+(clipCounter+1));
+    if(requestedClipName===null) return true;
+
+    pushUndo();
+    const clip=makeClip(requestedClipName||undefined);
+    clip.timelineDuration=Math.max(1/fps,(lastFrame-firstFrame+1)/fps);
+    clip.loopTimeline=false;
+    const sourceLayers=[...new Set(selectedEntries.map(entry=>entry.layer))].sort((a,b)=>a.order-b.order);
+    clip.drawingLayers=sourceLayers.map((sourceLayer,layerIndex)=>{
+      const frames=selectedEntries.filter(entry=>entry.layer===sourceLayer).map((entry,frameIndex)=>{
+        const sourceFrame=entry.frame;
+        let object=null;
+        if(sourceFrame.object&&!sourceFrame.blank){
+          object=clipboardCloneWithoutOwnership(sourceFrame.object);
+          translateDrawObjectIntoClip(object,-cx,-cy);
+          object.keyframes=(object.keyframes||[]).filter(key=>{
+            const keyFrame=Math.round((Number(key.time)||0)*fps);
+            return keyFrame>=firstFrame&&keyFrame<=lastFrame;
+          }).map(key=>Object.assign({},key,{time:Math.max(0,(Number(key.time)||0)-firstFrame/fps)}));
+        }
+        return{id:wickNextFrameId(),startFrame:sourceFrame.startFrame-firstFrame,endFrame:sourceFrame.endFrame-firstFrame,fadeInFrames:sourceFrame.fadeInFrames,fadeOutFrames:sourceFrame.fadeOutFrames,blank:sourceFrame.blank||!object,object,_sequence:frameIndex};
+      });
+      return{id:wickNextLayerId(),name:sourceLayer.name||('Layer '+(layerIndex+1)),_customName:sourceLayer._customName===true,order:layerIndex+1,frames};
+    });
+    wickNormalizeLayerModel(clip.drawingLayers,clip.timelineDuration);
+    clip.sceneFrames=[];
+    wickProjectLayerModel(clip.drawingLayers,clip.sceneFrames,clip.timelineDuration);
+    const firstClipFrame=sceneFrameAtIndex(clip.sceneFrames,0);
+    clip.drawObjects=firstClipFrame&&Array.isArray(firstClipFrame.objects)?firstClipFrame.objects:[];
+    clips[clip.id]=clip;
+
+    const selectedIds=new Set(selectedEntries.map(entry=>String(entry.frame.id)));
+    (wickDrawingLayers||[]).forEach(layer=>{layer.frames=(layer.frames||[]).filter(frame=>!selectedIds.has(String(frame.id)));});
+    const clipInstance=ensureDrawObjectMetadata({type:'clipinstance',clipId:clip.id,name:clip.name,x:cx,y:cy,scale:1,scaleX:1,scaleY:1,rotation:0,timeOffset:-firstFrame/fps,opacity:1,keyframes:[]});
+    const instanceLayer={id:wickNextLayerId(),name:'Layer '+((wickDrawingLayers||[]).length+1),order:(wickDrawingLayers||[]).reduce((max,layer)=>Math.max(max,Number(layer.order)||0),0)+1,frames:[{id:wickNextFrameId(),startFrame:firstFrame,endFrame:lastFrame,blank:false,object:clipInstance,_sequence:0}]};
+    wickDrawingLayers.push(instanceLayer);
+    wickNormalizeLayerModel(wickDrawingLayers,timelineDuration);
+
+    wickSelectedTimelineFrameIds.clear();wickSelectedDrawingFrameId=instanceLayer.frames[0].id;wickActiveDrawingLayerId=instanceLayer.id;
+    t=firstFrame/fps;
+    syncActiveSceneFrameForTime(t,false);
+    selectedDrawIndices.clear();
+    const instanceIndex=drawObjects.findIndex(object=>object&&String(object.timelineLayerId)===String(instanceLayer.id));
+    if(instanceIndex>=0) selectedDrawIndices.add(instanceIndex);
+    updateSelectedCountUI();renderLayerList();renderClipLibrary();updateInspector();renderTimeline();renderTransformHandles();
+    logToSandbox('Created Clip "'+clip.name+'" from '+selectedEntries.length+' selected timeline key frame(s) across '+sourceLayers.length+' layer(s).');
+    return true;
+  }
+
   function convertSelectedTimelineFramesToClip(){
+    if(convertSelectedDrawingLayerFramesToClip()) return true;
     if(typeof wickSelectedTimelineFrameIds==='undefined'||!wickSelectedTimelineFrameIds.size) return false;
     normalizeSceneFrameList(sceneFrames,timelineDuration,drawObjects);
     const selected=sceneFrames.filter(frame=>
