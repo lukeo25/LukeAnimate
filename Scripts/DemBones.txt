@@ -1,4 +1,7 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.64
+/* Luke Animate Dem Bones + MyCharacter GPT v16.65
+   v16.65 adds native PNG cropping in Build Parts, including manual edge
+   values and automatic transparent-edge trimming. Cropping preserves the
+   displayed scale and bones, then rebuilds and reweights the raster mesh.
    v16.64 removes raster-mesh grid seams by slightly overlapping adjacent
    texture-triangle clips in device-pixel space during deformation rendering.
    v16.63 supports silent runtime-only startup when a saved project contains
@@ -186,7 +189,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.64";
+  var TOOL_VERSION = "16.65";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -1219,6 +1222,68 @@
       }
     }
     return true;
+  }
+
+  function activeCropRasterObject(){
+    var images=state.activeRig?rigObjects(state.activeRig).filter(isRasterWarpObject):[];
+    if(!images.length)return null;
+    var selected=images.filter(function(object){return String(object.id)===String(state.selectedPngId||"");})[0]||images[0];
+    state.selectedPngId=selected.id;
+    return selected;
+  }
+
+  function loadRasterSource(source){
+    return new Promise(function(resolve,reject){
+      var image=new Image();
+      image.onload=function(){resolve(image);};
+      image.onerror=function(){reject(new Error("The PNG source could not be decoded."));};
+      image.src=String(source||"");
+    });
+  }
+
+  function rebuildCroppedRasterMesh(object,rig){
+    if(!object||!object.demBones||!object.demBones.raster||!rig)return;
+    var data=object.demBones,x=n(object.x,0),y=n(object.y,0),w=Math.max(1,n(object.width,1)),h=Math.max(1,n(object.height,1));
+    var smooth=!!((rig.bones||[]).some(isTubeBone)||rig.tubeSmoothMeshVersion>=2);
+    var cols=smooth?clamp(Math.ceil(w/8),16,96):clamp(Math.round(w/36),6,22);
+    var rows=smooth?clamp(Math.ceil(h/8),16,96):clamp(Math.round(h/36),6,22);
+    var points=[];
+    for(var row=0;row<=rows;row++)for(var col=0;col<=cols;col++)points.push({x:x+w*(col/cols),y:y+h*(row/rows)});
+    data.rasterCols=cols;data.rasterRows=rows;data.sourceX=x;data.sourceY=y;data.sourceWidth=w;data.sourceHeight=h;data.restPoints=points;data.weights=[];
+    reweightRigSkinData(rig);syncRigRefs(rig);syncRigDisplayGeometry(rig,currentTime());
+  }
+
+  async function cropRasterObject(object,left,top,right,bottom){
+    if(!object||!object.src||!object.demBones||!object.demBones.raster){notify("Choose a boned PNG to crop.",true);return false;}
+    try{
+      var image=await loadRasterSource(object.src),iw=Math.max(1,image.naturalWidth),ih=Math.max(1,image.naturalHeight);
+      left=clamp(Math.round(n(left,0)),0,iw-1);top=clamp(Math.round(n(top,0)),0,ih-1);
+      right=clamp(Math.round(n(right,0)),0,iw-left-1);bottom=clamp(Math.round(n(bottom,0)),0,ih-top-1);
+      var cw=Math.max(1,iw-left-right),ch=Math.max(1,ih-top-bottom);
+      if(cw===iw&&ch===ih){notify("Enter crop values or use Trim Transparent.",true);return false;}
+      var canvas=document.createElement("canvas");canvas.width=cw;canvas.height=ch;
+      canvas.getContext("2d").drawImage(image,left,top,cw,ch,0,0,cw,ch);
+      var scaleX=Math.max(.000001,n(object.width,iw)/iw),scaleY=Math.max(.000001,n(object.height,ih)/ih);
+      API.pushUndo();
+      object.x=n(object.x,0)+left*scaleX;object.y=n(object.y,0)+top*scaleY;
+      object.width=cw*scaleX;object.height=ch*scaleY;object.naturalWidth=cw;object.naturalHeight=ch;
+      object.src=canvas.toDataURL("image/png");
+      rebuildCroppedRasterMesh(object,state.activeRig);
+      renderAll();API.refreshUI();notify("PNG cropped to "+cw+" × "+ch+" pixels.",false);return true;
+    }catch(error){notify(error&&error.message?error.message:String(error),true);return false;}
+  }
+
+  async function trimTransparentRaster(object){
+    if(!object||!object.src){notify("Choose a boned PNG to trim.",true);return;}
+    try{
+      var image=await loadRasterSource(object.src),canvas=document.createElement("canvas");canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;
+      var context=canvas.getContext("2d");context.drawImage(image,0,0);var pixels=context.getImageData(0,0,canvas.width,canvas.height).data;
+      var minX=canvas.width,minY=canvas.height,maxX=-1,maxY=-1;
+      for(var y=0;y<canvas.height;y++)for(var x=0;x<canvas.width;x++)if(pixels[(y*canvas.width+x)*4+3]>4){if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;}
+      if(maxX<minX||maxY<minY){notify("This PNG contains no visible pixels.",true);return;}
+      if(minX===0&&minY===0&&maxX===canvas.width-1&&maxY===canvas.height-1){notify("The PNG already reaches every edge.",false);return;}
+      await cropRasterObject(object,minX,minY,canvas.width-1-maxX,canvas.height-1-maxY);
+    }catch(error){notify(error&&error.message?error.message:String(error),true);}
   }
 
   function loadPngFile(file){
@@ -7924,8 +7989,13 @@
 
   function sourcePage(){
     var q=svgQualityProfile(state.svgQuality).key;
+    var rasterObjects=state.activeRig?rigObjects(state.activeRig).filter(isRasterWarpObject):[];
+    var cropObject=activeCropRasterObject();
+    var cropOptions=rasterObjects.map(function(object){return'<option value="'+esc(object.id)+'"'+(cropObject&&String(cropObject.id)===String(object.id)?' selected':'')+'>'+esc(object.name||'PNG')+'</option>';}).join('');
+    var cropSection=cropObject?'<div class="db-section"><h3>Crop PNG</h3><p class="db-help">Remove unwanted pixels before or after adding bones. The image stays at the same displayed scale and its deformation mesh is rebuilt automatically.</p><div class="db-row"><label>PNG</label><select data-db-crop-png-select>'+cropOptions+'</select></div><div class="db-grid2"><div class="db-row" style="grid-template-columns:42px 1fr"><label>Left</label><input type="number" min="0" step="1" value="0" data-db-crop-left></div><div class="db-row" style="grid-template-columns:42px 1fr"><label>Top</label><input type="number" min="0" step="1" value="0" data-db-crop-top></div><div class="db-row" style="grid-template-columns:42px 1fr"><label>Right</label><input type="number" min="0" step="1" value="0" data-db-crop-right></div><div class="db-row" style="grid-template-columns:42px 1fr"><label>Bottom</label><input type="number" min="0" step="1" value="0" data-db-crop-bottom></div></div><div class="db-part-summary">Current PNG: '+Math.round(n(cropObject.naturalWidth,cropObject.width))+' × '+Math.round(n(cropObject.naturalHeight,cropObject.height))+' pixels</div><div class="db-grid2" style="margin-top:7px"><button class="db-btn primary" data-db-apply-png-crop>Apply Crop</button><button class="db-btn" data-db-trim-png>Trim Transparent</button></div></div>':'';
     return '<div class="db-page active">'+
       '<div class="db-section"><h3>Step 1 · Get Shapes</h3><p class="db-help">Select stage artwork or load a file, then add bones.</p><div class="db-grid3"><button class="db-btn" data-db-use-selection>Use Stage Selection</button><button class="db-btn" data-db-load-svg>Load SVG</button><button class="db-btn" data-db-load-png>Load PNG</button></div><div class="db-row" style="margin-top:7px"><label>SVG quality</label><select data-db-svg-quality><option value="draft"'+(q==='draft'?' selected':'')+'>Draft</option><option value="standard"'+(q==='standard'?' selected':'')+'>Standard</option><option value="high"'+(q==='high'?' selected':'')+'>High</option><option value="maximum"'+(q==='maximum'?' selected':'')+'>Maximum</option></select></div><label class="db-check" style="margin-top:7px"><input type="checkbox" data-db-remove-originals'+(state.removeOriginals?' checked':'')+'> Remove selected originals after conversion</label></div>'+
+      cropSection+
     '</div>';
   }
 
@@ -8055,6 +8125,9 @@
 
   function bindBodyEvents(){var p=state.panel;if(!p)return;
     p.querySelectorAll('[data-db-use-selection]').forEach(function(b){b.onclick=useStageSelection;});p.querySelectorAll('[data-db-load-png]').forEach(function(b){b.onclick=function(){state.fileInputs.png.click();};});p.querySelectorAll('[data-db-step-jump]').forEach(function(step){step.onclick=function(){state.tab=step.getAttribute('data-db-step-jump')||'source';state.mode='select';renderAll();};});p.querySelectorAll('[data-db-load-svg]').forEach(function(b){b.onclick=function(){state.fileInputs.svg.click();};});
+    var cropSelect=p.querySelector('[data-db-crop-png-select]');if(cropSelect)cropSelect.onchange=function(){state.selectedPngId=cropSelect.value||'';renderAll();};
+    p.querySelectorAll('[data-db-apply-png-crop]').forEach(function(button){button.onclick=function(){var object=activeCropRasterObject();cropRasterObject(object,p.querySelector('[data-db-crop-left]').value,p.querySelector('[data-db-crop-top]').value,p.querySelector('[data-db-crop-right]').value,p.querySelector('[data-db-crop-bottom]').value);};});
+    p.querySelectorAll('[data-db-trim-png]').forEach(function(button){button.onclick=function(){trimTransparentRaster(activeCropRasterObject());};});
     var svgQuality=p.querySelector('[data-db-svg-quality]');if(svgQuality)svgQuality.onchange=function(){state.svgQuality=svgQualityProfile(svgQuality.value).key;};
     var rem=p.querySelector('[data-db-remove-originals]');if(rem)rem.onchange=function(){state.removeOriginals=!!rem.checked;};
     var addBoneType=p.querySelector('[data-db-bone-type]');if(addBoneType)addBoneType.onchange=function(){state.addBoneType=addBoneType.value||'bone';};
@@ -8307,3 +8380,4 @@
   if(RUNTIME_ONLY)syncDemBonesRuntimePlayback(currentTime());
   else open();
 })();
+
