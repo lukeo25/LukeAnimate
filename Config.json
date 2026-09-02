@@ -1,6 +1,6 @@
 {
   "title": "Luke Animate",
-  "version": 110,
+  "version": 116,
   "configUrl": "https://lukeo25.github.io/LukeAnimate/Config.json",
   "groups": [
     {
@@ -23,7 +23,7 @@
           "label": "Dem Bones",
           "description": "Create, bind and animate vector bones directly in Luke Animate.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Bone.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/DemBones.txt?v=16.74",
+          "toolUrl": "Scripts/DemBones.txt?v=16.79",
           "action": "animate",
           "F_Screen": 0
         },
@@ -209,7 +209,7 @@
           "label": "Multi Script",
           "description": "Import a naturally sorted image sequence onto consecutive LukeAnimate layer frames.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Multi.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/MultiScript.txt?v=2.1",
+          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/MultiScript.txt?v=2.2",
           "action": "tool",
           "F_Screen": 0
         },
@@ -243,7 +243,7 @@
           "label": "Stop Mo",
           "description": "Capture webcam frames directly into a selected Luke Animate timeline layer with auto-advance and onion skin preview.",
           "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/StopMo.svg",
-          "scriptUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/StopMo.txt?v=1.0",
+          "scriptUrl": "Scripts/StopMo.txt?v=1.1",
           "action": "tool",
           "F_Screen": 0
         }
@@ -271,14 +271,6 @@
           "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/LukeInk.txt",
           "action": "tool",
           "F_Screen": 0
-        },
-        {
-          "id": "Dem Bones",
-          "label": "Dem Bones",
-          "iconUrl": "https://lukeo25.github.io/LukeAnimate/SVGs/Bone.svg",
-          "toolUrl": "https://lukeo25.github.io/LukeAnimate/Scripts/RotoBones.txt",
-          "action": "tool",
-          "F_Screen": 1
         },
         {
           "id": "Screen Record",

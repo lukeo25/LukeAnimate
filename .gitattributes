@@ -1,0 +1,9 @@
+# Keep Luke Animate source files on one newline convention so GitHub does not
+# report mixed line endings when a file is edited in the web editor.
+*.html text eol=crlf
+*.json text eol=crlf
+*.txt text eol=crlf
+*.js text eol=crlf
+*.css text eol=crlf
+*.svg text eol=crlf
+*.ps1 text eol=crlf
