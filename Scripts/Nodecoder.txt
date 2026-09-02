@@ -212,4 +212,3 @@
   const refreshTimer=setInterval(pollScene,350);refreshClipLibrary();const selected=selectedStageClip(),initial=selected&&(entryForObject(selected)||null);if(initial){state.lastStageSelectionKey=initial.key;addGraphClip(initial);}else{renderAll();setStatus(state.clips.length?"Drag a Clip onto the grid.":"Add a Clip to the current frame first.");}applyTransform();
   const focus=LukeAnimate.consumeNodeCoderTimelineFocus&&LukeAnimate.consumeNodeCoderTimelineFocus();if(focus){const timeline=state.clips.find(e=>e.timeline);if(timeline){addGraphClip(timeline);const target=timelineSlots().find(slot=>String(slot.layerId)===String(focus.layerId)&&String(slot.id)===String(focus.markerId));if(target){state.activeKey=TIMELINE_KEY;state.selectedOwnerKey=TIMELINE_KEY;state.selectedSlotId=target.id;renderAll();setStatus(`Selected ${target.name}.`,"good");}}}
 })();
-
