@@ -1,3 +1,5 @@
+<!-- LukeAnimate GPT v339: Shortening a timeline discards only out-of-range keys instead of moving them onto and replacing the new final frame. -->
+<!-- LukeAnimate GPT v338: Stop Mo keeps each captured frame visible until the next capture is completed. -->
 <!-- LukeAnimate GPT v337: Stop Mo creates, keys and selects a numbered capture layer before camera capture begins. -->
 <!-- LukeAnimate GPT v336: Stop Mo creates and selects a normal numbered capture layer automatically for every session. -->
 <!-- LukeAnimate GPT v335: Boolean operations replace canonical layer keys without leaving source shapes, and switching tools fully closes Dem Bones editing. -->
@@ -3848,9 +3850,14 @@ ctx.fill();</textarea>
     const source = Array.isArray(frameList) ? frameList : [];
     const candidates = source.map(frame=>{
       if(!frame || typeof frame !== 'object') return null;
-      const start = Math.max(0, Math.min(totalFrames, Math.round(Number(
+      const rawStart = Math.max(0, Math.round(Number(
         frame.startFrame !== undefined ? frame.startFrame : frame.start
-      ) || 0)));
+      ) || 0));
+      // When the timeline is shortened, later keys are outside its range.
+      // Do not clamp them backward onto the new final frame: that would replace
+      // the legitimate key already living at that frame.
+      if(rawStart > totalFrames) return null;
+      const start = Math.min(totalFrames, rawStart);
       const end = Math.max(start, Math.min(totalFrames, Math.round(Number(
         frame.endFrame !== undefined ? frame.endFrame : frame.end
       ) || start)));
@@ -13678,7 +13685,7 @@ ctx.fill();</textarea>
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
   const LUKE_ANIMATE_CONFIG_URL = location.protocol === 'file:'
-    ? 'https://lukeo25.github.io/LukeAnimate/Config.json?v=118'
+    ? 'https://lukeo25.github.io/LukeAnimate/Config.json?v=119'
     : new URL('Config.json', location.href).href;
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
@@ -22442,7 +22449,9 @@ ctx.fill();</textarea>
         if(!frame || typeof frame !== 'object') return null;
         if(!frame.id) frame.id = wickNextFrameId();
         wickUpdateCounterFromId(frame.id, 'drawing-frame-', value=>{ wickDrawingFrameCounter = Math.max(wickDrawingFrameCounter,value); });
-        frame.startFrame = Math.max(0, Math.min(totalFrames, Math.round(Number(frame.startFrame) || 0)));
+        const rawStartFrame = Math.max(0, Math.round(Number(frame.startFrame) || 0));
+        if(rawStartFrame > totalFrames) return null;
+        frame.startFrame = Math.min(totalFrames, rawStartFrame);
         frame.endFrame = Math.max(frame.startFrame, Math.min(totalFrames, Math.round(Number(frame.endFrame) || frame.startFrame)));
         const fadeSpanFrames = Math.max(0, frame.endFrame - frame.startFrame);
         frame.fadeInFrames = Math.max(0, Math.min(fadeSpanFrames, Math.round(Number(frame.fadeInFrames) || 0)));
