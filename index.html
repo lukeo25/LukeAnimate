@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v343: Every registered tool panel is kept inside the visible stage area below the toolbar and above the timeline. -->
 <!-- LukeAnimate GPT v342: Tool switching keeps Dem Bones open with compatible tools and closes it only when Multi Script opens. -->
 <!-- LukeAnimate GPT v341: Boolean operations replace only the selected frame keys while preserving unrelated animation keys and layers. -->
 <!-- LukeAnimate GPT v340: Deleting selected artwork blanks only its owned timeline key and preserves its layer, other keys and duplicated objects. -->
@@ -3665,14 +3666,36 @@ ctx.fill();</textarea>
     floatingPanelZCounter += 1;
     panel.style.zIndex = String(floatingPanelZCounter);
   }
+  function getFloatingPanelStageBounds(){
+    const stageWrap=document.getElementById('stage-wrap');
+    if(!stageWrap) return {left:0,top:0,right:window.innerWidth,bottom:window.innerHeight};
+    const stageRect=stageWrap.getBoundingClientRect();
+    const topbar=document.getElementById('topbar');
+    const topbarRect=topbar&&topbar.getClientRects().length?topbar.getBoundingClientRect():null;
+    return {
+      left:Math.max(0,stageRect.left),
+      top:Math.max(stageRect.top,topbarRect?topbarRect.bottom:stageRect.top),
+      right:Math.min(window.innerWidth,stageRect.right),
+      bottom:Math.min(window.innerHeight,stageRect.bottom)
+    };
+  }
   function clampFloatingPanelToViewport(panel){
     if(!panel || !panel.isConnected || panel.getClientRects().length===0) return;
+    const bounds=getFloatingPanelStageBounds();
     const rect = panel.getBoundingClientRect();
     const margin = 8;
-    const maxLeft = Math.max(margin, window.innerWidth - panel.offsetWidth - margin);
-    const maxTop = Math.max(margin, window.innerHeight - panel.offsetHeight - margin);
-    const left = Math.max(margin, Math.min(maxLeft, rect.left));
-    const top = Math.max(margin, Math.min(maxTop, rect.top));
+    const minLeft=bounds.left+margin;
+    const minTop=bounds.top+margin;
+    const availableWidth=Math.max(0,bounds.right-bounds.left-margin*2);
+    const availableHeight=Math.max(0,bounds.bottom-bounds.top-margin*2);
+    panel.style.maxWidth=availableWidth+'px';
+    panel.style.maxHeight=availableHeight+'px';
+    const width=Math.min(panel.offsetWidth,availableWidth);
+    const height=Math.min(panel.offsetHeight,availableHeight);
+    const maxLeft=Math.max(minLeft,bounds.right-width-margin);
+    const maxTop=Math.max(minTop,bounds.bottom-height-margin);
+    const left=Math.max(minLeft,Math.min(maxLeft,rect.left));
+    const top=Math.max(minTop,Math.min(maxTop,rect.top));
     panel.style.left = left + 'px';
     panel.style.top = top + 'px';
     panel.style.right = 'auto';
@@ -13701,7 +13724,7 @@ ctx.fill();</textarea>
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
   const LUKE_ANIMATE_CONFIG_URL = location.protocol === 'file:'
-    ? 'https://lukeo25.github.io/LukeAnimate/Config.json?v=122'
+    ? 'https://lukeo25.github.io/LukeAnimate/Config.json?v=123'
     : new URL('Config.json', location.href).href;
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
