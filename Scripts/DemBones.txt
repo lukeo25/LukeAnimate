@@ -1,4 +1,6 @@
-/* Luke Animate Dem Bones + MyCharacter GPT v16.79
+/* Luke Animate Dem Bones + MyCharacter GPT v16.80
+   v16.80 keeps Load Part, Save Part and Add Part to Character together and
+   always visible in Build Parts. Loading and adding stay in that same panel.
    v16.79 lets native stage rotation/scale and their keyframes drive an
    attached Gizmo Clip while Dem Bones continues applying the parent bone.
    v16.78 keeps attached Gizmo controls available from Gizmos/Animate and
@@ -220,7 +222,7 @@
 
   var API = LukeAnimate;
   var TOOL_ID = "DemBones";
-  var TOOL_VERSION = "16.79";
+  var TOOL_VERSION = "16.80";
   var SINGLETON_KEY = "__LukeAnimateDemBonesFull";
   var EVALUATOR_ID = "luke-animate-dembones-full-evaluator";
   var OVERLAY_ID = "luke-animate-dembones-full-overlay";
@@ -5672,13 +5674,8 @@
       return null;
     }
     if(!state.character.parts.length&&!state.character.nameConfirmed){
-      if(!options.silent){
-        state.tab="character";renderAll();
-        var nameField=state.panel&&state.panel.querySelector("[data-db-character-name]");
-        if(nameField){nameField.focus();nameField.select();}
-        notify("Name the character before adding the first part.",true);
-      }
-      return null;
+      state.character.name=String(state.character.name||"MyCharacter").trim()||"MyCharacter";
+      state.character.nameConfirmed=true;
     }
 
     var sourceRig=options.sourceRig||state.activeRig;
@@ -7130,6 +7127,11 @@
         var data=JSON.parse(reader.result);
         if(kind==="character")loadCharacterData(data);
         else if(kind==="part")loadSavedPartForCharacter(data);
+        else if(kind==="build-part"){
+          var loaded=loadBuildPart(data,true);
+          state.tab="source";state.mode="select";renderAll();API.refreshUI();
+          notify('Loaded "'+String(loaded.rig.name||data.name||"Part")+'" into Build Parts.',false);
+        }
         else throw new Error("Unsupported project file type.");
       }catch(e){
         notify("Load failed: "+(e.message||e),true);
@@ -8386,6 +8388,7 @@
       '<div data-db-steps>'+workflowStepsHtml()+'</div><div class="db-body" data-db-body></div>'+
       '<input class="db-hidden" type="file" accept=".svg,image/svg+xml" data-db-svg>'+
       '<input class="db-hidden" type="file" accept=".png,image/png" data-db-png>'+
+      '<input class="db-hidden" type="file" accept="application/json,.json,.dembones.json" data-db-build-part-file>'+
       '<input class="db-hidden" type="file" accept="application/json,.json,.dembones.json" data-db-part-file>'+
       '<input class="db-hidden" type="file" accept="application/json,.json,.mycharacter" data-db-character-file>'+
       '<input class="db-hidden" type="file" accept=".svg,image/svg+xml" data-db-expression-file>'+
@@ -8472,7 +8475,7 @@
     return '<div class="db-page active">'+
       '<div class="db-section"><h3>Step 1 · Get Shapes</h3><p class="db-help">Select stage artwork or load a file, then add bones.</p><div class="db-grid3"><button class="db-btn" data-db-use-selection>Use Stage Selection</button><button class="db-btn" data-db-load-svg>Load SVG</button><button class="db-btn" data-db-load-png>Load PNG</button></div><div class="db-row" style="margin-top:7px"><label>SVG quality</label><select data-db-svg-quality><option value="draft"'+(q==='draft'?' selected':'')+'>Draft</option><option value="standard"'+(q==='standard'?' selected':'')+'>Standard</option><option value="high"'+(q==='high'?' selected':'')+'>High</option><option value="maximum"'+(q==='maximum'?' selected':'')+'>Maximum</option></select></div><label class="db-check" style="margin-top:7px"><input type="checkbox" data-db-remove-originals'+(state.removeOriginals?' checked':'')+'> Remove selected originals after conversion</label></div>'+
       cropSection+
-      (hasBuild?'<div class="db-section"><h3>Part</h3><div class="db-grid2"><button class="db-btn" data-db-save-part>Save Part</button><button class="db-btn primary" data-db-add-build-character>Add Part to Character</button></div></div>':'')+
+      '<div class="db-section"><h3>Part</h3><div class="db-grid3"><button class="db-btn" data-db-load-build-part>Load Part</button><button class="db-btn" data-db-save-part'+(hasBuild?'':' disabled')+'>Save Part</button><button class="db-btn primary" data-db-add-build-character'+(hasBuild?'':' disabled')+'>Add Part to Character</button></div><p class="db-help" style="margin-top:7px">Load, save or add the current rig without leaving Build Parts.</p></div>'+
     '</div>';
   }
 
@@ -8638,8 +8641,9 @@
     p.querySelectorAll('[data-db-character-part-choice]').forEach(function(select){select.onchange=function(){state.character.addCandidateRigId=String(select.value||"");};});
     p.querySelectorAll('[data-db-character-add-selected]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}var choice=p.querySelector('[data-db-character-part-choice]');var rigId=choice?String(choice.value||""):String(state.character.addCandidateRigId||"");addAvailableCandidateToCharacter(rigId);};});
     p.querySelectorAll('[data-db-character-load-part]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.fileInputs.part)state.fileInputs.part.click();};});
+    p.querySelectorAll('[data-db-load-build-part]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}if(state.fileInputs.buildPart)state.fileInputs.buildPart.click();};});
     p.querySelectorAll('[data-db-save-part]').forEach(function(b){b.onclick=savePart;});
-    p.querySelectorAll('[data-db-add-build-character]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}addBuildToCharacter();};});
+    p.querySelectorAll('[data-db-add-build-character]').forEach(function(b){b.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}addBuildToCharacter({__dbInternalOptions:true,keepTab:true});};});
     var cn=p.querySelector('[data-db-character-name]');if(cn)cn.oninput=function(){var value=String(cn.value||'').trim();state.character.name=value||'MyCharacter';state.character.nameConfirmed=!!value;markCharacterRootDummy(characterRootInstance());};p.querySelectorAll('[data-db-character-save]').forEach(function(b){b.onclick=saveCharacter;});p.querySelectorAll('[data-db-character-load]').forEach(function(b){b.onclick=function(){state.fileInputs.character.click();};});p.querySelectorAll('[data-db-character-commit],[data-db-commit-character]').forEach(function(b){b.onclick=commitCharacter;});p.querySelectorAll('[data-db-character-resync]').forEach(function(b){b.onclick=resyncCharacterPlacement;});p.querySelectorAll('[data-db-character-cleanup]').forEach(function(b){b.onclick=function(){cleanUpLooseArtwork(false);};});var commitName=p.querySelector('[data-db-commit-name]');if(commitName)commitName.oninput=function(){state.character.name=commitName.value||'MyCharacter';};
     p.querySelectorAll('[data-db-character-dummy]').forEach(function(button){button.onclick=function(event){if(event){event.preventDefault();event.stopPropagation();}selectCharacterDummy();};});
     p.querySelectorAll('[data-db-part-card]').forEach(function(card){card.onclick=function(event){if(event&&event.target&&event.target.closest('button,input,select,textarea'))return;var part=partById(card.getAttribute('data-db-part-card'));if(part){if(state.adjustingPartId&&Number(state.adjustingPartId)!==Number(part.id))finishPartPlacementAdjust(true);focusCharacterPartCard(part);selectCharacterPartOnStage(part);renderAll();}};});
@@ -8696,7 +8700,7 @@
 
   function createPanel(){
     ensureStyle();var panel=document.createElement('div');panel.className='la-dembones-full open';panel.dataset.lukeAnimateFloatingPanel='true';panel.innerHTML=panelHtml();document.body.appendChild(panel);state.panel=panel;
-    state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.png=panel.querySelector('[data-db-png]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');state.fileInputs.lipJson=panel.querySelector('[data-db-lip-json-file]');
+    state.fileInputs.svg=panel.querySelector('[data-db-svg]');state.fileInputs.png=panel.querySelector('[data-db-png]');state.fileInputs.buildPart=panel.querySelector('[data-db-build-part-file]');state.fileInputs.part=panel.querySelector('[data-db-part-file]');state.fileInputs.character=panel.querySelector('[data-db-character-file]');state.fileInputs.expression=panel.querySelector('[data-db-expression-file]');state.fileInputs.lipJson=panel.querySelector('[data-db-lip-json-file]');
     API.registerFloatingPanel(panel);panel.querySelector('[data-db-close]').onclick=close;
     panel.querySelectorAll('[data-db-tab]').forEach(function(b){b.onclick=function(){
       var nextTab=b.getAttribute('data-db-tab');
@@ -8712,6 +8716,7 @@
     };});
     state.fileInputs.svg.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,false);this.value='';};
     state.fileInputs.png.onchange=function(){var f=this.files&&this.files[0];if(f)loadPngFile(f);this.value='';};
+    state.fileInputs.buildPart.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'build-part');this.value='';};
     state.fileInputs.part.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'part');this.value='';};
     state.fileInputs.character.onchange=function(){var f=this.files&&this.files[0];if(f)loadJsonFile(f,'character');this.value='';};state.fileInputs.expression.onchange=function(){var f=this.files&&this.files[0];if(f)loadSvgFile(f,true);this.value='';};
     state.fileInputs.lipJson.onchange=function(){var f=this.files&&this.files[0];if(f){var reader=new FileReader();reader.onload=function(){importLipServiceJson(reader.result);};reader.onerror=function(){notify('Could not read Lip Service JSON.',true);};reader.readAsText(f);}this.value='';};
