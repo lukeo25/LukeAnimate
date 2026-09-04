@@ -1,3 +1,4 @@
+<!-- LukeAnimate GPT v344: Tool panels retain their original size while their movable position remains bounded to the stage workspace. -->
 <!-- LukeAnimate GPT v343: Every registered tool panel is kept inside the visible stage area below the toolbar and above the timeline. -->
 <!-- LukeAnimate GPT v342: Tool switching keeps Dem Bones open with compatible tools and closes it only when Multi Script opens. -->
 <!-- LukeAnimate GPT v341: Boolean operations replace only the selected frame keys while preserving unrelated animation keys and layers. -->
@@ -3686,14 +3687,14 @@ ctx.fill();</textarea>
     const margin = 8;
     const minLeft=bounds.left+margin;
     const minTop=bounds.top+margin;
+    panel.style.maxWidth='';
+    panel.style.maxHeight='';
+    const width=panel.offsetWidth;
+    const height=panel.offsetHeight;
     const availableWidth=Math.max(0,bounds.right-bounds.left-margin*2);
     const availableHeight=Math.max(0,bounds.bottom-bounds.top-margin*2);
-    panel.style.maxWidth=availableWidth+'px';
-    panel.style.maxHeight=availableHeight+'px';
-    const width=Math.min(panel.offsetWidth,availableWidth);
-    const height=Math.min(panel.offsetHeight,availableHeight);
-    const maxLeft=Math.max(minLeft,bounds.right-width-margin);
-    const maxTop=Math.max(minTop,bounds.bottom-height-margin);
+    const maxLeft=width<=availableWidth?bounds.right-width-margin:minLeft;
+    const maxTop=height<=availableHeight?bounds.bottom-height-margin:minTop;
     const left=Math.max(minLeft,Math.min(maxLeft,rect.left));
     const top=Math.max(minTop,Math.min(maxTop,rect.top));
     panel.style.left = left + 'px';
@@ -13724,7 +13725,7 @@ ctx.fill();</textarea>
   // https://lukeo25.github.io/LukeAnimate/Config.json
   // Script and SVG URLs in that file may be absolute or relative to Config.json.
   const LUKE_ANIMATE_CONFIG_URL = location.protocol === 'file:'
-    ? 'https://lukeo25.github.io/LukeAnimate/Config.json?v=123'
+    ? 'https://lukeo25.github.io/LukeAnimate/Config.json?v=124'
     : new URL('Config.json', location.href).href;
   const LUKE_ANIMATE_ANIMATE_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/Animate.svg';
   const LUKE_ANIMATE_PARTICLES_ICON_URL = 'https://lukeo25.github.io/LukeAnimate/SVGs/particles.svg';
